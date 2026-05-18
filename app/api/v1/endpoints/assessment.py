@@ -64,6 +64,8 @@ def list_assessments(
     actor: Annotated[CurrentUser, Depends(get_current_user)],
     db: Session = Depends(get_db),
     organization_id: str | None = Query(default=None, description='筛选公司 ID'),
+    status: str | None = Query(default=None, description='筛选任务状态，如 PENDING / SUCCESS / FAILED'),
+    q: str | None = Query(default=None, description='按文件名模糊搜索，或按任务 ID 精确搜索'),
     page: int = Query(default=1, ge=1, description='页码，从 1 开始'),
     page_size: int = Query(default=20, ge=1, le=200, description='每页条数'),
 ):
@@ -71,6 +73,8 @@ def list_assessments(
         db=db,
         actor=actor,
         organization_id=organization_id,
+        status=status,
+        q=q,
         page=page,
         page_size=page_size,
     )

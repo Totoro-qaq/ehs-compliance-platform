@@ -9,6 +9,7 @@ from app.api.v1.router import include_api_v1
 from app.core.config import settings
 from app.core.logging_setup import configure_logging
 from app.middleware.json_envelope import JsonEnvelopeMiddleware
+from app.middleware.request_context import RequestContextMiddleware
 
 
 @asynccontextmanager
@@ -45,6 +46,7 @@ def create_app() -> FastAPI:
     )
 
     application.add_middleware(JsonEnvelopeMiddleware, enable=True)
+    application.add_middleware(RequestContextMiddleware)
     application.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,

@@ -55,6 +55,13 @@ dmypy.json
 logs/
 uploads/
 
+# 本地分析结果暂存
+.analysis_docx/
+.analysis_pdf/
+
+# Claude Code 本地配置
+.claude/
+
 # Celery
 celerybeat-schedule
 celerybeat.pid

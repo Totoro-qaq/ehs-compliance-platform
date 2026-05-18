@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.exceptions import EHSException
 from app.core.patterns import is_uuid
+from app.core.request_context import get_request_id
 from app.core.upload_policy import (
     build_unique_storage_path,
     validate_file_magic,
@@ -14,7 +16,7 @@ from app.core.upload_policy import (
 )
 from app.dao.assessment_dao import AssessmentDAO
 from app.dao.organization_dao import OrganizationDAO
-from app.models.db_models import AccountRole, AssessmentTask
+from app.models.db_models import AccountRole, AssessmentTask, TaskStatus
 from app.schemas.auth_context import CurrentUser
 from app.schemas.ehs_schema import AssessmentCreateResponse, AssessmentStatusResponse
 from app.schemas.pagination import Page
@@ -76,7 +78,7 @@ class AssessmentService:
         try:
             from app.tasks.worker import run_assessment_task
 
-            run_assessment_task.delay(task.id)
+            run_assessment_task.delay(task.id, get_request_id())
         except Exception as exc:
             raise EHSException(
                 '异步任务投递失败，请确认 Redis 已启动且已执行 Celery Worker',
@@ -102,6 +104,8 @@ class AssessmentService:
         db: Session,
         actor: CurrentUser,
         organization_id: str | None,
+        status: str | None,
+        q: str | None,
         page: int,
         page_size: int,
     ) -> Page[AssessmentStatusResponse]:
@@ -121,14 +125,32 @@ class AssessmentService:
                     code='IDOR_ORG_FORGE',
                     status_code=403,
                     details={'hint': '普通用户仅能访问本 organization_id 的数据'},
-                )
+            )
             oid = uid_org
+
+        filters = [AssessmentTask.organization_id == oid]
+        if status:
+            try:
+                parsed_status = TaskStatus(status)
+            except ValueError as exc:
+                raise EHSException(
+                    'status 须为有效任务状态',
+                    code='INVALID_TASK_STATUS',
+                    status_code=400,
+                    details={'allowed': [s.value for s in TaskStatus]},
+                ) from exc
+            filters.append(AssessmentTask.status == parsed_status)
+
+        query = (q or '').strip()
+        if query:
+            like = f'%{query}%'
+            filters.append(or_(AssessmentTask.filename.like(like), AssessmentTask.id == query))
 
         dao = AssessmentDAO(db)
         items, total = dao.list_page(
             page=page,
             page_size=page_size,
-            filters=(AssessmentTask.organization_id == oid,),
+            filters=tuple(filters),
         )
         return Page[AssessmentStatusResponse](
             items=[AssessmentStatusResponse.model_validate(t) for t in items],
