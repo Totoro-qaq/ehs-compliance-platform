@@ -45,6 +45,17 @@ def _create_tables():
     Base.metadata.drop_all(bind=_TEST_ENGINE)
 
 
+@pytest.fixture(autouse=True)
+def _redirect_session_local(monkeypatch):
+    """部分测试绕开 client fixture，直接调用 app.core.db.SessionLocal（例如 Worker 任务测试）。
+    将其重定向到内存 SQLite，CI 中无 MySQL 也能跑通。"""
+    import app.core.db as core_db
+    import app.tasks.worker as worker_mod
+
+    monkeypatch.setattr(core_db, 'SessionLocal', TestSessionLocal)
+    monkeypatch.setattr(worker_mod, 'SessionLocal', TestSessionLocal)
+
+
 @pytest.fixture()
 def db():
     """每个测试用例独立事务，结束后回滚。"""
