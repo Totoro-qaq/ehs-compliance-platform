@@ -20,6 +20,7 @@ _log = get_logger(__name__)
 
 @worker_process_init.connect
 def _init_worker_logging(**_kwargs) -> None:
+    settings.validate_production()
     configure_logging(
         log_dir=settings.log_dir,
         log_file=settings.log_worker_file,

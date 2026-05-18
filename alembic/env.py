@@ -3,21 +3,21 @@
 from __future__ import annotations
 
 import sys
+from logging.config import fileConfig
 from pathlib import Path
 
-from logging.config import fileConfig
+from sqlalchemy import create_engine, pool
 
 from alembic import context
-from sqlalchemy import create_engine, pool
 
 # 项目根目录加入路径（与当前解释器一致）
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import app.models.db_models  # noqa: E402, F401
 from app.core.config import settings  # noqa: E402
 from app.models.base import Base  # noqa: E402
-import app.models.db_models  # noqa: E402, F401
 
 config = context.config
 if config.config_file_name is not None:

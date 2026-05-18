@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from zipfile import ZipFile
 
-import pytest
 from fastapi.testclient import TestClient
 
 
@@ -92,8 +91,8 @@ class TestAssessmentPermissions:
 
 
 def test_worker_extracts_docx_text_and_persists_parsed_text(monkeypatch, tmp_path: Path):
-    from app.models.db_models import AssessmentTask, Organization, TaskStatus
     from app.core.db import SessionLocal
+    from app.models.db_models import AssessmentTask, Organization, TaskStatus
     from app.schemas.ehs_schema import EHSAssessmentResult
     from app.tasks.worker import run_assessment_task
 

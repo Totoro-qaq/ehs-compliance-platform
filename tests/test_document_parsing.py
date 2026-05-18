@@ -50,6 +50,6 @@ def test_extract_text_from_doc_raises_when_antiword_missing(tmp_path: Path):
     with patch('app.services.pdf_text_service.subprocess.run', side_effect=FileNotFoundError()):
         try:
             extract_text_from_document_file(doc_path)
-            assert False, 'expected DocumentTextExtractError'
+            raise AssertionError('expected DocumentTextExtractError')
         except DocumentTextExtractError as exc:
             assert 'antiword' in str(exc)

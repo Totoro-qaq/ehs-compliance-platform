@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from unittest.mock import patch
-
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
@@ -81,7 +78,6 @@ def admin_token(db: Session) -> str:
     from app.models.db_models import Account, AccountRole, Organization
 
     # 确保默认公司存在（assessment 接口依赖）
-    from app.core.config import settings
     org = db.get(Organization, settings.default_organization_id)
     if org is None:
         org = Organization(id=settings.default_organization_id, name='默认测试公司')
@@ -115,7 +111,6 @@ def user_token(db: Session) -> str:
     from app.core.security import hash_password
     from app.models.db_models import Account, AccountRole, Organization
 
-    from app.core.config import settings
     org = db.get(Organization, settings.default_organization_id)
     if org is None:
         org = Organization(id=settings.default_organization_id, name='默认测试公司')

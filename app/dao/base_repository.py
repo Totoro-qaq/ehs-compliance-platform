@@ -59,10 +59,11 @@ class BaseRepository(Generic[T]):
         count_stmt = select(func.count()).select_from(self.model)
         stmt, count_stmt = apply_where_clauses(stmt, count_stmt, filters)
 
-        if order_by:
-            stmt = stmt.order_by(*order_by)
-        else:
-            stmt = stmt.order_by(self.model.created_at.desc())
+        stmt = (
+            stmt.order_by(*order_by)
+            if order_by
+            else stmt.order_by(self.model.created_at.desc())
+        )
 
         exec_opts = {'include_deleted': True} if include_deleted else {}
         rows, total = fetch_scalar_rows_page(
