@@ -4,8 +4,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import ORMExecuteState, Session, sessionmaker, with_loader_criteria
 
 from app.core.config import settings
-from app.models.base import Base, ModelBase
-
+from app.models.base import ModelBase
 
 engine = create_engine(
     settings.database_url,

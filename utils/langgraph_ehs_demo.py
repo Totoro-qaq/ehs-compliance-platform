@@ -72,7 +72,7 @@ def generate_node(state: EHSState) -> dict:
             "metadata": {"model": "mock-llm", "attempt": retry + 1},
             # 故意不包含 risks 字段
         }, ensure_ascii=False)
-        print(f"   ⚠️  生成结果缺少 risks 字段（模拟不完整输出）")
+        print("   ⚠️  生成结果缺少 risks 字段（模拟不完整输出）")
     else:
         # 第三次生成完整结果
         result = json.dumps({
@@ -123,7 +123,7 @@ def check_result(state: EHSState) -> dict:
         return {"parsed_result": None, "error": "缺少 risks 字段"}
 
     if not isinstance(parsed["risks"], list):
-        print(f"   ❌ risks 字段不是数组")
+        print("   ❌ risks 字段不是数组")
         return {"parsed_result": None, "error": "risks 字段不是数组"}
 
     print(f"   ✅ 校验通过！包含 {len(parsed['risks'])} 条风险项")
@@ -140,7 +140,7 @@ def should_retry(state: EHSState) -> str:
     if state.get("retry_count", 0) >= 3:
         print("\n   ⛔ 已达最大重试次数 (3)，放弃重试")
         return "max_retries"
-    print(f"\n   🔄 结果不合格，路由回生成节点重试...")
+    print("\n   🔄 结果不合格，路由回生成节点重试...")
     return "retry"
 
 

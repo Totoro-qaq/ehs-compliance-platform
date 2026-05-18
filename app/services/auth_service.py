@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import jwt
-
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 

@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -12,6 +13,7 @@ from app.middleware.json_envelope import JsonEnvelopeMiddleware
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    settings.validate_production()
     configure_logging(
         log_dir=settings.log_dir,
         log_file=settings.log_file,

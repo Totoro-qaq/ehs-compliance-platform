@@ -7,7 +7,11 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.exceptions import EHSException
 from app.core.patterns import is_uuid
-from app.core.upload_policy import build_unique_storage_path, validate_file_magic, validate_original_filename
+from app.core.upload_policy import (
+    build_unique_storage_path,
+    validate_file_magic,
+    validate_original_filename,
+)
 from app.dao.assessment_dao import AssessmentDAO
 from app.dao.organization_dao import OrganizationDAO
 from app.models.db_models import AccountRole, AssessmentTask

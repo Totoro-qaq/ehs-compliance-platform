@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 import re
 from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+
+import httpx
 
 from app.core.config import settings
 from app.core.logging_setup import get_logger
@@ -36,41 +36,35 @@ def run_workflow_blocking(
     if not settings.dify_api_key:
         raise DifyWorkflowError('未配置 DIFY_API_KEY')
     url = f'{_base_url()}/workflows/run'
-    body = json.dumps(
-        {
-            'inputs': inputs,
-            'response_mode': 'blocking',
-            'user': user,
-        },
-        ensure_ascii=False,
-    ).encode('utf-8')
-    req = Request(
-        url,
-        data=body,
-        method='POST',
-        headers={
-            'Authorization': f'Bearer {settings.dify_api_key}',
-            'Content-Type': 'application/json',
-            'User-Agent': settings.http_user_agent,
-        },
-    )
+    payload = {
+        'inputs': inputs,
+        'response_mode': 'blocking',
+        'user': user,
+    }
+    headers = {
+        'Authorization': f'Bearer {settings.dify_api_key}',
+        'Content-Type': 'application/json',
+        'User-Agent': settings.http_user_agent,
+    }
     try:
-        with urlopen(req, timeout=timeout_sec) as resp:
-            raw = resp.read().decode('utf-8')
-    except HTTPError as exc:
-        try:
-            err_body = exc.read().decode('utf-8')
-        except Exception:
-            err_body = ''
-        _log.warning('Dify HTTP %s: %s', exc.code, err_body[:2000])
-        raise DifyWorkflowError(f'Dify 请求失败 HTTP {exc.code}: {err_body[:500]}') from exc
-    except URLError as exc:
-        raise DifyWorkflowError(f'Dify 网络错误: {exc.reason}') from exc
+        with httpx.Client(timeout=timeout_sec) as client:
+            resp = client.post(url, json=payload, headers=headers)
+            resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        err_body = exc.response.text
+        _log.warning('Dify HTTP %s: %s', exc.response.status_code, err_body[:2000])
+        raise DifyWorkflowError(
+            f'Dify 请求失败 HTTP {exc.response.status_code}: {err_body[:500]}'
+        ) from exc
+    except httpx.TimeoutException as exc:
+        raise DifyWorkflowError(f'Dify 请求超时: {timeout_sec}s') from exc
+    except httpx.RequestError as exc:
+        raise DifyWorkflowError(f'Dify 网络错误: {exc}') from exc
 
     try:
-        return json.loads(raw)
+        return resp.json()
     except json.JSONDecodeError as exc:
-        raise DifyWorkflowError(f'Dify 返回非 JSON: {raw[:500]}') from exc
+        raise DifyWorkflowError(f'Dify 返回非 JSON: {resp.text[:500]}') from exc
 
 
 def _strip_code_fence(text: str) -> str:
