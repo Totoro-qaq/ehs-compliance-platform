@@ -1,0 +1,81 @@
+# 环境与密钥（勿提交）
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 虚拟环境
+.venv/
+venv/
+ENV/
+env/
+
+# 测试与覆盖率
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# 类型检查 / 格式化缓存
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+
+# 运行日志与上传暂存（按需保留目录可用 .gitkeep）
+logs/
+uploads/
+
+# 本地分析结果暂存
+.analysis_docx/
+.analysis_pdf/
+
+# Claude Code 本地配置
+.claude/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# IDE / 编辑器
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+
+# 操作系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Docker / 本地数据卷（若存在）
+*.log

@@ -1,0 +1,22 @@
+{
+  "risks": [
+    {
+      "risk_level": "HIGH",
+      "violation_clause": "GBZ 2.1-2019 及相关职业卫生管理要求（示例引用）",
+      "rectification_advice": "为干式打磨岗位增设有效局部排尘或湿式作业措施，明确粉尘清扫频次与禁扫方式；按危害因素配备符合 GB 2626 的防颗粒物呼吸器并建立更换记录。",
+      "evidence": "文本：未见局部吸尘罩连接除尘系统；配发纱布口罩且三年未检测。"
+    },
+    {
+      "risk_level": "MEDIUM",
+      "violation_clause": "易燃易爆粉尘贮存与防火管理（示例）",
+      "rectification_advice": "镁合金等易燃金属粉尘应专柜、定量存放，远离点火源与打磨火花，并落实防潮与清运制度。",
+      "evidence": "文本：打磨工位附近敞口存放镁合金边角料。"
+    }
+  ],
+  "summary": "基于给定 document_text 的模拟解析结论：干式打磨粉尘控制与呼吸防护不足为首要风险，其次为易燃金属粉尘存放位置不当；建议按规范完善除尘、检测周期与物料贮存。本结果为测试占位，真实系统应以现场核查与检测为准。",
+  "metadata": {
+    "source": "fixtures_sample",
+    "schema": "EHSAssessmentResult",
+    "note": "Dify 结束节点输出变量名若设为 result_json，请在 .env 配置 DIFY_WORKFLOW_RESULT_KEY=result_json"
+  }
+}
