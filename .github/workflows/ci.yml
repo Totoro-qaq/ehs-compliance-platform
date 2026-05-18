@@ -42,7 +42,9 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-          cache-dependency-path: requirements.txt
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
       - name: Install system deps for document parsing
         # 仅安装 antiword/poppler 用于 .doc / pdf 文本测试；不装 PaddleOCR 体系
@@ -51,12 +53,13 @@ jobs:
           sudo apt-get install -y --no-install-recommends antiword poppler-utils
 
       - name: Install Python deps (skip heavy OCR stack)
-        # PaddlePaddle/PaddleOCR/pdf2image 在 CI 中不参与单测，跳过以加速
+        # PaddlePaddle/PaddleOCR/pdf2image 仅 Worker 在生产用，单测不依赖；CI 跳过以提速
+        # ruff / pytest 等开发依赖来自 requirements-dev.txt
         run: |
           python -m pip install --upgrade pip
-          grep -ivE '^(paddlepaddle|paddleocr|pdf2image)' requirements.txt > requirements-ci.txt
-          pip install -r requirements-ci.txt
-          pip install pytest
+          grep -ivE '^(paddlepaddle|paddleocr|pdf2image)' requirements.txt > requirements-runtime-ci.txt
+          pip install -r requirements-runtime-ci.txt
+          pip install -r requirements-dev.txt
 
       - name: Ruff lint
         run: ruff check .

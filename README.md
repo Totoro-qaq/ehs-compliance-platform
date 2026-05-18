@@ -47,6 +47,8 @@ python -m venv .venv
 # Windows: .venv\Scripts\activate
 # Linux/macOS: source .venv/bin/activate
 pip install -r requirements.txt
+# 如需运行测试或代码检查，再装一次开发依赖
+pip install -r requirements-dev.txt
 ```
 
 复制环境变量模板：
@@ -280,6 +282,8 @@ python -m venv .venv
 # Windows: .venv\Scripts\activate
 # Linux/macOS: source .venv/bin/activate
 pip install -r requirements.txt
+# Install dev tools (pytest / ruff) only when you need to run tests or lint
+pip install -r requirements-dev.txt
 ```
 
 Create a local `.env` file:
