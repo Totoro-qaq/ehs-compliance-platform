@@ -38,22 +38,23 @@ def _test_soft_delete_filter(orm_execute_state):
 TestSessionLocal = sessionmaker(bind=_TEST_ENGINE, autoflush=False, autocommit=False, expire_on_commit=False)
 
 
+# 在模块加载阶段就把生产 SessionLocal 替换为内存 sqlite 版本：
+# 部分测试（如 worker 任务测试）绕开 FastAPI dependency_overrides，直接调用
+# app.core.db.SessionLocal，CI 中没有 MySQL 服务会失败。
+# 这里在 conftest 加载完成（早于任何测试模块 import）时就覆盖，
+# 比 autouse fixture 更可靠（避免 fixture 执行顺序问题）。
+import app.core.db as _core_db_module  # noqa: E402
+import app.tasks.worker as _worker_module  # noqa: E402
+
+_core_db_module.SessionLocal = TestSessionLocal
+_worker_module.SessionLocal = TestSessionLocal
+
+
 @pytest.fixture(scope='session', autouse=True)
 def _create_tables():
     Base.metadata.create_all(bind=_TEST_ENGINE)
     yield
     Base.metadata.drop_all(bind=_TEST_ENGINE)
-
-
-@pytest.fixture(autouse=True)
-def _redirect_session_local(monkeypatch):
-    """部分测试绕开 client fixture，直接调用 app.core.db.SessionLocal（例如 Worker 任务测试）。
-    将其重定向到内存 SQLite，CI 中无 MySQL 也能跑通。"""
-    import app.core.db as core_db
-    import app.tasks.worker as worker_mod
-
-    monkeypatch.setattr(core_db, 'SessionLocal', TestSessionLocal)
-    monkeypatch.setattr(worker_mod, 'SessionLocal', TestSessionLocal)
 
 
 @pytest.fixture()
