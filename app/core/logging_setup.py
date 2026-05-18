@@ -7,6 +7,14 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from app.core.request_context import get_request_id
+
+
+class RequestIdFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = get_request_id()
+        return True
+
 
 class AppLogger:
     """封装根日志配置与常用 get_logger，避免各模块重复拼格式。"""
@@ -31,9 +39,12 @@ class AppLogger:
         root.setLevel(level)
         root.handlers.clear()
 
-        # 时间 | 级别 | logger 名 | 源文件路径:行号 | 消息（异常时用 exception 可带堆栈）
+        request_id_filter = RequestIdFilter()
+
+        # 时间 | 级别 | request_id | logger 名 | 源文件路径:行号 | 消息（异常时用 exception 可带堆栈）
         line_fmt = (
-            '%(asctime)s | %(levelname)-8s | %(name)s | %(pathname)s:%(lineno)d | %(message)s'
+            '%(asctime)s | %(levelname)-8s | request_id=%(request_id)s | '
+            '%(name)s | %(pathname)s:%(lineno)d | %(message)s'
         )
         date_fmt = '%Y-%m-%d %H:%M:%S'
         formatter = logging.Formatter(fmt=line_fmt, datefmt=date_fmt)
@@ -41,6 +52,7 @@ class AppLogger:
         console = logging.StreamHandler(sys.stdout)
         console.setLevel(level)
         console.setFormatter(formatter)
+        console.addFilter(request_id_filter)
 
         log_path = Path(log_dir)
         log_path.mkdir(parents=True, exist_ok=True)
@@ -52,6 +64,7 @@ class AppLogger:
         )
         file_handler.setLevel(level)
         file_handler.setFormatter(formatter)
+        file_handler.addFilter(request_id_filter)
 
         root.addHandler(console)
         root.addHandler(file_handler)

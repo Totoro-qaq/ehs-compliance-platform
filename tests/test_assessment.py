@@ -11,13 +11,20 @@ from fastapi.testclient import TestClient
 
 class TestAssessmentCRUD:
     def _create_task(self, client: TestClient, token: str) -> str:
-        with patch('app.tasks.worker.run_assessment_task.delay', new=MagicMock()):
+        delay = MagicMock()
+        with patch('app.tasks.worker.run_assessment_task.delay', new=delay):
             resp = client.post(
                 '/api/v1/assessment',
                 files={'file': ('test.txt', b'EHS test content', 'text/plain')},
-                headers={'Authorization': f'Bearer {token}'},
+                headers={
+                    'Authorization': f'Bearer {token}',
+                    'X-Request-Id': 'test-request-id',
+                },
             )
         assert resp.status_code == 200
+        assert resp.headers['X-Request-Id'] == 'test-request-id'
+        delay.assert_called_once()
+        assert delay.call_args.args[1] == 'test-request-id'
         return resp.json()['data']['task_id']
 
     def test_create_and_get(self, client: TestClient, admin_token: str):

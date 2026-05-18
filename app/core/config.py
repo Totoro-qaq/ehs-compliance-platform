@@ -1,7 +1,6 @@
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 # 生产环境禁止使用的危险默认值
 # 保留这些字面量是为了在校验时给出明确提示——它们 **本身** 不是密钥，仅用于比对
 _DANGEROUS_DEFAULTS: dict[str, set[str]] = {
@@ -30,7 +29,7 @@ class Settings(BaseSettings):
     mysql_host: str = '127.0.0.1'
     mysql_port: int = 3306
     mysql_user: str = 'root'
-    mysql_password: str = '123456'
+    mysql_password: str = ''
     mysql_db: str = 'ehs_system'
 
     # Dify 工作流（阻塞）；DIFY_API_KEY 为空时 Worker 将报错
@@ -73,7 +72,7 @@ class Settings(BaseSettings):
     log_backup_count: int = 5
 
     # JWT（勿在生产使用默认密钥）
-    jwt_secret: str = 'change-me-in-production-use-long-random-secret'
+    jwt_secret: str = 'change-me-in-production-use-long-random-secret'  # nosec - dev placeholder, blocked by validate_production
     jwt_expire_minutes: int = 60
 
     # 可选：脚本/运维兼容；与 JWT 管理员二选一或同时配置
@@ -109,6 +108,50 @@ class Settings(BaseSettings):
             f'mysql+pymysql://{self.mysql_user}:{self.mysql_password}'
             f'@{self.mysql_host}:{self.mysql_port}/{self.mysql_db}?charset=utf8mb4'
         )
+
+    @property
+    def is_production(self) -> bool:
+        """识别生产环境：APP_ENV 为 prod / production / live 时启用强校验。"""
+        return self.app_env.strip().lower() in {'prod', 'production', 'live'}
+
+    def validate_production(self) -> None:
+        """
+        启动时校验：生产环境禁止使用危险默认值。
+
+        规则：
+        - APP_ENV 非生产时直接返回；
+        - 生产环境下逐项比对 _DANGEROUS_DEFAULTS，命中即收集错误；
+        - JWT_SECRET 额外要求长度 >= 32；
+        - CORS_ORIGINS 不允许保留通配符 *；
+        - APP_DEBUG 不允许为 True；
+        - 任一项失败即抛出 ProductionConfigError，阻止应用/Worker 启动。
+        """
+        if not self.is_production:
+            return
+
+        errors: list[str] = []
+
+        for field, bad_values in _DANGEROUS_DEFAULTS.items():
+            value = getattr(self, field, '')
+            if isinstance(value, str) and value.strip() in bad_values:
+                errors.append(
+                    f'{field.upper()} 仍为开发期默认/占位值，生产环境必须改为强随机值'
+                )
+
+        if len(self.jwt_secret) < 32:
+            errors.append('JWT_SECRET 长度必须 >= 32 字符')
+
+        if '*' in self.cors_origin_list:
+            errors.append('CORS_ORIGINS 不允许使用 *，请配置具体域名列表')
+
+        if self.app_debug:
+            errors.append('APP_DEBUG 必须为 false')
+
+        if errors:
+            joined = '\n  - '.join(errors)
+            raise ProductionConfigError(
+                '检测到生产环境不安全配置，已阻止启动：\n  - ' + joined
+            )
 
 
 settings = Settings()

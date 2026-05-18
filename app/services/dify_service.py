@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Any
 
 import httpx
@@ -46,25 +47,49 @@ def run_workflow_blocking(
         'Content-Type': 'application/json',
         'User-Agent': settings.http_user_agent,
     }
+    started = time.perf_counter()
     try:
         with httpx.Client(timeout=timeout_sec) as client:
             resp = client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
     except httpx.HTTPStatusError as exc:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
         err_body = exc.response.text
-        _log.warning('Dify HTTP %s: %s', exc.response.status_code, err_body[:2000])
+        _log.warning(
+            'Dify workflow HTTP error status=%s elapsed_ms=%s body=%s',
+            exc.response.status_code,
+            elapsed_ms,
+            err_body[:2000],
+        )
         raise DifyWorkflowError(
             f'Dify 请求失败 HTTP {exc.response.status_code}: {err_body[:500]}'
         ) from exc
     except httpx.TimeoutException as exc:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        _log.warning('Dify workflow timeout timeout_sec=%s elapsed_ms=%s', timeout_sec, elapsed_ms)
         raise DifyWorkflowError(f'Dify 请求超时: {timeout_sec}s') from exc
     except httpx.RequestError as exc:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        _log.warning('Dify workflow network error elapsed_ms=%s error=%s', elapsed_ms, exc)
         raise DifyWorkflowError(f'Dify 网络错误: {exc}') from exc
 
     try:
-        return resp.json()
+        payload = resp.json()
     except json.JSONDecodeError as exc:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        _log.warning('Dify workflow returned non-json elapsed_ms=%s body=%s', elapsed_ms, resp.text[:500])
         raise DifyWorkflowError(f'Dify 返回非 JSON: {resp.text[:500]}') from exc
+
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    data = payload.get('data') if isinstance(payload, dict) else {}
+    _log.info(
+        'Dify workflow completed elapsed_ms=%s task_id=%s workflow_run_id=%s status=%s',
+        elapsed_ms,
+        payload.get('task_id') if isinstance(payload, dict) else None,
+        payload.get('workflow_run_id') if isinstance(payload, dict) else None,
+        data.get('status') if isinstance(data, dict) else None,
+    )
+    return payload
 
 
 def _strip_code_fence(text: str) -> str:

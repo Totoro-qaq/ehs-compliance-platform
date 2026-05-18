@@ -9,6 +9,7 @@ from celery.signals import worker_process_init
 from app.core.config import settings
 from app.core.db import SessionLocal
 from app.core.logging_setup import configure_logging, get_logger
+from app.core.request_context import reset_request_id, set_request_id
 from app.core.sse_broker import publish_task_progress
 from app.dao.assessment_dao import AssessmentDAO
 from app.models.db_models import TaskStatus
@@ -75,7 +76,8 @@ def _load_body_text(
 
 
 @celery_app.task(name='app.tasks.worker.run_assessment_task')
-def run_assessment_task(task_id: str) -> None:
+def run_assessment_task(task_id: str, request_id: str | None = None) -> None:
+    request_token = set_request_id(request_id)
     db = SessionLocal()
     dao = AssessmentDAO(db)
     try:
@@ -132,3 +134,4 @@ def run_assessment_task(task_id: str) -> None:
         )
     finally:
         db.close()
+        reset_request_id(request_token)
