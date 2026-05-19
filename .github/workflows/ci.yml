@@ -3,8 +3,25 @@ name: CI
 on:
   push:
     branches: [main, develop, totoro_develop]
+    # 仅文档/许可证变动时不必跑 CI，减少无谓消耗
+    paths-ignore:
+      - '**/*.md'
+      - 'LICENSE'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/PULL_REQUEST_TEMPLATE.md'
   pull_request:
     branches: [main, develop]
+    paths-ignore:
+      - '**/*.md'
+      - 'LICENSE'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/PULL_REQUEST_TEMPLATE.md'
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: '手动触发原因 / Reason for manual run'
+        required: false
+        default: 'manual'
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -15,6 +32,10 @@ jobs:
     name: Backend (ruff + pytest)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
+    strategy:
+      # 单独 job 失败不阻断其他 job，便于一次看全所有错误
+      fail-fast: false
 
     env:
       # 测试使用内存 SQLite，下面的 MySQL 配置仅作占位，避免 Settings 校验失败
@@ -42,7 +63,9 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-          cache-dependency-path: requirements.txt
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
       - name: Install system deps for document parsing
         # 仅安装 antiword/poppler 用于 .doc / pdf 文本测试；不装 PaddleOCR 体系
@@ -51,23 +74,31 @@ jobs:
           sudo apt-get install -y --no-install-recommends antiword poppler-utils
 
       - name: Install Python deps (skip heavy OCR stack)
-        # PaddlePaddle/PaddleOCR/pdf2image 在 CI 中不参与单测，跳过以加速
+        # PaddlePaddle/PaddleOCR/pdf2image 仅 Worker 在生产用，单测不依赖；CI 跳过以提速
+        # ruff / pytest 等开发依赖来自 requirements-dev.txt
         run: |
           python -m pip install --upgrade pip
-          grep -ivE '^(paddlepaddle|paddleocr|pdf2image)' requirements.txt > requirements-ci.txt
-          pip install -r requirements-ci.txt
+          grep -ivE '^(paddlepaddle|paddleocr|pdf2image)' requirements.txt > requirements-runtime-ci.txt
+          pip install -r requirements-runtime-ci.txt
+          pip install -r requirements-dev.txt
 
       - name: Ruff lint
-        run: ruff check .
+        run: ruff check . --output-format=github
 
       - name: Pytest
-        run: pytest
+        # JUnit 报告用于失败时上传 artifact
+        run: pytest --junitxml=pytest-report.xml
+
+      - name: Upload pytest report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-report-${{ github.run_id }}
+          path: pytest-report.xml
+          retention-days: 7
 
       - name: Alembic upgrade dry-run (sqlite)
         # 用临时 sqlite 跑一次 upgrade head，确保迁移脚本可加载、无语法/链路错误
-        env:
-          # 让 alembic env 能拿到一个可连接的 URL；env.py 会读取 settings
-          MYSQL_HOST: 127.0.0.1
         run: |
           python -c "from alembic.config import Config; from alembic import command; \
           cfg = Config('alembic.ini'); \
@@ -101,3 +132,11 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Upload dist on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist-${{ github.run_id }}
+          path: frontend-vue/dist
+          retention-days: 3

@@ -1,0 +1,11 @@
+# 开发与测试依赖（不进生产镜像）
+#
+# 本地完整安装：
+#   pip install -r requirements.txt
+#   pip install -r requirements-dev.txt
+#
+# CI 中可以单独安装本文件，再叠加运行时依赖（按需剔除 PaddleOCR 等重型包）。
+# 故本文件不再级联 -r requirements.txt，便于复用。
+
+pytest>=8.0,<9.0
+ruff>=0.8,<1.0

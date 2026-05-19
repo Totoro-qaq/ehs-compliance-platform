@@ -1,8 +1,20 @@
 # EHS Compliance Evaluation Platform
 
+[![CI](https://github.com/Totoro-qaq/ehs-compliance-platform/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/Totoro-qaq/ehs-compliance-platform/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.13-blue)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688)](https://fastapi.tiangolo.com/)
+[![Vue 3](https://img.shields.io/badge/Vue-3.5-42b883)](https://vuejs.org/)
+[![Status: Alpha](https://img.shields.io/badge/Status-Alpha-orange)](#项目状态--project-status)
+
+> ⚠️ **项目状态 / Project Status**：当前为 **Alpha**（实验性），核心流程已可跑通，但 API 与数据模型仍可能调整，不建议直接用于生产。Project is in **Alpha**: end-to-end pipeline works, but APIs and data models may still change before the first stable release.
+
 基于 **FastAPI + Vue + Celery + Dify** 的 EHS（环境、健康与安全）合规评价系统。系统支持资料上传、异步文本解析、Dify 工作流分析、评价结果入库、任务进度查询，以及统一 JSON 响应封装。
 
 An **EHS compliance evaluation platform** built with **FastAPI, Vue, Celery, and Dify**. It supports document upload, asynchronous text extraction, Dify workflow analysis, result persistence, task status tracking, and unified JSON response envelopes.
+
+参与贡献请阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 与 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)。安全漏洞请按 [SECURITY.md](SECURITY.md) 流程上报。
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) before contributing. Report security issues via [SECURITY.md](SECURITY.md).
 
 ## 中文说明
 
@@ -47,6 +59,8 @@ python -m venv .venv
 # Windows: .venv\Scripts\activate
 # Linux/macOS: source .venv/bin/activate
 pip install -r requirements.txt
+# 如需运行测试或代码检查，再装一次开发依赖
+pip install -r requirements-dev.txt
 ```
 
 复制环境变量模板：
@@ -280,6 +294,8 @@ python -m venv .venv
 # Windows: .venv\Scripts\activate
 # Linux/macOS: source .venv/bin/activate
 pip install -r requirements.txt
+# Install dev tools (pytest / ruff) only when you need to run tests or lint
+pip install -r requirements-dev.txt
 ```
 
 Create a local `.env` file:
