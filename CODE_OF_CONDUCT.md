@@ -42,7 +42,7 @@
 
 ### 执行
 
-如遇辱骂、骚扰或其他不可接受的行为，请通过 GitHub Issue 私信项目维护者 **@Totoro-qaq** 或发送邮件至 **conduct@example.com**（占位邮箱，正式启用后会更新）。
+如遇辱骂、骚扰或其他不可接受的行为，请通过 GitHub Issue 私信项目维护者 **@Totoro-qaq** 或发送邮件至 **626836554@qq.com** / **msy626836554@gmail.com**。
 
 所有投诉都将被及时、公正地审查与调查。
 
@@ -97,7 +97,7 @@ This Code of Conduct applies within all community spaces and also applies when a
 
 ### Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the maintainers via a private GitHub message to **@Totoro-qaq** or by emailing **conduct@example.com** (placeholder; will be updated when activated).
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the maintainers via a private GitHub message to **@Totoro-qaq** or by emailing **626836554@qq.com** / **msy626836554@gmail.com**.
 
 All complaints will be reviewed and investigated promptly and fairly.
 

@@ -22,7 +22,7 @@
 请通过以下方式私下联系维护者：
 
 1. **首选**：通过 GitHub 的 [Private vulnerability reporting](https://github.com/Totoro-qaq/ehs-compliance-platform/security/advisories/new) 提交 Security Advisory（推荐，自带保密通道）
-2. **备用**：发送邮件至 **security@example.com**（占位邮箱，正式启用后会更新），主题写明 `[SECURITY] EHS Platform - <漏洞简述>`
+2. **备用**：发送邮件至 **626836554@qq.com** 或 **msy626836554@gmail.com**，主题写明 `[SECURITY] EHS Platform - <漏洞简述>`
 
 报告时请尽量包含：
 
@@ -79,7 +79,7 @@ This project is in **Alpha**. Only the latest `develop` branch receives security
 Use one of the following private channels:
 
 1. **Preferred**: open a [GitHub Private Security Advisory](https://github.com/Totoro-qaq/ehs-compliance-platform/security/advisories/new).
-2. **Fallback**: email **security@example.com** (placeholder; will be updated once active) with the subject `[SECURITY] EHS Platform - <short description>`.
+2. **Fallback**: email **626836554@qq.com** or **msy626836554@gmail.com** with the subject `[SECURITY] EHS Platform - <short description>`.
 
 Please include:
 
