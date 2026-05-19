@@ -1,4 +1,7 @@
-# Dependabot 配置：自动检查并提 PR 升级依赖
+# Dependabot 配置：单人项目轻量策略
+# - 月度跑，避免每周一堆 PR 堆积
+# - 限制 PR 数量
+# - 只升级 patch 版本，minor / major 让用户手动评估
 # 文档： https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 version: 2
 updates:
@@ -6,11 +9,11 @@ updates:
   - package-ecosystem: pip
     directory: "/"
     schedule:
-      interval: weekly
-      day: monday
+      interval: monthly
+      day: "monday"
       time: "09:00"
       timezone: "Asia/Shanghai"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
     target-branch: develop
     labels:
       - dependencies
@@ -19,13 +22,16 @@ updates:
       prefix: chore(deps)
       include: scope
     groups:
-      # 把次/补丁版本升级合并成一个 PR，减少噪音
-      python-minor-patch:
+      python-patches:
         update-types:
-          - minor
           - patch
     ignore:
-      # PaddleOCR 体系版本升级常带兼容性破坏，手动跟进
+      # 仅升级 patch；minor / major 手动评估
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
+      # PaddleOCR 体系版本升级常带兼容性破坏，完全忽略
       - dependency-name: paddlepaddle
       - dependency-name: paddleocr
       - dependency-name: pdf2image
@@ -34,11 +40,11 @@ updates:
   - package-ecosystem: npm
     directory: "/frontend-vue"
     schedule:
-      interval: weekly
-      day: monday
+      interval: monthly
+      day: "monday"
       time: "09:00"
       timezone: "Asia/Shanghai"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
     target-branch: develop
     labels:
       - dependencies
@@ -47,10 +53,14 @@ updates:
       prefix: chore(deps)
       include: scope
     groups:
-      npm-minor-patch:
+      npm-patches:
         update-types:
-          - minor
           - patch
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
 
   # ---- GitHub Actions 自身 ----
   - package-ecosystem: github-actions
@@ -59,7 +69,7 @@ updates:
       interval: monthly
       time: "09:00"
       timezone: "Asia/Shanghai"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 1
     target-branch: develop
     labels:
       - dependencies
