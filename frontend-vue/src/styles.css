@@ -626,8 +626,9 @@ input::placeholder { color: var(--text-tertiary); }
 }
 
 .features-grid {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px;
-  max-width: 1100px; margin: 0 auto;
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px;
+  align-items: stretch;
+  max-width: 1200px; margin: 0 auto;
 }
 
 .feature-card {
@@ -635,6 +636,8 @@ input::placeholder { color: var(--text-tertiary); }
   border: 1px solid var(--border); border-radius: var(--radius-lg);
   transition: all 250ms ease;
   position: relative; overflow: hidden;
+  display: flex; flex-direction: column;
+  height: 100%;
 }
 .feature-card::before {
   content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
