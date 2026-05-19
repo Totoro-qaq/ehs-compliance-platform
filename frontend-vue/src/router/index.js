@@ -9,9 +9,14 @@ const routes = [
     meta: { public: true, layout: 'blank' },
   },
   { path: '/', redirect: '/home' },
-  { path: '/home', name: 'home', component: () => import('../views/HomeView.vue') },
+  { path: '/home', name: 'home', component: () => import('../views/HomeView.vue'), meta: { public: true } },
   { path: '/tasks', name: 'tasks', component: () => import('../views/TasksView.vue') },
-  { path: '/orgs', name: 'orgs', component: () => import('../views/OrgsView.vue'), meta: { adminOnly: true } },
+  {
+    path: '/orgs',
+    name: 'orgs',
+    component: () => import('../views/OrgsView.vue'),
+    meta: { adminOnly: true },
+  },
   { path: '/settings', name: 'settings', component: () => import('../views/SettingsView.vue') },
   { path: '/:pathMatch(.*)*', redirect: '/home' },
 ];
