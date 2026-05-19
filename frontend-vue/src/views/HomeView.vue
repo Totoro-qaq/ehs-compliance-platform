@@ -11,10 +11,14 @@ const totalOrgs = ref('-');
 
 async function loadStats() {
   try {
-    const [tasks, orgs] = await Promise.all([listTasks(1, 1), listOrganizations(1, 1)]);
+    const [tasks, success, orgs] = await Promise.all([
+      listTasks(1, 1),
+      listTasks(1, 1, { status: 'SUCCESS' }),
+      listOrganizations(1, 1),
+    ]);
     totalTasks.value = tasks?.total ?? 0;
+    successTasks.value = success?.total ?? 0;
     totalOrgs.value = orgs?.total ?? 0;
-    successTasks.value = '-';
   } catch {
     /* 静默失败 */
   }
