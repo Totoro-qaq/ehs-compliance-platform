@@ -1,6 +1,6 @@
 name: Release
 
-# 推送形如 v1.2.3 的 tag 时自动发布 Release，附带前端构建产物
+# 推送 v*.*.* tag 时自动发布 Release，使用 GitHub 原生的 release notes 生成
 on:
   push:
     tags:
@@ -24,7 +24,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # 拉全历史，便于自动生成 changelog
+          fetch-depth: 0
 
       - name: Resolve tag
         id: tag
@@ -55,31 +55,13 @@ jobs:
           cd ..
           zip -rq "ehs-frontend-${{ steps.tag.outputs.ref }}.zip" frontend-vue/dist
 
-      - name: Generate release notes
-        id: notes
-        uses: mikepenz/release-changelog-builder-action@v5
-        with:
-          configurationJson: |
-            {
-              "categories": [
-                {"title": "## Features",   "labels": ["feature", "enhancement", "feat"]},
-                {"title": "## Bug Fixes",  "labels": ["bug", "fix"]},
-                {"title": "## Documentation", "labels": ["docs", "documentation"]},
-                {"title": "## CI / Build", "labels": ["ci", "build"]},
-                {"title": "## Dependencies", "labels": ["dependencies"]},
-                {"title": "## Other",      "labels": []}
-              ],
-              "template": "#{{CHANGELOG}}\n\n**Full Changelog**: #{{RELEASE_DIFF}}"
-            }
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create / update GitHub Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.ref }}
           name: ${{ steps.tag.outputs.ref }}
-          body: ${{ steps.notes.outputs.changelog }}
+          # 使用 GitHub 官方原生的 release notes 生成器，按 PR 自动归类
+          generate_release_notes: true
           draft: false
           prerelease: ${{ contains(steps.tag.outputs.ref, '-') }}
           files: |
