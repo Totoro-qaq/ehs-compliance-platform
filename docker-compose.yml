@@ -19,8 +19,8 @@ services:
     ports:
       - "3306:3306"
     environment:
-      MYSQL_ROOT_PASSWORD: "123456"
-      MYSQL_DATABASE: ehs_system
+      MYSQL_ROOT_PASSWORD: "${MYSQL_PASSWORD:-changeme}"
+      MYSQL_DATABASE: "${MYSQL_DB:-ehs_system}"
       MYSQL_CHARSET: utf8mb4
     volumes:
       - ehs_mysql_data:/var/lib/mysql
@@ -33,7 +33,7 @@ services:
   api:
     build: .
     container_name: ehs_api
-    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    command: sh -c "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000"
     ports:
       - "8000:8000"
     volumes:
@@ -55,6 +55,26 @@ services:
     build: .
     container_name: ehs_worker
     command: celery -A app.tasks.worker:celery_app worker --loglevel=info
+    volumes:
+      - .:/app
+      - ehs_uploads:/app/uploads
+      - paddle_models:/root/.paddleocr
+    env_file: .env
+    environment:
+      MYSQL_HOST: mysql
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+
+  beat:
+    build: .
+    container_name: ehs_beat
+    command: celery -A app.tasks.worker:celery_app beat --loglevel=info
     volumes:
       - .:/app
       - ehs_uploads:/app/uploads

@@ -130,6 +130,7 @@ cp .env.example .env.local
 | `JWT_SECRET` | JWT 签名密钥，生产环境必须使用强随机值 | `change-me-in-production-use-long-random-secret` |
 | `JWT_EXPIRE_MINUTES` | JWT 有效期，单位分钟 | `60` |
 | `ADMIN_API_KEY` | 管理接口可选 `X-Admin-Key` | 空 |
+| `AUTH_CAPTCHA_REQUIRED` | 登录时是否强制校验图形验证码 | `true` |
 | `BOOTSTRAP_ADMIN_USERNAME` | 首次启动时自动创建的管理员用户名 | `admin` |
 | `BOOTSTRAP_ADMIN_PASSWORD` | 首次启动时自动创建管理员的密码；为空则不创建 | 空 |
 | `CORS_ORIGINS` | CORS 允许来源，逗号分隔；生产不要使用 `*` | `*` |
@@ -221,7 +222,7 @@ uploads/YYYY/MM/DD/{uuid}_{safe_original_name}.{ext}
 | `POST` | `/api/v1/assessment` | 上传文件并创建评价任务 |
 | `GET` | `/api/v1/assessment` | 查询评价任务列表 |
 | `GET / DELETE` | `/api/v1/assessment/{task_id}` | 查询 / 软删除任务 |
-| `GET` | `/api/v1/assessment/{task_id}/events` | SSE 任务进度 |
+| `GET` | `/api/v1/assessment/{task_id}/progress` | SSE 任务进度 |
 | `*` | `/api/v1/admin/*` | 管理接口 |
 
 ### 测试与检查
@@ -365,6 +366,7 @@ cp .env.example .env.local
 | `JWT_SECRET` | JWT signing secret; use a strong random value in production | `change-me-in-production-use-long-random-secret` |
 | `JWT_EXPIRE_MINUTES` | JWT lifetime in minutes | `60` |
 | `ADMIN_API_KEY` | Optional `X-Admin-Key` for admin APIs | empty |
+| `AUTH_CAPTCHA_REQUIRED` | Whether login must validate image captcha | `true` |
 | `BOOTSTRAP_ADMIN_USERNAME` | Bootstrap admin username | `admin` |
 | `BOOTSTRAP_ADMIN_PASSWORD` | Bootstrap admin password; empty disables auto-creation | empty |
 | `CORS_ORIGINS` | Allowed CORS origins, comma-separated; avoid `*` in production | `*` |
@@ -456,7 +458,7 @@ uploads/YYYY/MM/DD/{uuid}_{safe_original_name}.{ext}
 | `POST` | `/api/v1/assessment` | Upload a file and create an assessment task |
 | `GET` | `/api/v1/assessment` | List assessment tasks |
 | `GET / DELETE` | `/api/v1/assessment/{task_id}` | Get / soft-delete a task |
-| `GET` | `/api/v1/assessment/{task_id}/events` | SSE task progress |
+| `GET` | `/api/v1/assessment/{task_id}/progress` | SSE task progress |
 | `*` | `/api/v1/admin/*` | Admin APIs |
 
 ### Checks
