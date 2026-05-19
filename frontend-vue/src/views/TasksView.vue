@@ -391,12 +391,7 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
         </label>
         <label class="filter-field filter-search">
           <span class="label-text">搜索</span>
-          <input
-            v-model="searchText"
-            type="search"
-            placeholder="文件名或任务 ID"
-            @input="onSearchInput"
-          />
+          <input v-model="searchText" type="search" placeholder="文件名或任务 ID" @input="onSearchInput" />
         </label>
         <button type="button" class="btn-secondary filter-reset" @click="resetFilters">重置</button>
       </div>
