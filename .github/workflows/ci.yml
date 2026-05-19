@@ -3,8 +3,25 @@ name: CI
 on:
   push:
     branches: [main, develop, totoro_develop]
+    # 仅文档/许可证变动时不必跑 CI，减少无谓消耗
+    paths-ignore:
+      - '**/*.md'
+      - 'LICENSE'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/PULL_REQUEST_TEMPLATE.md'
   pull_request:
     branches: [main, develop]
+    paths-ignore:
+      - '**/*.md'
+      - 'LICENSE'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/PULL_REQUEST_TEMPLATE.md'
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: '手动触发原因 / Reason for manual run'
+        required: false
+        default: 'manual'
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -15,6 +32,10 @@ jobs:
     name: Backend (ruff + pytest)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
+    strategy:
+      # 单独 job 失败不阻断其他 job，便于一次看全所有错误
+      fail-fast: false
 
     env:
       # 测试使用内存 SQLite，下面的 MySQL 配置仅作占位，避免 Settings 校验失败
@@ -62,16 +83,22 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Ruff lint
-        run: ruff check .
+        run: ruff check . --output-format=github
 
       - name: Pytest
-        run: pytest
+        # JUnit 报告用于失败时上传 artifact
+        run: pytest --junitxml=pytest-report.xml
+
+      - name: Upload pytest report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-report-${{ github.run_id }}
+          path: pytest-report.xml
+          retention-days: 7
 
       - name: Alembic upgrade dry-run (sqlite)
         # 用临时 sqlite 跑一次 upgrade head，确保迁移脚本可加载、无语法/链路错误
-        env:
-          # 让 alembic env 能拿到一个可连接的 URL；env.py 会读取 settings
-          MYSQL_HOST: 127.0.0.1
         run: |
           python -c "from alembic.config import Config; from alembic import command; \
           cfg = Config('alembic.ini'); \
@@ -105,3 +132,11 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Upload dist on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist-${{ github.run_id }}
+          path: frontend-vue/dist
+          retention-days: 3
