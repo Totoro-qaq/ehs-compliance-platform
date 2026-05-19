@@ -1,0 +1,9 @@
+# GitHub Sponsors / 赞助入口
+# 文档： https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
+#
+# 当前留空：不展示 Sponsor 按钮，仅作为占位文件，等需要时再启用。
+# Currently disabled: no sponsor button is shown. Enable a key below when ready.
+
+# github: [Totoro-qaq]
+# custom:
+#   - 'https://buymeacoffee.com/your-handle'
