@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全漏洞 / Security Vulnerability
+    url: https://github.com/Totoro-qaq/ehs-compliance-platform/security/advisories/new
+    about: 请勿公开提交安全漏洞，使用私有 Security Advisory 通道。Please report security issues privately via Security Advisory.
