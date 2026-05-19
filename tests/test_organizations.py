@@ -26,6 +26,16 @@ class TestOrganizations:
         body = resp.json()['data']
         assert body['total'] >= 1
 
+    def test_user_list_only_own_org(self, client: TestClient, user_token: str):
+        resp = client.get(
+            '/api/v1/organizations',
+            headers={'Authorization': f'Bearer {user_token}'},
+        )
+        assert resp.status_code == 200
+        body = resp.json()['data']
+        assert body['total'] == 1
+        assert len(body['items']) == 1
+
     def test_admin_update_org(self, client: TestClient, admin_token: str):
         # 先创建
         resp = client.post(

@@ -18,6 +18,7 @@ _TEST_ENGINE = create_engine(
     poolclass=StaticPool,
 )
 
+
 # 复制生产环境的软删除过滤器到测试 session
 @event.listens_for(Session, 'do_orm_execute', propagate=True)
 def _test_soft_delete_filter(orm_execute_state):
@@ -35,7 +36,9 @@ def _test_soft_delete_filter(orm_execute_state):
     )
 
 
-TestSessionLocal = sessionmaker(bind=_TEST_ENGINE, autoflush=False, autocommit=False, expire_on_commit=False)
+TestSessionLocal = sessionmaker(
+    bind=_TEST_ENGINE, autoflush=False, autocommit=False, expire_on_commit=False
+)
 
 
 # 在模块加载阶段就把生产 SessionLocal 替换为内存 sqlite 版本：
@@ -55,6 +58,12 @@ def _create_tables():
     Base.metadata.create_all(bind=_TEST_ENGINE)
     yield
     Base.metadata.drop_all(bind=_TEST_ENGINE)
+
+
+@pytest.fixture(autouse=True)
+def _disable_captcha_for_unit_tests(monkeypatch):
+    """单测默认不依赖 Redis 验证码；需要覆盖验证码行为的测试可重新设为 True。"""
+    monkeypatch.setattr(settings, 'auth_captcha_required', False)
 
 
 @pytest.fixture()
@@ -108,6 +117,7 @@ def admin_token(db: Session) -> str:
     db.flush()
 
     from app.services.auth_service import create_access_token
+
     token = create_access_token(
         username=admin.username,
         role=admin.role.value,
@@ -141,6 +151,7 @@ def user_token(db: Session) -> str:
     db.flush()
 
     from app.services.auth_service import create_access_token
+
     token = create_access_token(
         username=user.username,
         role=user.role.value,
