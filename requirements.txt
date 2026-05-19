@@ -20,7 +20,7 @@ paddlepaddle>=2.6,<3.0
 paddleocr>=2.9,<3.0
 pdf2image>=1.17,<2.0
 # 验证码图片生成
-Pillow>=10.0,<12.0
+Pillow>=12.2.0,<13.0
 # LangGraph 工作流演示（utils/langgraph_ehs_demo.py）
 langgraph>=1.0,<2.0
 langchain-core>=1.0,<2.0
