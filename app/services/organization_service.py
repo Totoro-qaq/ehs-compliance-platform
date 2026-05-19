@@ -3,10 +3,15 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.exceptions import EHSException
 from app.dao.organization_dao import OrganizationDAO
+from app.models.db_models import AccountRole
 from app.schemas.auth_context import CurrentUser
 from app.schemas.organization_schema import OrganizationCreate, OrganizationOut, OrganizationUpdate
 from app.schemas.pagination import Page
-from app.services.access_control import ensure_admin, ensure_organization_scope
+from app.services.access_control import (
+    ensure_admin,
+    ensure_organization_scope,
+    ensure_user_has_organization,
+)
 
 
 class OrganizationService:
@@ -27,10 +32,19 @@ class OrganizationService:
         return OrganizationOut.model_validate(org)
 
     @staticmethod
-    def list_page(*, db: Session, actor: CurrentUser, page: int, page_size: int) -> Page[OrganizationOut]:
-        ensure_admin(actor)
+    def list_page(
+        *, db: Session, actor: CurrentUser, page: int, page_size: int
+    ) -> Page[OrganizationOut]:
         dao = OrganizationDAO(db)
-        items, total = dao.list_page(page=page, page_size=page_size)
+        if actor.role == AccountRole.ADMIN:
+            items, total = dao.list_page(page=page, page_size=page_size)
+        else:
+            org_id = ensure_user_has_organization(actor)
+            org = dao.get_by_id(org_id)
+            if org is None:
+                raise EHSException('公司不存在', code='ORG_NOT_FOUND', status_code=404)
+            items = [org] if page == 1 else []
+            total = 1
         return Page[OrganizationOut](
             items=[OrganizationOut.model_validate(x) for x in items],
             total=total,

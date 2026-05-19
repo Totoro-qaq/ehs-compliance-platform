@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.captcha import create_captcha, verify_captcha
+from app.core.config import settings
 from app.core.db import get_db
 from app.core.exceptions import EHSException
 from app.schemas.auth_context import CurrentUser
@@ -55,6 +56,22 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     )
 
 
+def _validate_login_captcha(payload: LoginRequest) -> None:
+    """
+    登录验证码校验。
+
+    默认强制校验；测试或内网部署可关闭 AUTH_CAPTCHA_REQUIRED。关闭时若客户端仍传了验证码，
+    也按一次性验证码校验处理，避免前后端行为分叉。
+    """
+    has_any = bool(payload.captcha_id or payload.captcha_code)
+    if not settings.auth_captcha_required and not has_any:
+        return
+    if not payload.captcha_id or not payload.captcha_code:
+        raise EHSException('请同时提供验证码 ID 和验证码', code='CAPTCHA_REQUIRED', status_code=400)
+    if not verify_captcha(payload.captcha_id, payload.captcha_code):
+        raise EHSException('验证码错误或已过期', code='CAPTCHA_INVALID', status_code=400)
+
+
 @router.post(
     '/login',
     response_model=TokenOut,
@@ -68,16 +85,8 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     ),
 )
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
-    # 验证码校验
-    if payload.captcha_id and payload.captcha_code:
-        if not verify_captcha(payload.captcha_id, payload.captcha_code):
-            raise EHSException('验证码错误或已过期', code='CAPTCHA_INVALID', status_code=400)
-    elif payload.captcha_id or payload.captcha_code:
-        raise EHSException('请同时提供验证码 ID 和验证码', code='CAPTCHA_REQUIRED', status_code=400)
-
-    return auth_service.login(
-        db, identifier=payload.identifier, password=payload.password
-    )
+    _validate_login_captcha(payload)
+    return auth_service.login(db, identifier=payload.identifier, password=payload.password)
 
 
 @router.post(

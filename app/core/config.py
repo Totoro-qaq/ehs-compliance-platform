@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     # 可选：脚本/运维兼容；与 JWT 管理员二选一或同时配置
     admin_api_key: str = ''
 
+    # 登录验证码：默认启用。测试环境可通过 monkeypatch 或环境变量关闭，避免依赖真实 Redis。
+    auth_captcha_required: bool = True
+
     # 首次启动若库中无该用户则创建（密码仅存哈希）；留空则不自动创建
     bootstrap_admin_username: str = 'admin'
     bootstrap_admin_password: str = ''
