@@ -11,6 +11,8 @@ from zipfile import BadZipFile, ZipFile
 
 from pypdf import PdfReader
 
+from app.core.config import settings
+
 if TYPE_CHECKING:
     from paddleocr import PaddleOCR
 
@@ -49,7 +51,13 @@ def _extract_text_pypdf(path: Path) -> str:
 
 def _extract_text_ocr(path: Path) -> str:
     """Convert each PDF page to an image and OCR it with PaddleOCR."""
-    from pdf2image import convert_from_path
+    try:
+        from pdf2image import convert_from_path
+    except ImportError as exc:
+        raise DocumentTextExtractError(
+            'PDF OCR requires optional dependencies. Install requirements-ocr.txt and set '
+            'PDF_OCR_ENABLED=true, or upload a text-layer PDF.'
+        ) from exc
 
     images = convert_from_path(str(path), dpi=200)
     ocr = _get_ocr_engine()
@@ -148,6 +156,13 @@ def extract_text_from_pdf_file(file_path: str | Path, *, max_chars: int = 200_00
     try:
         text = _extract_text_pypdf(path)
         if len(text) < _MIN_TEXT_THRESHOLD:
+            if not settings.pdf_ocr_enabled:
+                _log.info(
+                    'PDF text layer too short (%d chars) and OCR is disabled: %s',
+                    len(text),
+                    path.name,
+                )
+                return text[:max_chars]
             _log.info('PDF text layer too short (%d chars), falling back to OCR: %s', len(text), path.name)
             text = _extract_text_ocr(path)
 

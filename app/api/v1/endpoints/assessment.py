@@ -95,6 +95,20 @@ def get_assessment(
     return AssessmentService.get_assessment_task(db=db, actor=actor, task_id=task_id)
 
 
+@router.post(
+    '/{task_id}/requeue',
+    response_model=AssessmentCreateResponse,
+    summary='重新分析失败任务',
+    description='仅失败状态的评价任务可以重新投递。普通用户只能重新投递自己创建的任务，管理员不受此限制。',
+)
+def requeue_assessment(
+    task_id: str,
+    actor: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Session = Depends(get_db),
+):
+    return AssessmentService.requeue_failed_task(db=db, actor=actor, task_id=task_id)
+
+
 @router.delete(
     '/{task_id}',
     status_code=204,

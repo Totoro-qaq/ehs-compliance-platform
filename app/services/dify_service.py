@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 import re
 import time
 from typing import Any
@@ -11,17 +12,52 @@ import httpx
 
 from app.core.config import settings
 from app.core.logging_setup import get_logger
+from app.core.request_context import TRACEPARENT_HEADER, get_traceparent
 from app.schemas.ehs_schema import EHSAssessmentResult
 
 _log = get_logger(__name__)
+
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
 class DifyWorkflowError(Exception):
     """Dify 调用失败或返回无法解析。"""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        retryable: bool = False,
+        status_code: int | None = None,
+        attempts: int = 1,
+    ) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+        self.status_code = status_code
+        self.attempts = attempts
+
 
 def _base_url() -> str:
     return settings.dify_base_url.rstrip('/')
+
+
+def _retry_delay_seconds(attempt: int) -> float:
+    base = settings.dify_retry_initial_delay_seconds * (2 ** max(attempt - 1, 0))
+    capped = min(base, settings.dify_retry_max_delay_seconds)
+    jitter = random.uniform(0, settings.dify_retry_jitter_seconds)
+    return min(capped + jitter, settings.dify_retry_max_delay_seconds)
+
+
+def _build_headers() -> dict[str, str]:
+    headers = {
+        'Authorization': f'Bearer {settings.dify_api_key}',
+        'Content-Type': 'application/json',
+        'User-Agent': settings.http_user_agent,
+    }
+    traceparent = get_traceparent()
+    if traceparent:
+        headers[TRACEPARENT_HEADER] = traceparent
+    return headers
 
 
 def run_workflow_blocking(
@@ -42,36 +78,85 @@ def run_workflow_blocking(
         'response_mode': 'blocking',
         'user': user,
     }
-    headers = {
-        'Authorization': f'Bearer {settings.dify_api_key}',
-        'Content-Type': 'application/json',
-        'User-Agent': settings.http_user_agent,
-    }
+    headers = _build_headers()
+    max_attempts = settings.dify_retry_max_attempts
     started = time.perf_counter()
-    try:
-        with httpx.Client(timeout=timeout_sec) as client:
-            resp = client.post(url, json=payload, headers=headers)
-            resp.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        elapsed_ms = int((time.perf_counter() - started) * 1000)
-        err_body = exc.response.text
-        _log.warning(
-            'Dify workflow HTTP error status=%s elapsed_ms=%s body=%s',
-            exc.response.status_code,
-            elapsed_ms,
-            err_body[:2000],
+
+    for attempt in range(1, max_attempts + 1):
+        attempt_started = time.perf_counter()
+        try:
+            with httpx.Client(timeout=timeout_sec) as client:
+                resp = client.post(url, json=payload, headers=headers)
+                resp.raise_for_status()
+                break
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
+            retryable = status_code in _RETRYABLE_STATUS_CODES
+            elapsed_ms = int((time.perf_counter() - attempt_started) * 1000)
+            err_body = exc.response.text
+            _log.warning(
+                'Dify workflow HTTP error status=%s attempt=%s max_attempts=%s retryable=%s '
+                'elapsed_ms=%s body=%s',
+                status_code,
+                attempt,
+                max_attempts,
+                retryable,
+                elapsed_ms,
+                err_body[:2000],
+            )
+            if not retryable or attempt >= max_attempts:
+                raise DifyWorkflowError(
+                    f'Dify 请求失败 HTTP {status_code}: {err_body[:500]}',
+                    retryable=retryable,
+                    status_code=status_code,
+                    attempts=attempt,
+                ) from exc
+        except httpx.TimeoutException as exc:
+            retryable = settings.dify_retry_on_timeout
+            elapsed_ms = int((time.perf_counter() - attempt_started) * 1000)
+            _log.warning(
+                'Dify workflow timeout timeout_sec=%s attempt=%s max_attempts=%s retryable=%s '
+                'elapsed_ms=%s',
+                timeout_sec,
+                attempt,
+                max_attempts,
+                retryable,
+                elapsed_ms,
+            )
+            if not retryable or attempt >= max_attempts:
+                raise DifyWorkflowError(
+                    f'Dify 请求超时: {timeout_sec}s',
+                    retryable=retryable,
+                    attempts=attempt,
+                ) from exc
+        except httpx.RequestError as exc:
+            elapsed_ms = int((time.perf_counter() - attempt_started) * 1000)
+            _log.warning(
+                'Dify workflow network error attempt=%s max_attempts=%s retryable=true '
+                'elapsed_ms=%s error=%s',
+                attempt,
+                max_attempts,
+                elapsed_ms,
+                exc,
+            )
+            if attempt >= max_attempts:
+                raise DifyWorkflowError(
+                    f'Dify 网络错误: {exc}',
+                    retryable=True,
+                    attempts=attempt,
+                ) from exc
+
+        delay = _retry_delay_seconds(attempt)
+        _log.info(
+            'Dify workflow retry scheduled attempt=%s next_attempt=%s max_attempts=%s delay_sec=%.2f',
+            attempt,
+            attempt + 1,
+            max_attempts,
+            delay,
         )
-        raise DifyWorkflowError(
-            f'Dify 请求失败 HTTP {exc.response.status_code}: {err_body[:500]}'
-        ) from exc
-    except httpx.TimeoutException as exc:
-        elapsed_ms = int((time.perf_counter() - started) * 1000)
-        _log.warning('Dify workflow timeout timeout_sec=%s elapsed_ms=%s', timeout_sec, elapsed_ms)
-        raise DifyWorkflowError(f'Dify 请求超时: {timeout_sec}s') from exc
-    except httpx.RequestError as exc:
-        elapsed_ms = int((time.perf_counter() - started) * 1000)
-        _log.warning('Dify workflow network error elapsed_ms=%s error=%s', elapsed_ms, exc)
-        raise DifyWorkflowError(f'Dify 网络错误: {exc}') from exc
+        time.sleep(delay)
+    else:
+        raise DifyWorkflowError('Dify 请求失败：重试次数已耗尽', retryable=True, attempts=max_attempts)
 
     try:
         payload = resp.json()
@@ -83,8 +168,9 @@ def run_workflow_blocking(
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     data = payload.get('data') if isinstance(payload, dict) else {}
     _log.info(
-        'Dify workflow completed elapsed_ms=%s task_id=%s workflow_run_id=%s status=%s',
+        'Dify workflow completed elapsed_ms=%s attempts=%s task_id=%s workflow_run_id=%s status=%s',
         elapsed_ms,
+        attempt,
         payload.get('task_id') if isinstance(payload, dict) else None,
         payload.get('workflow_run_id') if isinstance(payload, dict) else None,
         data.get('status') if isinstance(data, dict) else None,

@@ -9,7 +9,13 @@ from celery.signals import worker_process_init
 from app.core.config import settings
 from app.core.db import SessionLocal
 from app.core.logging_setup import configure_logging, get_logger
-from app.core.request_context import reset_request_id, set_request_id
+from app.core.request_context import (
+    get_trace_id,
+    reset_request_id,
+    reset_trace_context,
+    set_request_id,
+    set_trace_context,
+)
 from app.core.sse_broker import publish_task_progress
 from app.dao.assessment_dao import AssessmentDAO
 from app.models.db_models import TaskStatus
@@ -76,8 +82,13 @@ def _load_body_text(
 
 
 @celery_app.task(name='app.tasks.worker.run_assessment_task')
-def run_assessment_task(task_id: str, request_id: str | None = None) -> None:
+def run_assessment_task(
+    task_id: str,
+    request_id: str | None = None,
+    trace_id: str | None = None,
+) -> None:
     request_token = set_request_id(request_id)
+    trace_token = set_trace_context(trace_id=trace_id)
     db = SessionLocal()
     dao = AssessmentDAO(db)
     try:
@@ -86,6 +97,12 @@ def run_assessment_task(task_id: str, request_id: str | None = None) -> None:
             _log.warning('Assessment task does not exist: task_id=%s', task_id)
             return
 
+        _log.info(
+            'Assessment task started task_id=%s request_id=%s trace_id=%s',
+            task_id,
+            request_id,
+            get_trace_id(),
+        )
         dao.update_status(task_id=task_id, status=TaskStatus.PARSING, progress=12)
         publish_task_progress(task_id, TaskStatus.PARSING.value, 12)
         body = _load_body_text(task_id, task.file_path, task.filename, task.parsed_text, dao)
@@ -134,4 +151,5 @@ def run_assessment_task(task_id: str, request_id: str | None = None) -> None:
         )
     finally:
         db.close()
+        reset_trace_context(trace_token)
         reset_request_id(request_token)
