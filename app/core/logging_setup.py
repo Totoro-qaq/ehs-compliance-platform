@@ -7,12 +7,14 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from app.core.request_context import get_request_id
+from app.core.request_context import get_request_id, get_span_id, get_trace_id
 
 
 class RequestIdFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         record.request_id = get_request_id()
+        record.trace_id = get_trace_id()
+        record.span_id = get_span_id()
         return True
 
 
@@ -44,7 +46,8 @@ class AppLogger:
         # 时间 | 级别 | request_id | logger 名 | 源文件路径:行号 | 消息（异常时用 exception 可带堆栈）
         line_fmt = (
             '%(asctime)s | %(levelname)-8s | request_id=%(request_id)s | '
-            '%(name)s | %(pathname)s:%(lineno)d | %(message)s'
+            'trace_id=%(trace_id)s | span_id=%(span_id)s | %(name)s | '
+            '%(pathname)s:%(lineno)d | %(message)s'
         )
         date_fmt = '%Y-%m-%d %H:%M:%S'
         formatter = logging.Formatter(fmt=line_fmt, datefmt=date_fmt)

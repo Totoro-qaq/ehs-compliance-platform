@@ -25,6 +25,8 @@ class TestAssessmentCRUD:
         assert resp.headers['X-Request-Id'] == 'test-request-id'
         delay.assert_called_once()
         assert delay.call_args.args[1] == 'test-request-id'
+        assert isinstance(delay.call_args.args[2], str)
+        assert len(delay.call_args.args[2]) == 32
         return resp.json()['data']['task_id']
 
     def test_create_and_get(self, client: TestClient, admin_token: str):
@@ -80,6 +82,64 @@ class TestAssessmentCRUD:
         resp = client.get('/api/v1/assessment')
         assert resp.status_code == 401
 
+    def test_requeue_failed_task(self, client: TestClient, admin_token: str, db):
+        from app.models.db_models import AssessmentTask, Organization, TaskStatus
+
+        org = db.get(Organization, '00000000-0000-4000-8000-000000000001')
+        if org is None:
+            org = Organization(id='00000000-0000-4000-8000-000000000001', name='Default Test Org')
+            db.add(org)
+            db.flush()
+
+        task = AssessmentTask(
+            organization_id=org.id,
+            filename='failed.txt',
+            content_type='text/plain',
+            file_path='uploads/failed.txt',
+            status=TaskStatus.FAILED,
+            progress=100,
+            error_message='Dify failed',
+            result_json='{"risks": [], "summary": "old"}',
+        )
+        db.add(task)
+        db.flush()
+        delay = MagicMock()
+
+        with patch('app.tasks.worker.run_assessment_task.delay', new=delay):
+            resp = client.post(
+                f'/api/v1/assessment/{task.id}/requeue',
+                headers={
+                    'Authorization': f'Bearer {admin_token}',
+                    'X-Request-Id': 'requeue-request-id',
+                },
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()['data']
+        assert data['task_id'] == task.id
+        assert data['status'] == 'PENDING'
+        delay.assert_called_once()
+        assert delay.call_args.args[0] == task.id
+        assert delay.call_args.args[1] == 'requeue-request-id'
+        assert len(delay.call_args.args[2]) == 32
+
+        db.refresh(task)
+        assert task.status == TaskStatus.PENDING
+        assert task.progress == 0
+        assert task.error_message is None
+        assert task.result_json is None
+
+    def test_requeue_non_failed_task_rejected(self, client: TestClient, admin_token: str):
+        task_id = self._create_task(client, admin_token)
+
+        resp = client.post(
+            f'/api/v1/assessment/{task_id}/requeue',
+            headers={'Authorization': f'Bearer {admin_token}'},
+        )
+
+        assert resp.status_code == 409
+        assert resp.json()['code'] == 'TASK_NOT_REQUEUEABLE'
+
 
 class TestAssessmentPermissions:
     def test_user_cannot_see_other_org_tasks(self, client: TestClient, user_token: str, admin_token: str, db):
@@ -92,6 +152,28 @@ class TestAssessmentPermissions:
         resp = client.get(
             '/api/v1/assessment',
             params={'organization_id': other_org.id},
+            headers={'Authorization': f'Bearer {user_token}'},
+        )
+        assert resp.status_code == 403
+
+    def test_user_cannot_requeue_other_author_task(
+        self,
+        client: TestClient,
+        user_token: str,
+        admin_token: str,
+        db,
+    ):
+        task_id = TestAssessmentCRUD()._create_task(client, admin_token)
+        from app.models.db_models import AssessmentTask, TaskStatus
+
+        task = db.get(AssessmentTask, task_id)
+        task.status = TaskStatus.FAILED
+        task.progress = 100
+        task.error_message = 'failed'
+        db.commit()
+
+        resp = client.post(
+            f'/api/v1/assessment/{task_id}/requeue',
             headers={'Authorization': f'Bearer {user_token}'},
         )
         assert resp.status_code == 403

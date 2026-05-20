@@ -11,6 +11,21 @@ class TestHealthCheck:
         assert resp.status_code == 200
         assert resp.json()['status'] == 'ok'
 
+    def test_request_context_headers(self, client: TestClient):
+        trace_id = '1234567890abcdef1234567890abcdef'
+        resp = client.get(
+            '/healthz',
+            headers={
+                'X-Request-Id': 'unit-request-id',
+                'traceparent': f'00-{trace_id}-1234567890abcdef-01',
+            },
+        )
+
+        assert resp.status_code == 200
+        assert resp.headers['X-Request-Id'] == 'unit-request-id'
+        assert resp.headers['traceparent'].startswith(f'00-{trace_id}-')
+        assert resp.headers['X-Process-Time-Ms'].isdigit()
+
     def test_v1_healthz(self, client: TestClient):
         resp = client.get('/api/v1/healthz')
         assert resp.status_code == 200
@@ -20,6 +35,28 @@ class TestHealthCheck:
             assert body['data']['status'] == 'ok'
         else:
             assert body['status'] == 'ok'
+
+    def test_v1_readyz(self, client: TestClient, monkeypatch):
+        monkeypatch.setattr('app.api.v1.endpoints.system._check_database', lambda: (True, None))
+        monkeypatch.setattr('app.api.v1.endpoints.system._check_redis', lambda: (True, None))
+
+        resp = client.get('/api/v1/readyz')
+        assert resp.status_code == 200
+        body = resp.json()
+        data = body.get('data') or body
+        assert data['status'] == 'ready'
+        assert data['checks']['database']['ok'] is True
+        assert data['checks']['redis']['ok'] is True
+
+    def test_v1_readyz_returns_503_when_dependency_fails(self, client: TestClient, monkeypatch):
+        monkeypatch.setattr('app.api.v1.endpoints.system._check_database', lambda: (True, None))
+        monkeypatch.setattr('app.api.v1.endpoints.system._check_redis', lambda: (False, 'RedisError'))
+
+        resp = client.get('/api/v1/readyz')
+        assert resp.status_code == 503
+        body = resp.json()
+        assert body['status'] == 'degraded'
+        assert body['checks']['redis']['ok'] is False
 
     def test_openapi_schema(self, client: TestClient):
         resp = client.get('/openapi.json')

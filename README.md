@@ -139,7 +139,13 @@ cp .env.example .env.local
 | `DIFY_BASE_URL` | Dify API 根地址，必须包含 `/v1` | `https://api.dify.ai/v1` |
 | `DIFY_WORKFLOW_RESULT_KEY` | Dify 输出中存放 EHS JSON 的变量名 | `result` |
 | `DIFY_WORKFLOW_INPUT_TEXT_KEY` | Dify 输入中文档正文的变量名 | `document_text` |
+| `DIFY_RETRY_MAX_ATTEMPTS` | Dify 可恢复错误最大尝试次数，含首次请求 | `3` |
+| `DIFY_RETRY_INITIAL_DELAY_SECONDS` | Dify 重试初始退避秒数 | `2` |
+| `DIFY_RETRY_MAX_DELAY_SECONDS` | Dify 重试最大退避秒数 | `10` |
+| `DIFY_RETRY_JITTER_SECONDS` | Dify 重试随机抖动秒数 | `0.5` |
+| `DIFY_RETRY_ON_TIMEOUT` | 是否对阻塞超时自动重试；默认关闭以避免重复扣费 | `false` |
 | `HTTP_USER_AGENT` | 调用 Dify 等外部 HTTP 服务时使用的 User-Agent | 内置浏览器 UA |
+| `PDF_OCR_ENABLED` | 是否启用扫描 PDF OCR；默认关闭以减小镜像和内存占用 | `false` |
 | `UPLOAD_DIR` | 上传文件根目录 | `./uploads` |
 | `MAX_UPLOAD_BYTES` | 单文件最大字节数 | `52428800` |
 | `UPLOAD_RETENTION_DAYS` | 软删除文件保留天数，超期由定时任务清理 | `7` |
@@ -180,13 +186,24 @@ response_mode=blocking
 - `run_workflow_blocking()` 对单次 Dify 请求设置默认 `600s` 超时。
 - 发生 HTTP 错误、超时、网络错误、非 JSON 响应或结果结构校验失败时，会抛出 `DifyWorkflowError`。
 - Celery Worker 捕获该错误后，将评价任务标记为 `FAILED`，进度置为 `100`，并把错误摘要写入 `error_message`。
-- 当前代码**不自动重试 Dify 请求**，避免重复扣费、重复工作流执行或写入重复结果。
-- 运维侧可以根据失败原因手动重试：重新上传文件、重新投递任务，或在后续版本中只对 `429`、`5xx`、网络瞬断、超时这类可恢复错误增加有限次数指数退避重试。
-- 不建议自动重试 `400`、`401`、`403`、输出 JSON 结构错误等配置或数据问题，这些应先修正配置、Key、工作流输入输出变量或提示词。
+- 当前代码会对可恢复错误执行有限重试：`429`、`500`、`502`、`503`、`504` 和临时网络错误。
+- 不自动重试 `400`、`401`、`403`、非 JSON 响应、输出 JSON 结构错误或 schema 校验失败；这些通常需要先修正配置、Key、工作流变量或提示词。
+- 阻塞超时默认不自动重试，因为 Dify 侧可能仍在执行，重复请求可能造成重复扣费或重复工作流运行。如确需开启，可设置 `DIFY_RETRY_ON_TIMEOUT=true`。
+- 重试使用指数退避与随机抖动，默认最多 `3` 次尝试；两次重试等待约为 `2s -> 4s`，并受 `DIFY_RETRY_MAX_DELAY_SECONDS` 限制。
+- 日志会记录 `attempt`、`max_attempts`、`retryable`、`status_code` 和 `elapsed_ms`，便于排查外部服务波动。
+
+### 轻量可观测性
+
+- 每个 API 请求都会设置或透传 `X-Request-Id`，并返回给客户端。
+- 支持 W3C `traceparent` 头；未传入时后端会生成新的 `trace_id` 与 `span_id`。
+- API 日志、Worker 日志和 Dify 出站调用日志均包含 `request_id`、`trace_id`、`span_id`，可串联一次上传、异步任务和外部调用。
+- API 响应会返回 `X-Process-Time-Ms`，用于快速定位慢请求。
+- Dify 出站请求会携带 `traceparent`，便于未来接入 OpenTelemetry Collector、Jaeger 或 Tempo。
+- 当前未引入完整 OpenTelemetry Collector，目的是降低小服务器部署成本；需要 APM 时可在此基础上继续接入自动埋点。
 
 ### 日志策略
 
-- API 与 Worker 均使用统一日志格式：时间、级别、logger 名、源码路径、行号、消息。
+- API 与 Worker 均使用统一日志格式：时间、级别、`request_id`、`trace_id`、`span_id`、logger 名、源码路径、行号、消息。
 - 日志同时输出到控制台和文件。
 - API 默认写入 `logs/ehs_api.log`。
 - Worker 默认写入 `logs/ehs_worker.log`。
@@ -206,6 +223,7 @@ uploads/YYYY/MM/DD/{uuid}_{safe_original_name}.{ext}
 - 支持扩展名：`.pdf`、`.txt`、`.doc`、`.docx`、`.csv`。
 - 原始文件名会经过安全校验，禁止路径穿越、空文件名和不支持的扩展名。
 - `.pdf`、`.doc`、`.docx` 会校验 magic bytes，降低伪造扩展名风险。
+- 默认轻量镜像只解析 PDF 文本层；扫描版 PDF 需要使用 OCR 镜像并设置 `PDF_OCR_ENABLED=true`。
 - 单文件大小受 `MAX_UPLOAD_BYTES` 限制，默认 `50 MB`。
 - 数据库任务表保存文件路径、展示文件名、状态、解析文本、结果 JSON 和错误信息。
 - 软删除任务不会立即删除磁盘文件；文件保留 `UPLOAD_RETENTION_DAYS` 天，Celery Beat 中的清理任务每日清理过期上传文件。
@@ -216,14 +234,30 @@ uploads/YYYY/MM/DD/{uuid}_{safe_original_name}.{ext}
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | `GET` | `/healthz` | 健康检查 |
+| `GET` | `/api/v1/healthz` | API v1 健康检查 |
+| `GET` | `/api/v1/readyz` | 就绪检查，验证数据库与 Redis |
 | `POST` | `/api/v1/auth/register` | 注册 |
 | `POST` | `/api/v1/auth/login` | 登录 |
 | `GET / POST` | `/api/v1/organizations` | 组织列表 / 创建 |
 | `POST` | `/api/v1/assessment` | 上传文件并创建评价任务 |
 | `GET` | `/api/v1/assessment` | 查询评价任务列表 |
 | `GET / DELETE` | `/api/v1/assessment/{task_id}` | 查询 / 软删除任务 |
+| `POST` | `/api/v1/assessment/{task_id}/requeue` | 重新分析失败任务 |
 | `GET` | `/api/v1/assessment/{task_id}/progress` | SSE 任务进度 |
 | `*` | `/api/v1/admin/*` | 管理接口 |
+
+失败任务可以在前端任务列表或详情抽屉中点击「重新分析」。后端只允许 `FAILED` 状态重新投递，普通用户只能操作自己创建的任务。
+
+### 备份与恢复
+
+```powershell
+.\scripts\backup.ps1
+.\scripts\restore.ps1 -BackupPath .\backups\20260520-120000
+```
+
+- 备份脚本会导出 MySQL，并压缩 `uploads/`。
+- 恢复脚本会导入 SQL，并默认恢复 `uploads.zip`。
+- 执行前请确认 Docker Compose 中的 MySQL 服务正在运行。
 
 ### 测试与检查
 
@@ -251,6 +285,15 @@ npm run build
 - 当前路由使用 hash history，刷新页面不需要额外 rewrite 配置。
 - 后端 `CORS_ORIGINS` 需要包含前端域名，生产环境不要使用 `*`。
 - 前端只保存 JWT，不保存 Dify Key、数据库密码等后端密钥。
+
+### 小服务器与 OCR
+
+- 默认 Docker 镜像使用 `runtime` target，不安装 PaddleOCR/PaddlePaddle，适合小服务器和文本层 PDF。
+- 如需扫描 PDF OCR，可使用覆盖文件启动 Worker：
+```bash
+docker compose -f docker-compose.yml -f docker-compose.ocr.yml up -d --build worker
+```
+- OCR Worker 会安装 `requirements-ocr.txt` 并挂载 `paddle_models`，首次运行会下载模型，磁盘和内存占用会明显增加。
 
 ## English
 
@@ -375,7 +418,13 @@ cp .env.example .env.local
 | `DIFY_BASE_URL` | Dify API base URL, including `/v1` | `https://api.dify.ai/v1` |
 | `DIFY_WORKFLOW_RESULT_KEY` | Output variable that contains the EHS JSON | `result` |
 | `DIFY_WORKFLOW_INPUT_TEXT_KEY` | Input variable that receives document text | `document_text` |
+| `DIFY_RETRY_MAX_ATTEMPTS` | Maximum attempts for recoverable Dify failures, including the first request | `3` |
+| `DIFY_RETRY_INITIAL_DELAY_SECONDS` | Initial Dify retry backoff in seconds | `2` |
+| `DIFY_RETRY_MAX_DELAY_SECONDS` | Maximum Dify retry backoff in seconds | `10` |
+| `DIFY_RETRY_JITTER_SECONDS` | Random jitter added to Dify retry delay in seconds | `0.5` |
+| `DIFY_RETRY_ON_TIMEOUT` | Whether blocking timeouts are retried automatically; disabled by default to avoid duplicate billing | `false` |
 | `HTTP_USER_AGENT` | User-Agent used for outbound HTTP requests | built-in browser UA |
+| `PDF_OCR_ENABLED` | Whether scanned-PDF OCR is enabled; disabled by default to reduce image size and memory usage | `false` |
 | `UPLOAD_DIR` | Upload root directory | `./uploads` |
 | `MAX_UPLOAD_BYTES` | Maximum upload size in bytes | `52428800` |
 | `UPLOAD_RETENTION_DAYS` | Retention days for soft-deleted upload files | `7` |
@@ -416,13 +465,24 @@ Retry policy:
 - `run_workflow_blocking()` uses a default request timeout of `600s`.
 - HTTP errors, timeouts, network errors, non-JSON responses, and schema validation failures are raised as `DifyWorkflowError`.
 - The Celery worker catches the error, marks the assessment task as `FAILED`, sets progress to `100`, and stores a short error message in `error_message`.
-- The code currently **does not automatically retry Dify requests**, to avoid duplicate billing, repeated workflow execution, or duplicate result writes.
-- Operators can retry manually by re-uploading the file, re-queueing the task, or adding a future bounded retry policy for recoverable failures such as `429`, `5xx`, temporary network errors, or timeouts.
-- Do not auto-retry `400`, `401`, `403`, invalid output JSON, or schema mismatch errors before fixing configuration, API keys, workflow variables, or prompts.
+- The code retries recoverable failures only: `429`, `500`, `502`, `503`, `504`, and temporary network errors.
+- It does not retry `400`, `401`, `403`, non-JSON responses, invalid output JSON, or schema validation failures; these usually require fixing configuration, API keys, workflow variables, or prompts first.
+- Blocking timeouts are not retried by default because Dify may still be running. Replaying the request can cause duplicate billing or duplicate workflow execution. Set `DIFY_RETRY_ON_TIMEOUT=true` only when that tradeoff is acceptable.
+- Retries use exponential backoff with jitter. The default is up to `3` attempts, with retry waits around `2s -> 4s`, capped by `DIFY_RETRY_MAX_DELAY_SECONDS`.
+- Logs include `attempt`, `max_attempts`, `retryable`, `status_code`, and `elapsed_ms` to make upstream instability easier to diagnose.
+
+### Lightweight Observability
+
+- Every API request receives or propagates `X-Request-Id`, and the response echoes it back.
+- The API supports the W3C `traceparent` header. If no header is provided, the backend creates a new `trace_id` and `span_id`.
+- API logs, Worker logs, and Dify outbound call logs include `request_id`, `trace_id`, and `span_id`, so one upload can be followed across the HTTP request, Celery task, and external Dify call.
+- API responses include `X-Process-Time-Ms` for quick slow-request triage.
+- Dify outbound requests propagate `traceparent`, which keeps the path open for future OpenTelemetry Collector, Jaeger, or Tempo integration.
+- A full OpenTelemetry Collector is intentionally not included yet to keep small-server deployment light. APM auto-instrumentation can be added on top of this context propagation later.
 
 ### Logging Policy
 
-- API and Worker logs share one format: timestamp, level, logger name, source path, line number, and message.
+- API and Worker logs share one format: timestamp, level, `request_id`, `trace_id`, `span_id`, logger name, source path, line number, and message.
 - Logs are written to both console and file.
 - API logs default to `logs/ehs_api.log`.
 - Worker logs default to `logs/ehs_worker.log`.
@@ -442,6 +502,7 @@ uploads/YYYY/MM/DD/{uuid}_{safe_original_name}.{ext}
 - Supported extensions: `.pdf`, `.txt`, `.doc`, `.docx`, `.csv`.
 - Original filenames are validated to prevent path traversal, empty names, and unsupported extensions.
 - `.pdf`, `.doc`, and `.docx` files are checked with magic bytes to reduce extension spoofing.
+- The lightweight image parses PDF text layers only. Scanned PDFs require the OCR image and `PDF_OCR_ENABLED=true`.
 - Single-file size is limited by `MAX_UPLOAD_BYTES`, defaulting to `50 MB`.
 - The database stores file path, display filename, task status, parsed text, result JSON, and error message.
 - Soft-deleting a task does not immediately delete its file. Files are retained for `UPLOAD_RETENTION_DAYS`, and a Celery Beat cleanup task removes expired uploads daily.
@@ -452,14 +513,30 @@ uploads/YYYY/MM/DD/{uuid}_{safe_original_name}.{ext}
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/healthz` | Health check |
+| `GET` | `/api/v1/healthz` | API v1 health check |
+| `GET` | `/api/v1/readyz` | Readiness check for database and Redis |
 | `POST` | `/api/v1/auth/register` | Register |
 | `POST` | `/api/v1/auth/login` | Login |
 | `GET / POST` | `/api/v1/organizations` | List / create organizations |
 | `POST` | `/api/v1/assessment` | Upload a file and create an assessment task |
 | `GET` | `/api/v1/assessment` | List assessment tasks |
 | `GET / DELETE` | `/api/v1/assessment/{task_id}` | Get / soft-delete a task |
+| `POST` | `/api/v1/assessment/{task_id}/requeue` | Requeue a failed task |
 | `GET` | `/api/v1/assessment/{task_id}/progress` | SSE task progress |
 | `*` | `/api/v1/admin/*` | Admin APIs |
+
+Failed tasks can be requeued from the task list or the detail drawer. The backend only accepts `FAILED` tasks, and non-admin users can only requeue tasks they created.
+
+### Backup and Restore
+
+```powershell
+.\scripts\backup.ps1
+.\scripts\restore.ps1 -BackupPath .\backups\20260520-120000
+```
+
+- The backup script exports MySQL and compresses `uploads/`.
+- The restore script imports the SQL dump and restores `uploads.zip` by default.
+- Make sure the MySQL service from Docker Compose is running before restoring.
 
 ### Checks
 
@@ -487,6 +564,15 @@ Deployment notes:
 - The app uses hash history, so page refreshes do not require extra rewrite rules.
 - Backend `CORS_ORIGINS` must include the frontend origin. Do not use `*` in production.
 - The frontend stores JWT only. Backend secrets such as Dify keys and database passwords must stay on the server.
+
+### Small Servers and OCR
+
+- The default Docker image uses the `runtime` target and does not install PaddleOCR/PaddlePaddle. This is better for small servers and text-layer PDFs.
+- To process scanned PDFs with OCR, start the worker with the override file:
+```bash
+docker compose -f docker-compose.yml -f docker-compose.ocr.yml up -d --build worker
+```
+- The OCR worker installs `requirements-ocr.txt` and mounts `paddle_models`. The first run downloads models and uses noticeably more disk and memory.
 
 ## License
 
