@@ -48,7 +48,11 @@ const requeueBusyTaskId = ref('');
 
 const taskCountText = computed(() => `${totalTasks.value} 条任务`);
 
-const hasPendingTasks = computed(() => tasks.value.some((t) => !TERMINAL_STATUSES.has(t.status)));
+const hasActiveWork = computed(
+  () =>
+    tasks.value.some((t) => !TERMINAL_STATUSES.has(t.status)) ||
+    Boolean(activeTask.value && !TERMINAL_STATUSES.has(activeTask.value.status)),
+);
 const activeRiskCount = computed(() => activeTask.value?.result?.risks?.length || 0);
 
 let pollTimer = null;
@@ -66,7 +70,7 @@ function startPolling() {
   stopPolling();
   pollTimer = setInterval(async () => {
     if (document.hidden) return;
-    if (!hasPendingTasks.value) {
+    if (!hasActiveWork.value) {
       stopPolling();
       return;
     }
@@ -99,6 +103,7 @@ async function loadOrganizations() {
 async function loadTasks({ silent = false } = {}) {
   try {
     const page = await listTasks(currentPage.value, pageSize, {
+      organizationId: orgSelected.value,
       status: statusFilter.value,
       q: searchText.value.trim(),
     });
@@ -170,6 +175,8 @@ async function submitUpload() {
     resetUpload();
     showUpload.value = false;
     toast.show('任务已创建', 'success');
+    statusFilter.value = '';
+    searchText.value = '';
     currentPage.value = 1;
     await loadTasks();
     await selectTask(data.task_id);
@@ -288,9 +295,42 @@ function applyProgressPayload(payload) {
     progress: payload.progress ?? activeTask.value.progress,
     error_message: payload.error_message ?? activeTask.value.error_message,
   };
-  const idx = tasks.value.findIndex((t) => t.task_id === payload.task_id);
+  syncTaskInList(activeTask.value);
+}
+
+function taskMatchesCurrentFilters(task) {
+  if (!task) return false;
+  if (statusFilter.value && task.status !== statusFilter.value) return false;
+
+  const q = searchText.value.trim().toLowerCase();
+  if (!q) return true;
+
+  const filename = (task.filename || '').toLowerCase();
+  const taskId = (task.task_id || '').toLowerCase();
+  return filename.includes(q) || taskId === q;
+}
+
+function syncTaskInList(task) {
+  if (!task?.task_id) return;
+  const idx = tasks.value.findIndex((t) => t.task_id === task.task_id);
+  const matches = taskMatchesCurrentFilters(task);
+
+  if (!matches) {
+    if (idx !== -1) {
+      tasks.value.splice(idx, 1);
+      totalTasks.value = Math.max(totalTasks.value - 1, 0);
+    }
+    return;
+  }
+
   if (idx !== -1) {
-    tasks.value[idx] = { ...tasks.value[idx], ...activeTask.value };
+    tasks.value[idx] = { ...tasks.value[idx], ...task };
+    return;
+  }
+
+  if (currentPage.value === 1) {
+    tasks.value = [task, ...tasks.value].slice(0, pageSize);
+    totalTasks.value += 1;
   }
 }
 
@@ -365,13 +405,21 @@ function riskSeverity(risk) {
 onMounted(refreshAll);
 
 watch(
-  hasPendingTasks,
-  (pending) => {
-    if (pending) startPolling();
+  hasActiveWork,
+  (active) => {
+    if (active) startPolling();
     else stopPolling();
   },
   { immediate: true },
 );
+
+watch(orgSelected, async (next, previous) => {
+  const org = organizations.value.find((item) => item.id === next);
+  session.setOrgName(org?.name || '');
+  if (next === previous) return;
+  currentPage.value = 1;
+  await loadTasks({ silent: true });
+});
 
 onBeforeUnmount(stopPolling);
 onBeforeUnmount(closeProgressStream);
