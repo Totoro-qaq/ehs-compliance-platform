@@ -18,7 +18,12 @@ from app.dao.assessment_dao import AssessmentDAO
 from app.dao.organization_dao import OrganizationDAO
 from app.models.db_models import AccountRole, AssessmentTask, TaskStatus
 from app.schemas.auth_context import CurrentUser
-from app.schemas.ehs_schema import AssessmentCreateResponse, AssessmentStatusResponse
+from app.schemas.ehs_schema import (
+    AssessmentCreateResponse,
+    AssessmentStatusResponse,
+    AssessmentTimelineEventResponse,
+    AssessmentWaterfallSegment,
+)
 from app.schemas.pagination import Page
 from app.services.access_control import (
     ensure_client_org_id_allowed,
@@ -29,6 +34,40 @@ from app.services.access_control import (
 
 
 class AssessmentService:
+    @staticmethod
+    def _with_timeline(dao: AssessmentDAO, task: AssessmentTask) -> AssessmentStatusResponse:
+        response = AssessmentStatusResponse.model_validate(task)
+        events = dao.list_timeline_events(task.id)
+        response.timeline = [
+            AssessmentTimelineEventResponse.model_validate(event)
+            for event in events
+        ]
+        response.waterfall = AssessmentService._build_waterfall(response.timeline)
+        return response
+
+    @staticmethod
+    def _build_waterfall(
+        timeline: list[AssessmentTimelineEventResponse],
+    ) -> list[AssessmentWaterfallSegment]:
+        segments: list[AssessmentWaterfallSegment] = []
+        if not timeline:
+            return segments
+        previous_ms = 0
+        for event in timeline:
+            current_ms = event.elapsed_ms if event.elapsed_ms is not None else previous_ms
+            duration_ms = max(current_ms - previous_ms, 0)
+            segments.append(
+                AssessmentWaterfallSegment(
+                    status=event.status,
+                    label=event.message or event.status.value,
+                    start_ms=previous_ms,
+                    duration_ms=duration_ms,
+                    progress=event.progress,
+                )
+            )
+            previous_ms = current_ms
+        return segments
+
     @staticmethod
     def _enqueue_assessment_task(task_id: str) -> None:
         try:
@@ -100,7 +139,7 @@ class AssessmentService:
         if task is None:
             raise EHSException('任务不存在', code='TASK_NOT_FOUND', status_code=404)
         ensure_organization_scope(actor, task.organization_id)
-        return task
+        return AssessmentService._with_timeline(dao, task)
 
     @staticmethod
     def list_assessment_tasks(
@@ -157,7 +196,7 @@ class AssessmentService:
             filters=tuple(filters),
         )
         return Page[AssessmentStatusResponse](
-            items=[AssessmentStatusResponse.model_validate(t) for t in items],
+            items=[AssessmentService._with_timeline(dao, t) for t in items],
             total=total,
             page=page,
             page_size=page_size,

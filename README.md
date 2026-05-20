@@ -198,6 +198,9 @@ response_mode=blocking
 - 支持 W3C `traceparent` 头；未传入时后端会生成新的 `trace_id` 与 `span_id`。
 - API 日志、Worker 日志和 Dify 出站调用日志均包含 `request_id`、`trace_id`、`span_id`，可串联一次上传、异步任务和外部调用。
 - API 响应会返回 `X-Process-Time-Ms`，用于快速定位慢请求。
+- Worker 会把评价任务关键状态写入 `assessment_timeline_events`，包括状态、进度、提示信息和相对任务开始的 `elapsed_ms`。
+- 任务详情与列表响应会返回 `timeline` 和派生的 `waterfall` 字段；前端任务详情抽屉会展示处理耗时瀑布图，用于快速判断耗时集中在解析、Dify 分析、校验还是结果保存阶段。
+- 升级已有数据库时需执行 Alembic 迁移 `0004_assessment_timeline_events`。
 - Dify 出站请求会携带 `traceparent`，便于未来接入 OpenTelemetry Collector、Jaeger 或 Tempo。
 - 当前未引入完整 OpenTelemetry Collector，目的是降低小服务器部署成本；需要 APM 时可在此基础上继续接入自动埋点。
 
@@ -477,6 +480,9 @@ Retry policy:
 - The API supports the W3C `traceparent` header. If no header is provided, the backend creates a new `trace_id` and `span_id`.
 - API logs, Worker logs, and Dify outbound call logs include `request_id`, `trace_id`, and `span_id`, so one upload can be followed across the HTTP request, Celery task, and external Dify call.
 - API responses include `X-Process-Time-Ms` for quick slow-request triage.
+- The worker records key assessment state changes in `assessment_timeline_events`, including status, progress, message, and `elapsed_ms` relative to task start.
+- Assessment list/detail responses include `timeline` and derived `waterfall` fields. The frontend task drawer renders a processing-time waterfall so slow work can be attributed to parsing, Dify analysis, validation, or result persistence.
+- Existing databases must apply Alembic migration `0004_assessment_timeline_events`.
 - Dify outbound requests propagate `traceparent`, which keeps the path open for future OpenTelemetry Collector, Jaeger, or Tempo integration.
 - A full OpenTelemetry Collector is intentionally not included yet to keep small-server deployment light. APM auto-instrumentation can be added on top of this context propagation later.
 
