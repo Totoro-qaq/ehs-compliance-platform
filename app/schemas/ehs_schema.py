@@ -14,6 +14,24 @@ class AssessmentCreateResponse(BaseModel):
     status: TaskStatus = Field(description='任务当前状态（创建后多为 PENDING）')
 
 
+class AssessmentTimelineEventResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    status: TaskStatus
+    progress: int
+    message: str | None = None
+    elapsed_ms: int | None = None
+    created_at: datetime
+
+
+class AssessmentWaterfallSegment(BaseModel):
+    status: TaskStatus
+    label: str
+    start_ms: int
+    duration_ms: int
+    progress: int
+
+
 class AssessmentStatusResponse(BaseModel):
     """评价任务详情（供列表与单条查询）。"""
 
@@ -31,6 +49,8 @@ class AssessmentStatusResponse(BaseModel):
     created_by_id: str | None = Field(default=None, description='创建人账号 ID')
     created_at: datetime = Field(description='创建时间')
     updated_at: datetime = Field(description='最后更新时间')
+    timeline: list[AssessmentTimelineEventResponse] = Field(default_factory=list)
+    waterfall: list[AssessmentWaterfallSegment] = Field(default_factory=list)
 
     @model_validator(mode='after')
     def _parse_result_json(self) -> 'AssessmentStatusResponse':

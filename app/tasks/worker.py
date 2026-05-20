@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 from celery import Celery
@@ -23,6 +24,32 @@ from app.services.dify_service import DifyWorkflowError, fetch_assessment_result
 from app.services.pdf_text_service import DocumentTextExtractError, extract_text_from_document_file
 
 _log = get_logger(__name__)
+
+
+def _mark_status(
+    dao: AssessmentDAO,
+    *,
+    task_id: str,
+    status: TaskStatus,
+    progress: int,
+    started_at: float,
+    message: str | None = None,
+    error_message: str | None = None,
+) -> None:
+    elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+    dao.update_status(
+        task_id=task_id,
+        status=status,
+        progress=progress,
+        error_message=error_message,
+    )
+    dao.append_timeline_event(
+        task_id=task_id,
+        status=status,
+        progress=progress,
+        message=message or status.value,
+        elapsed_ms=elapsed_ms,
+    )
 
 
 @worker_process_init.connect
@@ -91,6 +118,7 @@ def run_assessment_task(
     trace_token = set_trace_context(trace_id=trace_id)
     db = SessionLocal()
     dao = AssessmentDAO(db)
+    started_at = time.perf_counter()
     try:
         task = dao.get_by_id(task_id)
         if task is None:
@@ -103,7 +131,14 @@ def run_assessment_task(
             request_id,
             get_trace_id(),
         )
-        dao.update_status(task_id=task_id, status=TaskStatus.PARSING, progress=12)
+        _mark_status(
+            dao,
+            task_id=task_id,
+            status=TaskStatus.PARSING,
+            progress=12,
+            started_at=started_at,
+            message='解析文档',
+        )
         publish_task_progress(task_id, TaskStatus.PARSING.value, 12)
         body = _load_body_text(task_id, task.file_path, task.filename, task.parsed_text, dao)
         if not body:
@@ -112,7 +147,14 @@ def run_assessment_task(
                 'or ensure parsed_text is already present in the database.'
             )
 
-        dao.update_status(task_id=task_id, status=TaskStatus.AI_ANALYZING, progress=45)
+        _mark_status(
+            dao,
+            task_id=task_id,
+            status=TaskStatus.AI_ANALYZING,
+            progress=45,
+            started_at=started_at,
+            message='Dify 工作流分析',
+        )
         publish_task_progress(task_id, TaskStatus.AI_ANALYZING.value, 45)
         validated = fetch_assessment_result(
             document_text=body,
@@ -120,27 +162,54 @@ def run_assessment_task(
             task_id=task_id,
         )
 
-        dao.update_status(task_id=task_id, status=TaskStatus.VALIDATING, progress=82)
+        _mark_status(
+            dao,
+            task_id=task_id,
+            status=TaskStatus.VALIDATING,
+            progress=82,
+            started_at=started_at,
+            message='校验结构化结果',
+        )
         publish_task_progress(task_id, TaskStatus.VALIDATING.value, 82)
-        dao.update_status(task_id=task_id, status=TaskStatus.PERSISTING, progress=94)
+        _mark_status(
+            dao,
+            task_id=task_id,
+            status=TaskStatus.PERSISTING,
+            progress=94,
+            started_at=started_at,
+            message='保存评价结果',
+        )
         publish_task_progress(task_id, TaskStatus.PERSISTING.value, 94)
         dao.save_result(task_id=task_id, result=validated)
+        dao.append_timeline_event(
+            task_id=task_id,
+            status=TaskStatus.SUCCESS,
+            progress=100,
+            message='任务完成',
+            elapsed_ms=int((time.perf_counter() - started_at) * 1000),
+        )
         publish_task_progress(task_id, TaskStatus.SUCCESS.value, 100)
     except DifyWorkflowError as exc:
         _log.exception('Dify workflow call failed: task_id=%s', task_id)
-        dao.update_status(
+        _mark_status(
+            dao,
             task_id=task_id,
             status=TaskStatus.FAILED,
             progress=100,
+            started_at=started_at,
+            message='Dify 调用失败',
             error_message=str(exc)[:2000],
         )
         publish_task_progress(task_id, TaskStatus.FAILED.value, 100, str(exc)[:500])
     except Exception as exc:
         _log.exception('Assessment task failed: task_id=%s', task_id)
-        dao.update_status(
+        _mark_status(
+            dao,
             task_id=task_id,
             status=TaskStatus.FAILED,
             progress=100,
+            started_at=started_at,
+            message='任务执行失败',
             error_message=(str(exc) or 'Task execution failed; see worker logs for details')[:2000],
         )
         publish_task_progress(
