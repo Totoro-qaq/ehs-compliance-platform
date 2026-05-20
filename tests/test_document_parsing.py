@@ -7,6 +7,7 @@ from zipfile import ZipFile
 from app.services.pdf_text_service import (
     DocumentTextExtractError,
     extract_text_from_document_file,
+    extract_text_from_pdf_file,
 )
 
 
@@ -53,3 +54,17 @@ def test_extract_text_from_doc_raises_when_antiword_missing(tmp_path: Path):
             raise AssertionError('expected DocumentTextExtractError')
         except DocumentTextExtractError as exc:
             assert 'antiword' in str(exc)
+
+
+def test_pdf_ocr_disabled_does_not_call_ocr(monkeypatch, tmp_path: Path):
+    pdf_path = tmp_path / 'scan.pdf'
+    pdf_path.write_bytes(b'%PDF-1.7 fake scanned pdf')
+    monkeypatch.setattr('app.services.pdf_text_service.settings.pdf_ocr_enabled', False)
+    monkeypatch.setattr('app.services.pdf_text_service._extract_text_pypdf', lambda _path: '')
+
+    def _fail_ocr(_path):
+        raise AssertionError('OCR should not be called when disabled')
+
+    monkeypatch.setattr('app.services.pdf_text_service._extract_text_ocr', _fail_ocr)
+
+    assert extract_text_from_pdf_file(pdf_path) == ''

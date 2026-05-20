@@ -26,6 +26,10 @@ export function deleteTask(taskId) {
   return request(`/api/v1/assessment/${encodeURIComponent(taskId)}`, { method: 'DELETE' });
 }
 
+export function requeueTask(taskId) {
+  return request(`/api/v1/assessment/${encodeURIComponent(taskId)}/requeue`, { method: 'POST' });
+}
+
 function parseSseFrame(frame) {
   const event = { type: 'message', data: '' };
   for (const line of frame.split(/\r?\n/)) {

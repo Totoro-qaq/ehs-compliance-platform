@@ -2,6 +2,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: ehs_redis
+    restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
@@ -16,11 +17,12 @@ services:
   mysql:
     image: mysql:8.0
     container_name: ehs_mysql
+    restart: unless-stopped
     ports:
       - "3306:3306"
     environment:
-      MYSQL_ROOT_PASSWORD: "123456"
-      MYSQL_DATABASE: ehs_system
+      MYSQL_ROOT_PASSWORD: "${MYSQL_PASSWORD:-changeme}"
+      MYSQL_DATABASE: "${MYSQL_DB:-ehs_system}"
       MYSQL_CHARSET: utf8mb4
     volumes:
       - ehs_mysql_data:/var/lib/mysql
@@ -31,9 +33,12 @@ services:
       retries: 5
 
   api:
-    build: .
+    build:
+      context: .
+      target: runtime
     container_name: ehs_api
-    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+    command: sh -c "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000"
     ports:
       - "8000:8000"
     volumes:
@@ -50,15 +55,45 @@ services:
         condition: service_healthy
       mysql:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   worker:
-    build: .
+    build:
+      context: .
+      target: runtime
     container_name: ehs_worker
+    restart: unless-stopped
     command: celery -A app.tasks.worker:celery_app worker --loglevel=info
     volumes:
       - .:/app
       - ehs_uploads:/app/uploads
-      - paddle_models:/root/.paddleocr
+    env_file: .env
+    environment:
+      MYSQL_HOST: mysql
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+
+  beat:
+    build:
+      context: .
+      target: runtime
+    container_name: ehs_beat
+    restart: unless-stopped
+    command: celery -A app.tasks.worker:celery_app beat --loglevel=info
+    volumes:
+      - .:/app
+      - ehs_uploads:/app/uploads
     env_file: .env
     environment:
       MYSQL_HOST: mysql
@@ -75,4 +110,3 @@ volumes:
   ehs_redis_data:
   ehs_mysql_data:
   ehs_uploads:
-  paddle_models:

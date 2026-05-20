@@ -1,0 +1,12 @@
+services:
+  worker:
+    build:
+      context: .
+      target: runtime-ocr
+    volumes:
+      - paddle_models:/root/.paddleocr
+    environment:
+      PDF_OCR_ENABLED: "true"
+
+volumes:
+  paddle_models:
