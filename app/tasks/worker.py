@@ -70,9 +70,11 @@ celery_app = Celery(
     backend=settings.celery_result_backend,
 )
 
-# Windows defaults to prefork, which is fragile for this project. Use solo by default.
+# Windows defaults to prefork, which is fragile for this project. Use threads so one
+# slow blocking Dify call does not leave later uploads stuck in PENDING.
 if sys.platform == 'win32':
-    celery_app.conf.worker_pool = 'solo'
+    celery_app.conf.worker_pool = 'threads'
+    celery_app.conf.worker_concurrency = 4
 
 celery_app.conf.beat_schedule = {
     'cleanup-expired-uploads': {
@@ -123,6 +125,19 @@ def run_assessment_task(
         task = dao.get_by_id(task_id)
         if task is None:
             _log.warning('Assessment task does not exist: task_id=%s', task_id)
+            return
+        if task.status != TaskStatus.PENDING:
+            _log.info(
+                'Assessment task skipped because it is not pending task_id=%s status=%s',
+                task_id,
+                task.status.value,
+            )
+            publish_task_progress(
+                task_id,
+                task.status.value,
+                task.progress,
+                task.error_message[:500] if task.error_message else None,
+            )
             return
 
         _log.info(

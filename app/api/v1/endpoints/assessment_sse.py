@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
@@ -50,6 +51,7 @@ async def _sse_generator(request: Request, task_id: str, db: Session):
     # 订阅 Redis Pub/Sub
     pubsub = subscribe_task_progress(task_id)
     heartbeat_interval = settings.sse_heartbeat_interval
+    last_heartbeat = time.monotonic()
     try:
         while True:
             if await request.is_disconnected():
@@ -66,9 +68,10 @@ async def _sse_generator(request: Request, task_id: str, db: Session):
                     yield _format_sse({'event': 'complete', 'data': payload})
                     break
             else:
-                # 无消息时发送心跳保活
-                await asyncio.sleep(heartbeat_interval)
+                await asyncio.sleep(0.2)
+            if time.monotonic() - last_heartbeat >= heartbeat_interval:
                 yield _format_sse({'event': 'heartbeat', 'data': {}})
+                last_heartbeat = time.monotonic()
     finally:
         pubsub.unsubscribe()
         pubsub.close()

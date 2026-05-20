@@ -54,6 +54,45 @@ class TestAssessmentCRUD:
         assert body['total'] >= 1
         assert len(body['items']) >= 1
 
+    def test_list_tasks_filters_by_organization_id(self, client: TestClient, admin_token: str, db):
+        from app.core.config import settings
+        from app.models.db_models import Organization
+
+        other_org = Organization(name='Upload Target Org')
+        db.add(other_org)
+        db.commit()
+        db.refresh(other_org)
+
+        delay = MagicMock()
+        with patch('app.tasks.worker.run_assessment_task.delay', new=delay):
+            resp = client.post(
+                '/api/v1/assessment',
+                data={'organization_id': other_org.id},
+                files={'file': ('org-filter.txt', b'EHS test content', 'text/plain')},
+                headers={'Authorization': f'Bearer {admin_token}'},
+            )
+
+        assert resp.status_code == 200
+        task_id = resp.json()['data']['task_id']
+
+        default_resp = client.get(
+            '/api/v1/assessment',
+            params={'organization_id': settings.default_organization_id},
+            headers={'Authorization': f'Bearer {admin_token}'},
+        )
+        assert default_resp.status_code == 200
+        default_items = default_resp.json()['data']['items']
+        assert all((item.get('task_id') or item.get('id')) != task_id for item in default_items)
+
+        org_resp = client.get(
+            '/api/v1/assessment',
+            params={'organization_id': other_org.id},
+            headers={'Authorization': f'Bearer {admin_token}'},
+        )
+        assert org_resp.status_code == 200
+        org_items = org_resp.json()['data']['items']
+        assert any((item.get('task_id') or item.get('id')) == task_id for item in org_items)
+
     def test_soft_delete(self, client: TestClient, admin_token: str):
         task_id = self._create_task(client, admin_token)
         resp = client.delete(
@@ -244,6 +283,58 @@ def test_worker_extracts_docx_text_and_persists_parsed_text(monkeypatch, tmp_pat
         TaskStatus.SUCCESS,
     ]
     assert all(event.elapsed_ms is not None for event in timeline)
+
+
+def test_worker_skips_non_pending_stale_message(monkeypatch, tmp_path: Path):
+    from app.core.db import SessionLocal
+    from app.models.db_models import AssessmentTask, Organization, TaskStatus
+    from app.tasks.worker import run_assessment_task
+
+    doc_path = tmp_path / 'already-running.txt'
+    doc_path.write_text('already running', encoding='utf-8')
+
+    with SessionLocal() as setup_session:
+        org = setup_session.get(Organization, '00000000-0000-4000-8000-000000000001')
+        if org is None:
+            org = Organization(id='00000000-0000-4000-8000-000000000001', name='Default Test Org')
+            setup_session.add(org)
+            setup_session.flush()
+
+        task = AssessmentTask(
+            organization_id=org.id,
+            filename='already-running.txt',
+            content_type='text/plain',
+            file_path=str(doc_path),
+            status=TaskStatus.AI_ANALYZING,
+            progress=45,
+        )
+        setup_session.add(task)
+        setup_session.commit()
+        task_id = task.id
+
+    def _unexpected_fetch(*_args, **_kwargs):
+        raise AssertionError('stale messages must not run the workflow again')
+
+    published: list[tuple[str, str, int, str | None]] = []
+    monkeypatch.setattr('app.tasks.worker.fetch_assessment_result', _unexpected_fetch)
+    monkeypatch.setattr(
+        'app.tasks.worker.publish_task_progress',
+        lambda *args, **kwargs: published.append(args),
+    )
+
+    run_assessment_task(task_id)
+
+    with SessionLocal() as session:
+        saved = session.get(AssessmentTask, task_id)
+        from app.dao.assessment_dao import AssessmentDAO
+
+        timeline = AssessmentDAO(session).list_timeline_events(task_id)
+
+    assert saved is not None
+    assert saved.status == TaskStatus.AI_ANALYZING
+    assert saved.progress == 45
+    assert timeline == []
+    assert published == [(task_id, TaskStatus.AI_ANALYZING.value, 45, None)]
 
 
 def test_assessment_detail_includes_timeline_waterfall(client: TestClient, admin_token: str, db):
