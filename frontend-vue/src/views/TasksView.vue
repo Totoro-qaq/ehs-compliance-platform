@@ -321,10 +321,38 @@ function resetFilters() {
 
 const drawerSummary = computed(() => activeTask.value?.result?.summary || '');
 const drawerRisks = computed(() => activeTask.value?.result?.risks || []);
+const drawerWaterfall = computed(() => activeTask.value?.waterfall || []);
+const waterfallTotalMs = computed(() => {
+  const segments = drawerWaterfall.value;
+  if (!segments.length) return 0;
+  return Math.max(...segments.map((item) => (item.start_ms || 0) + (item.duration_ms || 0)));
+});
+const waterfallTotalText = computed(() => formatDuration(waterfallTotalMs.value));
 const drawerParsed = computed(() => {
   const text = activeTask.value?.parsed_text;
   return text ? text.slice(0, 2000) : '';
 });
+
+function formatDuration(ms) {
+  const value = Number(ms || 0);
+  if (value < 1000) return `${value}ms`;
+  if (value < 60_000) return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)}s`;
+  const minutes = Math.floor(value / 60_000);
+  const seconds = Math.round((value % 60_000) / 1000);
+  return `${minutes}m ${seconds}s`;
+}
+
+function waterfallWidth(segment) {
+  if (!waterfallTotalMs.value) return '2%';
+  const width = ((segment.duration_ms || 0) / waterfallTotalMs.value) * 100;
+  return `${Math.max(width, 2)}%`;
+}
+
+function waterfallOffset(segment) {
+  if (!waterfallTotalMs.value) return '0%';
+  const offset = ((segment.start_ms || 0) / waterfallTotalMs.value) * 100;
+  return `${Math.min(offset, 98)}%`;
+}
 
 function riskTitle(risk, index) {
   return risk.description || risk.violated_standard || `风险 ${index + 1}`;
@@ -553,6 +581,31 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
               <p style="font-size: 14px; line-height: 1.7; color: var(--text-secondary)">
                 {{ drawerSummary }}
               </p>
+            </div>
+            <div v-if="drawerWaterfall.length" class="detail-section">
+              <div class="section-title-row">
+                <h3>处理耗时</h3>
+                <span class="duration-total">{{ waterfallTotalText }}</span>
+              </div>
+              <div class="waterfall-chart">
+                <div
+                  v-for="(segment, idx) in drawerWaterfall"
+                  :key="`${segment.status}-${idx}`"
+                  class="waterfall-row"
+                >
+                  <div class="waterfall-label">
+                    <span>{{ segment.label }}</span>
+                    <small>{{ statusText(segment.status) }}</small>
+                  </div>
+                  <div class="waterfall-track">
+                    <div
+                      :class="['waterfall-bar', segment.status]"
+                      :style="{ left: waterfallOffset(segment), width: waterfallWidth(segment) }"
+                    ></div>
+                  </div>
+                  <div class="waterfall-time">{{ formatDuration(segment.duration_ms) }}</div>
+                </div>
+              </div>
             </div>
             <div class="detail-section">
               <h3>风险项 ({{ drawerRisks.length }})</h3>

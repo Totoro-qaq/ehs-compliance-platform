@@ -102,3 +102,25 @@ class AssessmentTask(ModelBase):
     )
 
     organization: Mapped[Organization] = relationship(back_populates='tasks')
+    timeline_events: Mapped[list['AssessmentTimelineEvent']] = relationship(
+        back_populates='task',
+        cascade='all, delete-orphan',
+        order_by='AssessmentTimelineEvent.created_at',
+    )
+
+
+class AssessmentTimelineEvent(ModelBase):
+    __tablename__ = 'assessment_timeline_events'
+
+    task_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey('assessment_tasks.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[TaskStatus] = mapped_column(SAEnum(TaskStatus), nullable=False, index=True)
+    progress: Mapped[int] = mapped_column(Integer, nullable=False)
+    message: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    elapsed_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    task: Mapped[AssessmentTask] = relationship(back_populates='timeline_events')

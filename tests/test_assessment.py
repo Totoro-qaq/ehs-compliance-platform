@@ -228,8 +228,69 @@ def test_worker_extracts_docx_text_and_persists_parsed_text(monkeypatch, tmp_pat
     run_assessment_task(task_id)
     with SessionLocal() as session:
         saved = session.get(AssessmentTask, task_id)
+        from app.dao.assessment_dao import AssessmentDAO
+
+        timeline = AssessmentDAO(session).list_timeline_events(task_id)
 
     assert captured['document_text'] == 'DOCX body text'
     assert saved is not None
     assert saved.parsed_text == 'DOCX body text'
     assert saved.status == TaskStatus.SUCCESS
+    assert [event.status for event in timeline] == [
+        TaskStatus.PARSING,
+        TaskStatus.AI_ANALYZING,
+        TaskStatus.VALIDATING,
+        TaskStatus.PERSISTING,
+        TaskStatus.SUCCESS,
+    ]
+    assert all(event.elapsed_ms is not None for event in timeline)
+
+
+def test_assessment_detail_includes_timeline_waterfall(client: TestClient, admin_token: str, db):
+    from app.dao.assessment_dao import AssessmentDAO
+    from app.models.db_models import AssessmentTask, Organization, TaskStatus
+
+    org = db.get(Organization, '00000000-0000-4000-8000-000000000001')
+    if org is None:
+        org = Organization(id='00000000-0000-4000-8000-000000000001', name='Default Test Org')
+        db.add(org)
+        db.flush()
+
+    task = AssessmentTask(
+        organization_id=org.id,
+        filename='timeline.txt',
+        content_type='text/plain',
+        file_path='uploads/timeline.txt',
+        status=TaskStatus.FAILED,
+        progress=100,
+        error_message='failed',
+    )
+    db.add(task)
+    db.flush()
+    dao = AssessmentDAO(db)
+    dao.append_timeline_event(
+        task_id=task.id,
+        status=TaskStatus.PARSING,
+        progress=12,
+        message='解析文档',
+        elapsed_ms=10,
+    )
+    dao.append_timeline_event(
+        task_id=task.id,
+        status=TaskStatus.FAILED,
+        progress=100,
+        message='任务失败',
+        elapsed_ms=35,
+    )
+
+    resp = client.get(
+        f'/api/v1/assessment/{task.id}',
+        headers={'Authorization': f'Bearer {admin_token}'},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()['data']
+    assert len(data['timeline']) == 2
+    assert data['timeline'][0]['elapsed_ms'] == 10
+    assert data['waterfall'][0]['duration_ms'] == 10
+    assert data['waterfall'][1]['duration_ms'] == 25

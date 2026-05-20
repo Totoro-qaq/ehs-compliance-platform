@@ -1,10 +1,16 @@
 import json
 
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.dao.base_repository import BaseRepository
 from app.models.base import audit_now_naive
-from app.models.db_models import AssessmentTask, TaskStatus, check_status_transition
+from app.models.db_models import (
+    AssessmentTask,
+    AssessmentTimelineEvent,
+    TaskStatus,
+    check_status_transition,
+)
 from app.schemas.ehs_schema import EHSAssessmentResult
 
 
@@ -32,6 +38,41 @@ class AssessmentDAO(BaseRepository[AssessmentTask]):
         )
         return self.save_and_refresh(task)
 
+    def append_timeline_event(
+        self,
+        *,
+        task_id: str,
+        status: TaskStatus,
+        progress: int,
+        message: str | None = None,
+        elapsed_ms: int | None = None,
+    ) -> AssessmentTimelineEvent:
+        event = AssessmentTimelineEvent(
+            task_id=task_id,
+            status=status,
+            progress=progress,
+            message=message,
+            elapsed_ms=elapsed_ms,
+        )
+        self.session.add(event)
+        self.session.commit()
+        self.session.refresh(event)
+        return event
+
+    def list_timeline_events(self, task_id: str) -> list[AssessmentTimelineEvent]:
+        stmt = (
+            select(AssessmentTimelineEvent)
+            .where(AssessmentTimelineEvent.task_id == task_id)
+            .order_by(AssessmentTimelineEvent.created_at.asc(), AssessmentTimelineEvent.id.asc())
+        )
+        return list(self.session.scalars(stmt).all())
+
+    def clear_timeline_events(self, task_id: str) -> None:
+        self.session.execute(
+            delete(AssessmentTimelineEvent).where(AssessmentTimelineEvent.task_id == task_id)
+        )
+        self.session.commit()
+
     def update_status(
         self,
         *,
@@ -51,6 +92,7 @@ class AssessmentDAO(BaseRepository[AssessmentTask]):
         task = self.get_by_id(task_id)
         if task is None:
             return None
+        self.clear_timeline_events(task_id)
         task.status = TaskStatus.PENDING
         task.progress = 0
         task.error_message = None

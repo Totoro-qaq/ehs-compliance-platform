@@ -66,6 +66,8 @@ docker compose -f docker-compose.yml -f docker-compose.ocr.yml up -d --build wor
 - API 会返回 `X-Request-Id` 和 `X-Process-Time-Ms`。
 - 日志包含 `request_id`、`trace_id`、`span_id`。
 - 上传请求、Celery Worker 和 Dify 调用可以通过同一个 `trace_id` 串起来。
+- Worker 会把评价任务关键状态写入 `assessment_timeline_events`；任务详情响应包含 `timeline` 和派生的 `waterfall`，前端详情抽屉会展示处理耗时瀑布图。
+- 已有数据库升级时需执行 Alembic 迁移 `0004_assessment_timeline_events`。
 - 当前没有部署 OpenTelemetry Collector，避免小服务器增加额外内存和运维成本。
 
 ### 运维建议
@@ -152,6 +154,8 @@ A blocking timeout may mean Dify is still running. Keeping `DIFY_RETRY_ON_TIMEOU
 - The API returns `X-Request-Id` and `X-Process-Time-Ms`.
 - Logs include `request_id`, `trace_id`, and `span_id`.
 - Upload requests, Celery workers, and Dify calls can be correlated with the same `trace_id`.
+- The worker records key assessment states in `assessment_timeline_events`. Task detail responses include `timeline` and derived `waterfall`, and the frontend drawer renders the processing-time waterfall.
+- Existing databases must apply Alembic migration `0004_assessment_timeline_events`.
 - OpenTelemetry Collector is intentionally not deployed yet to keep memory usage and operations simple on small servers.
 
 ### Operations Notes

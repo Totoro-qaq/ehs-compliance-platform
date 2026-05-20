@@ -660,6 +660,80 @@ input::placeholder { color: var(--text-tertiary); }
 
 .detail-section { margin-bottom: 24px; }
 .detail-section h3 { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border-subtle); }
+.section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.section-title-row h3 {
+  margin-bottom: 0;
+  border-bottom: 0;
+}
+.duration-total {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.waterfall-chart {
+  display: grid;
+  gap: 10px;
+}
+.waterfall-row {
+  display: grid;
+  grid-template-columns: 120px minmax(120px, 1fr) 56px;
+  align-items: center;
+  gap: 10px;
+}
+.waterfall-label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.waterfall-label span {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.waterfall-label small {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+.waterfall-track {
+  position: relative;
+  height: 14px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--bg-subtle);
+}
+.waterfall-bar {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+.waterfall-bar.SUCCESS { background: var(--success); }
+.waterfall-bar.FAILED { background: var(--danger); }
+.waterfall-bar.PARSING,
+.waterfall-bar.AI_ANALYZING,
+.waterfall-bar.VALIDATING,
+.waterfall-bar.PERSISTING {
+  background: var(--warning);
+}
+.waterfall-time {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
 
 .risk-card {
   padding: 14px; margin-bottom: 10px;
