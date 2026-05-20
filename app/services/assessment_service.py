@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.exceptions import EHSException
 from app.core.patterns import is_uuid
-from app.core.request_context import get_request_id
+from app.core.request_context import get_request_id, get_trace_id
 from app.core.upload_policy import (
     build_unique_storage_path,
     validate_file_magic,
@@ -29,6 +29,20 @@ from app.services.access_control import (
 
 
 class AssessmentService:
+    @staticmethod
+    def _enqueue_assessment_task(task_id: str) -> None:
+        try:
+            from app.tasks.worker import run_assessment_task
+
+            run_assessment_task.delay(task_id, get_request_id(), get_trace_id())
+        except Exception as exc:
+            raise EHSException(
+                '异步任务投递失败，请确认 Redis 已启动且已执行 Celery Worker',
+                code='TASK_ENQUEUE_FAILED',
+                status_code=503,
+                details={'reason': str(exc), 'exc_type': type(exc).__name__},
+            ) from exc
+
     @staticmethod
     async def create_assessment_task(
         *,
@@ -75,17 +89,7 @@ class AssessmentService:
             created_by_id=actor.account_id,
         )
 
-        try:
-            from app.tasks.worker import run_assessment_task
-
-            run_assessment_task.delay(task.id, get_request_id())
-        except Exception as exc:
-            raise EHSException(
-                '异步任务投递失败，请确认 Redis 已启动且已执行 Celery Worker',
-                code='TASK_ENQUEUE_FAILED',
-                status_code=503,
-                details={'reason': str(exc), 'exc_type': type(exc).__name__},
-            ) from exc
+        AssessmentService._enqueue_assessment_task(task.id)
 
         return AssessmentCreateResponse(task_id=task.id, status=task.status)
 
@@ -167,3 +171,35 @@ class AssessmentService:
             raise EHSException('任务不存在或已删除', code='TASK_NOT_FOUND', status_code=404)
         ensure_task_author_for_mutation(actor, task)
         dao.soft_delete_by_id(task_id)
+
+    @staticmethod
+    def requeue_failed_task(*, db: Session, actor: CurrentUser, task_id: str) -> AssessmentCreateResponse:
+        dao = AssessmentDAO(db)
+        task = dao.get_by_id(task_id)
+        if task is None:
+            raise EHSException('任务不存在或已删除', code='TASK_NOT_FOUND', status_code=404)
+        ensure_task_author_for_mutation(actor, task)
+        if task.status != TaskStatus.FAILED:
+            raise EHSException(
+                '只有失败状态的评价任务可以重新分析',
+                code='TASK_NOT_REQUEUEABLE',
+                status_code=409,
+                details={'status': task.status.value},
+            )
+
+        reset_task = dao.reset_failed_for_requeue(task_id=task_id)
+        if reset_task is None:
+            raise EHSException('任务不存在或已删除', code='TASK_NOT_FOUND', status_code=404)
+
+        try:
+            AssessmentService._enqueue_assessment_task(task_id)
+        except EHSException:
+            dao.update_status(
+                task_id=task_id,
+                status=TaskStatus.FAILED,
+                progress=100,
+                error_message='重新投递异步任务失败，请检查 Redis/Celery Worker',
+            )
+            raise
+
+        return AssessmentCreateResponse(task_id=reset_task.id, status=reset_task.status)

@@ -73,13 +73,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends antiword poppler-utils
 
-      - name: Install Python deps (skip heavy OCR stack)
-        # PaddlePaddle/PaddleOCR/pdf2image 仅 Worker 在生产用，单测不依赖；CI 跳过以提速
+      - name: Install Python deps
+        # OCR dependencies live in requirements-ocr.txt and are not needed for unit tests.
+        # OCR 依赖位于 requirements-ocr.txt，单元测试不安装，避免 CI 过重。
         # ruff / pytest 等开发依赖来自 requirements-dev.txt
         run: |
           python -m pip install --upgrade pip
-          grep -ivE '^(paddlepaddle|paddleocr|pdf2image)' requirements.txt > requirements-runtime-ci.txt
-          pip install -r requirements-runtime-ci.txt
+          pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
       - name: Ruff lint
@@ -140,3 +140,24 @@ jobs:
           name: frontend-dist-${{ github.run_id }}
           path: frontend-vue/dist
           retention-days: 3
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare compose env file
+        run: cp .env.example .env
+
+      - name: Validate compose file
+        run: docker compose config
+
+      - name: Validate OCR compose override
+        run: docker compose -f docker-compose.yml -f docker-compose.ocr.yml config
+
+      - name: Build runtime image
+        run: docker build --target runtime -t ehs-api:test .
