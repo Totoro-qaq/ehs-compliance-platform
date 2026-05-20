@@ -47,6 +47,19 @@ class AssessmentDAO(BaseRepository[AssessmentTask]):
         fields: dict = {'status': status, 'progress': progress, 'error_message': error_message}
         return self.update_by_id(task_id, **fields)
 
+    def reset_failed_for_requeue(self, *, task_id: str) -> AssessmentTask | None:
+        task = self.get_by_id(task_id)
+        if task is None:
+            return None
+        task.status = TaskStatus.PENDING
+        task.progress = 0
+        task.error_message = None
+        task.result_json = None
+        task.updated_at = audit_now_naive()
+        self.session.commit()
+        self.session.refresh(task)
+        return task
+
     def save_result(self, *, task_id: str, result: EHSAssessmentResult) -> AssessmentTask | None:
         task = self.get_by_id(task_id)
         if task is None:

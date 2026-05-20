@@ -1,6 +1,13 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { createTask, deleteTask, getTask, listTasks, streamTaskProgress } from '../api/assessment';
+import {
+  createTask,
+  deleteTask,
+  getTask,
+  listTasks,
+  requeueTask,
+  streamTaskProgress,
+} from '../api/assessment';
 import { formatApiError } from '../api/client';
 import { listOrganizations } from '../api/organizations';
 import { useSessionStore } from '../stores/session';
@@ -37,6 +44,7 @@ const uploadBusy = ref(false);
 const drawerOpen = ref(false);
 const activeTask = ref(null);
 const sseConnected = ref(false);
+const requeueBusyTaskId = ref('');
 
 const taskCountText = computed(() => `${totalTasks.value} 条任务`);
 
@@ -208,6 +216,34 @@ async function deleteActiveTask() {
   } catch (err) {
     toast.show(formatApiError(err), 'error');
   }
+}
+
+function canRequeue(task) {
+  return task?.status === 'FAILED';
+}
+
+async function requeueAssessment(taskId) {
+  if (!taskId || requeueBusyTaskId.value) return;
+  requeueBusyTaskId.value = taskId;
+  try {
+    await requeueTask(taskId);
+    toast.show('任务已重新投递', 'success');
+    await loadTasks({ silent: true });
+    if (activeTask.value?.task_id === taskId) {
+      activeTask.value = await getTask(taskId);
+      subscribeActiveTaskProgress(taskId);
+    }
+    startPolling();
+  } catch (err) {
+    toast.show(formatApiError(err), 'error');
+  } finally {
+    requeueBusyTaskId.value = '';
+  }
+}
+
+async function requeueFromRow(task, event) {
+  event?.stopPropagation();
+  await requeueAssessment(task.task_id);
 }
 
 function closeProgressStream() {
@@ -418,11 +454,12 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
               <th>进度</th>
               <th>风险数</th>
               <th>创建时间</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="!tasks.length" class="empty-row">
-              <td colspan="5">暂无评估任务</td>
+              <td colspan="6">暂无评估任务</td>
             </tr>
             <tr
               v-for="task in tasks"
@@ -445,6 +482,19 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
               </td>
               <td>{{ task.result?.risks?.length ?? '-' }}</td>
               <td>{{ formatTime(task.created_at) }}</td>
+              <td>
+                <button
+                  v-if="canRequeue(task)"
+                  type="button"
+                  class="btn-row-action"
+                  :disabled="requeueBusyTaskId === task.task_id"
+                  @click="requeueFromRow(task, $event)"
+                >
+                  <Icon name="rotate" :size="13" />
+                  {{ requeueBusyTaskId === task.task_id ? '投递中' : '重新分析' }}
+                </button>
+                <span v-else class="row-action-placeholder">-</span>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -456,6 +506,16 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
         <div class="drawer-header">
           <h2>{{ activeTask?.filename || activeTask?.task_id || '任务详情' }}</h2>
           <div class="drawer-actions">
+            <button
+              v-if="canRequeue(activeTask)"
+              type="button"
+              class="btn-secondary"
+              :disabled="requeueBusyTaskId === activeTask.task_id"
+              @click="requeueAssessment(activeTask.task_id)"
+            >
+              <Icon name="rotate" :size="14" />
+              {{ requeueBusyTaskId === activeTask.task_id ? '投递中' : '重新分析' }}
+            </button>
             <button type="button" class="btn-danger-ghost" :disabled="!activeTask" @click="deleteActiveTask">
               删除
             </button>

@@ -1,4 +1,4 @@
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 生产环境禁止使用的危险默认值
@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     dify_workflow_result_key: str = 'result'
     # 与画布「开始」节点中文本变量名一致
     dify_workflow_input_text_key: str = 'document_text'
+    # 仅对 429、5xx、临时网络错误做保守重试；阻塞超时默认不自动重放，避免重复计费
+    dify_retry_max_attempts: int = Field(default=3, ge=1, le=5)
+    dify_retry_initial_delay_seconds: float = Field(default=2.0, ge=0.1, le=60.0)
+    dify_retry_max_delay_seconds: float = Field(default=10.0, ge=0.1, le=300.0)
+    dify_retry_jitter_seconds: float = Field(default=0.5, ge=0.0, le=30.0)
+    dify_retry_on_timeout: bool = False
 
     # 预置默认公司 ID（init_db 会写入），上传评价未指定公司时使用
     default_organization_id: str = '00000000-0000-4000-8000-000000000001'
@@ -48,6 +54,7 @@ class Settings(BaseSettings):
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
         '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     )
+    pdf_ocr_enabled: bool = False
 
     redis_url: str = 'redis://127.0.0.1:6379/0'
     celery_broker_url: str = 'redis://127.0.0.1:6379/0'
