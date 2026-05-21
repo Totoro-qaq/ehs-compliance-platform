@@ -6,7 +6,7 @@ from zipfile import ZipFile
 
 from fastapi.testclient import TestClient
 
-from app.models.db_models import ReportType, SampleMedium
+from app.models.db_models import ComplianceStatus, LimitType, ReportType, SampleMedium
 from app.services.detection_document_parse_service import (
     _correct_noise_by_background,
     _parse_report_number,
@@ -98,6 +98,43 @@ def test_parse_detection_tables_handles_pdf_extracted_illumination_table():
     assert rows[0].raw_value == Decimal('387')
     assert rows[0].raw_unit == 'lx'
     assert rows[0].measurement_kind == 'illumination'
+
+
+def test_parse_detection_tables_maps_generic_chemical_limit_columns():
+    tables = [
+        [
+            ['区域', '检测岗位', '危害因素', '接触时间(h/d)', 'CTWA', 'PC-TWA', 'CSTE', 'PC-STEL'],
+            ['喷涂车间', '喷漆岗', '测试因子甲', '8.0', '2.5', '6', '8.5', '10'],
+        ]
+    ]
+
+    rows = parse_detection_tables(tables)
+
+    assert len(rows) == 2
+    assert rows[0].indicator_name == '测试因子甲'
+    assert rows[0].limit_type == LimitType.PC_TWA
+    assert rows[0].report_limit_value == Decimal('6')
+    assert rows[0].preliminary_status == ComplianceStatus.COMPLIANT
+    assert rows[1].limit_type == LimitType.PC_STEL
+    assert rows[1].report_limit_value == Decimal('10')
+    assert rows[1].preliminary_status == ComplianceStatus.COMPLIANT
+
+
+def test_parse_detection_tables_prejudges_generic_chemical_exceeded():
+    tables = [
+        [
+            ['检测点', '检测项目', '检测结果', '接触限值'],
+            ['喷漆岗', '测试因子甲', '12', '6'],
+        ]
+    ]
+
+    rows = parse_detection_tables(tables)
+
+    assert len(rows) == 1
+    assert rows[0].indicator_name == '测试因子甲'
+    assert rows[0].limit_type is None
+    assert rows[0].report_limit_value == Decimal('6')
+    assert rows[0].preliminary_status == ComplianceStatus.EXCEEDED
 
 
 def test_preview_detection_document_from_docx(client: TestClient, admin_token: str, tmp_path: Path):

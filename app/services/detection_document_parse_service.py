@@ -16,7 +16,7 @@ from zipfile import BadZipFile, ZipFile
 
 from app.core.config import settings
 from app.core.exceptions import EHSException
-from app.models.db_models import ReportType, SampleMedium
+from app.models.db_models import ComplianceStatus, LimitType, ReportType, SampleMedium
 from app.services.detection_calculation_service import normalize_unit
 from app.services.pdf_text_service import DocumentTextExtractError, extract_text_from_document_file
 
@@ -74,6 +74,11 @@ class ParsedDetectionRow:
     is_below_detection_limit: bool = False
     is_background: bool = False
     measurement_kind: str | None = None
+    limit_type: LimitType | None = None
+    report_limit_value: Decimal | None = None
+    report_limit_unit: str | None = None
+    preliminary_status: ComplianceStatus | None = None
+    preliminary_message: str | None = None
     warnings: list[str] = field(default_factory=list)
 
 
@@ -256,6 +261,16 @@ def _compact_text(raw: str) -> str:
 def _normalize_table_cell(raw: object) -> str:
     text = '' if raw is None else str(raw)
     return re.sub(r'\s+', ' ', text).strip()
+
+
+def _row_has_any(row: list[str], *needles: str) -> bool:
+    joined = _compact_text(' '.join(row))
+    return any(_compact_text(needle) in joined for needle in needles)
+
+
+def _is_empty_or_placeholder(raw: str | None) -> bool:
+    text = (raw or '').strip()
+    return not text or text in {'/', '-', '—'}
 
 
 def _cell(row: list[str], idx: int | None) -> str:
@@ -629,6 +644,214 @@ def _parse_illumination_table(
     return rows, next_index
 
 
+def _classify_chemical_column(header: str) -> LimitType | None:
+    text = _compact_text(header).upper()
+    if 'CTWA' in text or '时间加权' in header:
+        return LimitType.PC_TWA
+    if 'CSTE' in text or ('短时间' in header and '限值' not in header):
+        return LimitType.PC_STEL
+    if ('检测值' in header or '检测结果' in header) and ('MAC' in text or '最高' in header):
+        return LimitType.MAC
+    return None
+
+
+def _classify_limit_header(header: str) -> LimitType | None:
+    text = _compact_text(header).upper()
+    if 'PC-TWA' in text or 'PCTWA' in text:
+        return LimitType.PC_TWA
+    if 'PC-STEL' in text or 'PCSTEL' in text:
+        return LimitType.PC_STEL
+    if 'MAC' in text or '最高容许' in header:
+        return LimitType.MAC
+    return None
+
+
+def _infer_table_unit(header_text: str, fallback: str = 'mg/m3') -> str:
+    if 'mg/m3' in header_text or 'mg/m^3' in header_text or 'mg/m³' in header_text:
+        return 'mg/m3'
+    if 'μg/m3' in header_text or 'µg/m3' in header_text or 'ug/m3' in header_text:
+        return 'μg/m3'
+    return fallback
+
+
+def _header_candidates(table: list[list[str]]) -> list[tuple[int, list[str]]]:
+    return [(idx, row) for idx, row in enumerate(table[:4]) if _row_has_any(row, '危害因素', '检测项目', '项目名称')]
+
+
+def _find_named_column(header_rows: list[list[str]], *needles: str) -> int | None:
+    return _find_header_index(header_rows, *needles)
+
+
+def _report_limit_for_type(
+    *,
+    source_row: list[str],
+    header_rows: list[list[str]],
+    limit_type: LimitType | None,
+) -> Decimal | None:
+    if limit_type is not None:
+        for row in header_rows:
+            for idx, cell in enumerate(row):
+                if _classify_limit_header(cell) == limit_type:
+                    value, _, _ = _parse_report_number(_cell(source_row, idx))
+                    if value is not None:
+                        return value
+    if limit_type is None:
+        idx = _find_named_column(header_rows, '接触限值')
+        if idx is None:
+            idx = _find_named_column(header_rows, '限值')
+        if idx is None:
+            idx = _find_named_column(header_rows, '标准值')
+    elif limit_type == LimitType.PC_TWA:
+        idx = _find_named_column(header_rows, 'PC-TWA')
+    elif limit_type == LimitType.PC_STEL:
+        idx = _find_named_column(header_rows, 'PC-STEL')
+    else:
+        idx = _find_named_column(header_rows, 'MAC')
+    value, _, _ = _parse_report_number(_cell(source_row, idx))
+    return value
+
+
+def _prejudge_by_report_limit(
+    *,
+    value: Decimal | None,
+    report_limit: Decimal | None,
+    is_below_detection_limit: bool,
+    limit_type: LimitType | None,
+) -> tuple[ComplianceStatus | None, str | None]:
+    limit_label = limit_type.value if limit_type is not None else '报告内'
+    if is_below_detection_limit:
+        return ComplianceStatus.COMPLIANT, '检测值低于检出限，报告内预判为合格'
+    if value is None:
+        return ComplianceStatus.INSUFFICIENT_DATA, '检测值缺失，无法报告内预判'
+    if report_limit is None:
+        return ComplianceStatus.NEEDS_REVIEW, f'未识别到 {limit_label} 限值，需入库后按法规限值库判定'
+    if value > report_limit:
+        return ComplianceStatus.EXCEEDED, f'检测值超过{limit_label}限值'
+    return ComplianceStatus.COMPLIANT, f'检测值未超过{limit_label}限值'
+
+
+def _parse_generic_chemical_table(
+    table: list[list[str]],
+    *,
+    start_index: int,
+) -> tuple[list[ParsedDetectionRow], int]:
+    header_candidates = _header_candidates(table)
+    if not header_candidates:
+        return [], start_index
+    header_start = header_candidates[0][0]
+    header_end = header_start + 1
+    for idx in range(header_start + 1, min(header_start + 4, len(table))):
+        row = table[idx]
+        if _row_has_any(row, 'CTWA', 'CSTE', '检测值', '检测结果', 'PC-TWA', 'PC-STEL', 'MAC', '限值'):
+            header_end = idx + 1
+            continue
+        break
+    header_rows = table[header_start:header_end]
+    header_text = ' '.join(' '.join(row) for row in header_rows)
+    indicator_idx = _find_named_column(header_rows, '危害因素')
+    if indicator_idx is None:
+        indicator_idx = _find_named_column(header_rows, '检测项目')
+    if indicator_idx is None:
+        indicator_idx = _find_named_column(header_rows, '项目名称')
+    if indicator_idx is None:
+        return [], start_index
+    point_idx = _find_named_column(header_rows, '岗位')
+    if point_idx is None:
+        point_idx = _find_named_column(header_rows, '作业点')
+    if point_idx is None:
+        point_idx = _find_named_column(header_rows, '检测点')
+    workplace_idx = _find_named_column(header_rows, '单元')
+    duration_idx = _find_named_column(header_rows, '接触时间')
+    unit = _infer_table_unit(header_text)
+
+    value_columns: list[tuple[int, LimitType | None, str]] = []
+    for row in header_rows:
+        for idx, cell in enumerate(row):
+            limit_type = _classify_chemical_column(cell)
+            if limit_type and not any(item[0] == idx and item[1] == limit_type for item in value_columns):
+                value_columns.append((idx, limit_type, cell))
+    if not value_columns:
+        for row in header_rows:
+            for idx, cell in enumerate(row):
+                compact = _compact_text(cell)
+                if '检测值' in compact or '检测结果' in compact or compact == '结果':
+                    value_columns.append((idx, None, cell))
+                    break
+            if value_columns:
+                break
+    if not value_columns:
+        return [], start_index
+
+    rows: list[ParsedDetectionRow] = []
+    current_workplace = ''
+    current_point = ''
+    next_index = start_index
+    for source_row in table[header_start + len(header_rows) :]:
+        if len(source_row) <= indicator_idx:
+            continue
+        current_workplace = _cell(source_row, workplace_idx) or current_workplace
+        current_point = _cell(source_row, point_idx) or current_point
+        indicator = _clean_indicator(_cell(source_row, indicator_idx))
+        if not indicator or _row_has_any([indicator], '合计', '小计', '危害因素', '检测项目', '项目名称'):
+            continue
+        contact_hours = _parse_hours(_cell(source_row, duration_idx))
+        for value_idx, limit_type, header in value_columns:
+            raw_value_text = _cell(source_row, value_idx)
+            if _is_empty_or_placeholder(raw_value_text):
+                continue
+            value, is_below_detection_limit, row_warnings = _parse_report_number(raw_value_text)
+            report_limit = _report_limit_for_type(
+                source_row=source_row,
+                header_rows=header_rows,
+                limit_type=limit_type,
+            )
+            status, message = _prejudge_by_report_limit(
+                value=value,
+                report_limit=report_limit,
+                is_below_detection_limit=is_below_detection_limit,
+                limit_type=limit_type,
+            )
+            if contact_hours is None:
+                row_warnings.append('接触时间为空，入库前请人工确认')
+            if message:
+                row_warnings.append(message)
+            rows.append(
+                ParsedDetectionRow(
+                    row_index=next_index,
+                    sample_point=current_point or current_workplace or '未识别检测点',
+                    workplace=current_workplace or None,
+                    post_name=current_point or None,
+                    indicator_name=indicator,
+                    raw_value=value,
+                    raw_unit=unit,
+                    medium=SampleMedium.WORKPLACE_AIR,
+                    duration_minutes=_hours_to_minutes(contact_hours),
+                    shift_hours=contact_hours,
+                    raw_text=_table_raw_text(source_row)[:500],
+                    confidence=Decimal('0.74') if status != ComplianceStatus.NEEDS_REVIEW else Decimal('0.66'),
+                    is_below_detection_limit=is_below_detection_limit,
+                    measurement_kind=(
+                        f'generic_chemical_{limit_type.value.lower()}'
+                        if limit_type is not None
+                        else 'generic_chemical_report_limit'
+                    ),
+                    limit_type=limit_type,
+                    report_limit_value=report_limit,
+                    report_limit_unit=unit if report_limit is not None else None,
+                    preliminary_status=status,
+                    preliminary_message=message,
+                    warnings=row_warnings
+                    + [
+                        f'按表头“{header}”映射法规限值类型 {limit_type.value}'
+                        if limit_type is not None
+                        else f'按表头“{header}”使用报告内限值预判，入库后需匹配法规限值类型'
+                    ],
+                )
+            )
+            next_index += 1
+    return rows, next_index
+
+
 def parse_detection_tables(tables: list[list[list[str]]]) -> list[ParsedDetectionRow]:
     rows: list[ParsedDetectionRow] = []
     next_index = 1
@@ -647,6 +870,19 @@ def parse_detection_tables(tables: list[list[list[str]]]) -> list[ParsedDetectio
             parsed, next_index = _parse_illumination_table(table, start_index=next_index)
         elif '职业病危害因素名称' in joined_header and '检测结果及测试限值' in joined_header:
             parsed, next_index = _parse_chemical_table(table, start_index=next_index)
+        elif (
+            ('危害因素' in joined_header or '检测项目' in joined_header or '项目名称' in joined_header)
+            and (
+                'CTWA' in joined_header.upper()
+                or 'CSTE' in joined_header.upper()
+                or 'PC-TWA' in joined_header.upper()
+                or 'PC-STEL' in joined_header.upper()
+                or 'MAC' in joined_header.upper()
+                or '检测值' in joined_header
+                or '检测结果' in joined_header
+            )
+        ):
+            parsed, next_index = _parse_generic_chemical_table(table, start_index=next_index)
         rows.extend(parsed)
     return rows
 
