@@ -11,6 +11,7 @@ const routes = [
   { path: '/', redirect: '/home' },
   { path: '/home', name: 'home', component: () => import('../views/HomeView.vue'), meta: { public: true } },
   { path: '/tasks', name: 'tasks', component: () => import('../views/TasksView.vue') },
+  { path: '/detection', name: 'detection', component: () => import('../views/DetectionView.vue') },
   {
     path: '/orgs',
     name: 'orgs',

@@ -7,6 +7,7 @@ import random
 import re
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -39,6 +40,11 @@ class DifyWorkflowError(Exception):
 
 def _base_url() -> str:
     return settings.dify_base_url.rstrip('/')
+
+
+def _trust_env_for_url(url: str) -> bool:
+    host = (urlparse(url).hostname or '').lower()
+    return host not in {'localhost', '127.0.0.1', '::1'}
 
 
 def _retry_delay_seconds(attempt: int) -> float:
@@ -85,7 +91,7 @@ def run_workflow_blocking(
     for attempt in range(1, max_attempts + 1):
         attempt_started = time.perf_counter()
         try:
-            with httpx.Client(timeout=timeout_sec) as client:
+            with httpx.Client(timeout=timeout_sec, trust_env=_trust_env_for_url(url)) as client:
                 resp = client.post(url, json=payload, headers=headers)
                 resp.raise_for_status()
                 break
