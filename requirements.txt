@@ -16,6 +16,7 @@ PyJWT>=2.8,<3.0
 passlib[bcrypt]>=1.7,<2.0
 bcrypt>=4.1,<5.0
 pypdf>=5.0,<6.0
+pdfplumber>=0.11,<1.0
 Pillow>=12.2.0,<13.0
 # 检测报告合规模块：Excel/CSV 解析与表格运算
 pandas>=2.2,<3.0

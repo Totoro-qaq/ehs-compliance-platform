@@ -11,6 +11,7 @@ from app.services.detection_document_parse_service import (
     _correct_noise_by_background,
     _parse_report_number,
     parse_detection_docx_tables,
+    parse_detection_tables,
     parse_detection_text,
 )
 
@@ -81,6 +82,24 @@ def test_correct_noise_by_background():
     assert '背景噪声' in warning
 
 
+def test_parse_detection_tables_handles_pdf_extracted_illumination_table():
+    tables = [
+        [
+            ['单元名称', '岗位/作业点', '检测项目', '检测结果（lx）'],
+            ['', '', '', '平均值'],
+            ['第一工场', 'xx操作位', '照度', '387'],
+        ]
+    ]
+
+    rows = parse_detection_tables(tables)
+
+    assert len(rows) == 1
+    assert rows[0].indicator_name == '照度'
+    assert rows[0].raw_value == Decimal('387')
+    assert rows[0].raw_unit == 'lx'
+    assert rows[0].measurement_kind == 'illumination'
+
+
 def test_preview_detection_document_from_docx(client: TestClient, admin_token: str, tmp_path: Path):
     content = _docx_bytes(
         [
@@ -110,6 +129,46 @@ def test_preview_detection_document_from_docx(client: TestClient, admin_token: s
     assert len(body['rows']) == 2
     assert body['rows'][0]['indicator_name'] == '测试因子甲'
     assert body['rows'][1]['medium'] == 'NOISE'
+
+
+def test_preview_detection_document_from_pdf_tables(
+    monkeypatch, client: TestClient, admin_token: str
+):
+    monkeypatch.setattr(
+        'app.services.detection_document_parse_service.extract_text_from_document_file',
+        lambda *_args, **_kwargs: '检测项目 照度 检测结果',
+    )
+    monkeypatch.setattr(
+        'app.services.detection_document_parse_service._store_document',
+        lambda _filename, _content: Path('preview.pdf'),
+    )
+    monkeypatch.setattr(
+        'app.services.detection_document_parse_service._pdf_tables',
+        lambda _path: (
+            [
+                [
+                    ['单元名称', '岗位/作业点', '检测项目', '检测结果（lx）'],
+                    ['', '', '', '平均值'],
+                    ['第一工场', 'xx操作位', '照度', '387'],
+                ]
+            ],
+            [],
+        ),
+    )
+
+    resp = client.post(
+        '/api/v1/detection/documents/preview',
+        data={'report_type': 'OCCUPATIONAL_HEALTH'},
+        files={'file': ('preview.pdf', b'%PDF-1.7 fake', 'application/pdf')},
+        headers=_auth(admin_token),
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()['data']
+    assert len(body['rows']) == 1
+    assert body['rows'][0]['indicator_name'] == '照度'
+    assert body['rows'][0]['measurement_kind'] == 'illumination'
+    assert body['warnings'][0].startswith('已按 PDF 表格结构解析')
 
 
 def test_preview_detection_document_rejects_structured_csv(
