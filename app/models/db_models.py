@@ -164,6 +164,7 @@ class SampleMedium(str, Enum):
     EXHAUST_GAS = 'EXHAUST_GAS'
     NOISE = 'NOISE'
     HIGH_TEMPERATURE = 'HIGH_TEMPERATURE'
+    PHYSICAL_FACTOR = 'PHYSICAL_FACTOR'
 
 
 class LimitType(str, Enum):
@@ -271,6 +272,10 @@ class DetectionMeasurement(ModelBase):
     normalized_unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # 检测限 / 方法定量限（< 检出限的样品参与判定时按检测限处理）
     detect_limit: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    # 报告表格内给出的限值；法规限值库未命中时作为可追溯的兜底判定依据。
+    source_limit_value: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    source_limit_unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    source_limit_type: Mapped[LimitType | None] = mapped_column(SAEnum(LimitType), nullable=True)
     method_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     raw_text: Mapped[str | None] = mapped_column(String(255), nullable=True)
 

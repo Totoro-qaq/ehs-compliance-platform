@@ -198,6 +198,36 @@ def _first_decimal(*values: Decimal | None) -> Decimal | None:
     return None
 
 
+def _source_limit_type(measurement: DetectionMeasurement) -> LimitType:
+    return measurement.source_limit_type or LimitType.INSTANT
+
+
+def _source_limit_from_measurement(
+    *,
+    measurement: DetectionMeasurement,
+    sample: DetectionSample,
+    unit: str | None,
+) -> RegulatoryLimit:
+    limit_type = _source_limit_type(measurement)
+    limit_kwargs: dict[str, Decimal | None] = {}
+    if limit_type == LimitType.RANGE:
+        limit_kwargs['limit_min'] = measurement.source_limit_value
+    else:
+        limit_kwargs['limit_value'] = measurement.source_limit_value
+    return RegulatoryLimit(
+        indicator_name=measurement.indicator_name,
+        cas_no=measurement.cas_no,
+        medium=sample.medium,
+        limit_type=limit_type,
+        unit=measurement.source_limit_unit or unit or '',
+        standard_code='REPORT_SOURCE_LIMIT',
+        standard_name='检测报告内限值',
+        clause='source table',
+        priority=10_000,
+        **limit_kwargs,
+    )
+
+
 def _limit_response(limit: RegulatoryLimit) -> RegulatoryLimitResponse:
     return RegulatoryLimitResponse(
         id=limit.id,
@@ -556,6 +586,55 @@ class DetectionComplianceService:
             measurement=measurement,
         )
         if limit is None:
+            if measurement.source_limit_value is not None:
+                source_limit = _source_limit_from_measurement(
+                    measurement=measurement,
+                    sample=sample,
+                    unit=measurement.normalized_unit or normalize_unit(measurement.raw_unit),
+                )
+                value, unit, status, message = DetectionComplianceService._calculated_value(
+                    sample=sample,
+                    measurement=measurement,
+                    limit=source_limit,
+                )
+                if status is not None:
+                    return DetectionComplianceService._result_entity(
+                        report=report,
+                        sample=sample,
+                        measurement=measurement,
+                        limit=None,
+                        calculated_value=value,
+                        calculated_unit=unit,
+                        status=status,
+                        message=message or 'Report source limit comparison needs review.',
+                        limit_value=measurement.source_limit_value,
+                        limit_unit=source_limit.unit,
+                        limit_type=source_limit.limit_type,
+                        standard_code=source_limit.standard_code,
+                        standard_name=source_limit.standard_name,
+                        clause=source_limit.clause,
+                    )
+                status, exceedance, limit_value, message = DetectionComplianceService._evaluate(
+                    value=value,
+                    limit=source_limit,
+                )
+                return DetectionComplianceService._result_entity(
+                    report=report,
+                    sample=sample,
+                    measurement=measurement,
+                    limit=None,
+                    calculated_value=value,
+                    calculated_unit=unit,
+                    status=status,
+                    message=f'{message} Source: detection report table limit.',
+                    limit_value=limit_value,
+                    exceedance_multiple=exceedance,
+                    limit_unit=source_limit.unit,
+                    limit_type=source_limit.limit_type,
+                    standard_code=source_limit.standard_code,
+                    standard_name=source_limit.standard_name,
+                    clause=source_limit.clause,
+                )
             return DetectionComplianceService._result_entity(
                 report=report,
                 sample=sample,
@@ -615,6 +694,7 @@ class DetectionComplianceService:
         preferred = DetectionComplianceService._preferred_limit_type(
             report=report,
             sample=sample,
+            measurement=measurement,
         )
         if preferred is not None:
             limit = DetectionLimitService.match(
@@ -638,11 +718,29 @@ class DetectionComplianceService:
         *,
         report: DetectionReport,
         sample: DetectionSample,
+        measurement: DetectionMeasurement,
     ) -> LimitType | None:
+        if measurement.source_limit_type is not None:
+            if sample.medium == SampleMedium.WORKPLACE_AIR and measurement.source_limit_type in {
+                LimitType.PC_TWA,
+                LimitType.PC_STEL,
+                LimitType.MAC,
+            }:
+                return measurement.source_limit_type
+            if sample.medium in {
+                SampleMedium.NOISE,
+                SampleMedium.HIGH_TEMPERATURE,
+                SampleMedium.PHYSICAL_FACTOR,
+            } and measurement.source_limit_type in {LimitType.INSTANT, LimitType.RANGE}:
+                return measurement.source_limit_type
         if (
             sample.medium in {SampleMedium.NOISE, SampleMedium.HIGH_TEMPERATURE}
             or report.report_type in {ReportType.NOISE, ReportType.HIGH_TEMPERATURE}
         ):
+            return LimitType.INSTANT
+        if sample.medium == SampleMedium.PHYSICAL_FACTOR:
+            if measurement.indicator_name == '照度':
+                return LimitType.RANGE
             return LimitType.INSTANT
         if sample.medium == SampleMedium.WORKPLACE_AIR:
             if sample.duration_minutes is not None and sample.duration_minutes <= Decimal('15'):
@@ -807,6 +905,11 @@ class DetectionComplianceService:
         message: str,
         limit_value: Decimal | None = None,
         exceedance_multiple: Decimal | None = None,
+        limit_unit: str | None = None,
+        limit_type: LimitType | None = None,
+        standard_code: str | None = None,
+        standard_name: str | None = None,
+        clause: str | None = None,
     ) -> ComplianceResult:
         if limit is not None and limit_value is None and limit.limit_type != LimitType.RANGE:
             limit_value = limit.limit_value
@@ -818,13 +921,13 @@ class DetectionComplianceService:
             calculated_value=calculated_value,
             calculated_unit=calculated_unit,
             limit_value=limit_value,
-            limit_unit=limit.unit if limit is not None else None,
-            limit_type=limit.limit_type if limit is not None else None,
+            limit_unit=limit.unit if limit is not None else limit_unit,
+            limit_type=limit.limit_type if limit is not None else limit_type,
             status=status,
             exceedance_multiple=exceedance_multiple,
-            standard_code=limit.standard_code if limit is not None else None,
-            standard_name=limit.standard_name if limit is not None else None,
-            clause=limit.clause if limit is not None else None,
+            standard_code=limit.standard_code if limit is not None else standard_code,
+            standard_name=limit.standard_name if limit is not None else standard_name,
+            clause=limit.clause if limit is not None else clause,
             message=message,
         )
 

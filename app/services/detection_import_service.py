@@ -126,11 +126,17 @@ def _parse_medium(raw: Any, fallback: SampleMedium) -> SampleMedium:
         '高温 WBGT': SampleMedium.HIGH_TEMPERATURE,
         '高温WBGT': SampleMedium.HIGH_TEMPERATURE,
         '热应激': SampleMedium.HIGH_TEMPERATURE,
+        '物理因素': SampleMedium.PHYSICAL_FACTOR,
+        '工频电场': SampleMedium.PHYSICAL_FACTOR,
+        '激光辐射': SampleMedium.PHYSICAL_FACTOR,
+        '照度': SampleMedium.PHYSICAL_FACTOR,
     }
     upper_map = {
         'WBGT': SampleMedium.HIGH_TEMPERATURE,
         'HEAT': SampleMedium.HIGH_TEMPERATURE,
         'HEAT_STRESS': SampleMedium.HIGH_TEMPERATURE,
+        'PHYSICAL_FACTOR': SampleMedium.PHYSICAL_FACTOR,
+        'PHYSICAL': SampleMedium.PHYSICAL_FACTOR,
     }
     original = str(raw).strip()
     return exact_map.get(original, upper_map.get(text, fallback))

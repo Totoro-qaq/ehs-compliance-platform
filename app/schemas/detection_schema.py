@@ -37,6 +37,9 @@ class DetectionMeasurementResponse(BaseModel):
     normalized_value: Decimal | None = None
     normalized_unit: str | None = None
     detect_limit: Decimal | None = None
+    source_limit_value: Decimal | None = None
+    source_limit_unit: str | None = None
+    source_limit_type: LimitType | None = None
     method_code: str | None = None
     raw_text: str | None = None
 
@@ -121,6 +124,14 @@ class DetectionDocumentPreviewResponse(BaseModel):
     report_type: ReportType
     text_char_count: int
     text_excerpt: str
+    rows: list[DetectionParsedRowPreview] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class DetectionDocumentImportRequest(BaseModel):
+    filename: str
+    report_type: ReportType = ReportType.OCCUPATIONAL_HEALTH
+    organization_id: str | None = None
     rows: list[DetectionParsedRowPreview] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 

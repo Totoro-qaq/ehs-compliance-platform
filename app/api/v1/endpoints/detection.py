@@ -12,6 +12,7 @@ from app.schemas.auth_context import CurrentUser
 from app.schemas.detection_schema import (
     ComplianceResultResponse,
     ComplianceRunResponse,
+    DetectionDocumentImportRequest,
     DetectionDocumentPreviewResponse,
     DetectionReportCreateResponse,
     DetectionReportDetail,
@@ -67,6 +68,19 @@ async def preview_detection_document(
         content=content,
         report_type=report_type,
     )
+
+
+@router.post(
+    '/documents/import',
+    response_model=DetectionReportCreateResponse,
+    summary='确认导入 PDF/DOCX 解析预览结果',
+)
+def import_detection_document_preview(
+    payload: DetectionDocumentImportRequest,
+    actor: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Session = Depends(get_db),
+):
+    return DetectionDocumentParseService.import_preview(db=db, actor=actor, payload=payload)
 
 
 @router.get('/', response_model=Page[DetectionReportSummary], include_in_schema=False)

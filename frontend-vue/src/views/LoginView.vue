@@ -3,6 +3,8 @@ import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { fetchCaptcha, formatApiError, normalizeBase } from '../api/client';
 import { healthCheck, login, register } from '../api/auth';
+import { listTasks } from '../api/assessment';
+import { listOrganizations } from '../api/organizations';
 import { useSessionStore } from '../stores/session';
 import { useToastStore } from '../stores/toast';
 import Icon from '../components/Icon.vue';
@@ -33,6 +35,24 @@ const registerForm = reactive({ username: '', email: '', phone: '', password: ''
 
 const captchaUrl = ref('');
 let lastBlobUrl = '';
+
+// 平台统计（登录前可见）
+const platformStats = reactive({ tasks: '-', success: '-', orgs: '-' });
+
+async function loadPlatformStats() {
+  try {
+    const [tasks, success, orgs] = await Promise.all([
+      listTasks(1, 1),
+      listTasks(1, 1, { status: 'SUCCESS' }),
+      listOrganizations(1, 1),
+    ]);
+    platformStats.tasks = tasks?.total ?? 0;
+    platformStats.success = success?.total ?? 0;
+    platformStats.orgs = orgs?.total ?? 0;
+  } catch {
+    /* 静默失败，保持默认 "-" */
+  }
+}
 
 async function refreshCaptcha() {
   try {
@@ -115,6 +135,7 @@ async function submitRegister() {
 
 onMounted(() => {
   refreshCaptcha();
+  loadPlatformStats();
 });
 
 onBeforeUnmount(() => {
@@ -131,6 +152,23 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="login-card">
+      <div class="platform-stats-bar">
+        <div class="platform-stat-item">
+          <span class="platform-stat-num">{{ platformStats.tasks }}</span>
+          <span class="platform-stat-label">累计评价任务</span>
+        </div>
+        <div class="platform-stat-divider"></div>
+        <div class="platform-stat-item">
+          <span class="platform-stat-num">{{ platformStats.success }}</span>
+          <span class="platform-stat-label">已完成任务</span>
+        </div>
+        <div class="platform-stat-divider"></div>
+        <div class="platform-stat-item">
+          <span class="platform-stat-num">{{ platformStats.orgs }}</span>
+          <span class="platform-stat-label">服务公司</span>
+        </div>
+      </div>
+
       <div class="brand-block">
         <div class="brand-icon">
           <svg width="40" height="40" viewBox="0 0 32 32" fill="none">
@@ -144,7 +182,7 @@ onBeforeUnmount(() => {
             />
           </svg>
         </div>
-        <h1>EHS 合规评估系统</h1>
+        <h1>EHS 合规评价系统</h1>
         <p class="brand-desc">智能环境健康安全合规分析平台</p>
       </div>
 

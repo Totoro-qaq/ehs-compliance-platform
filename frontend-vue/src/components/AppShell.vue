@@ -144,7 +144,7 @@ onUnmounted(() => document.removeEventListener('click', closeMenuOnOutside));
                   </button>
                   <button type="button" class="user-menu-item" @click="goto('tasks')">
                     <Icon name="clipboard" :size="14" />
-                    <span>评估任务</span>
+                    <span>评价任务</span>
                   </button>
                   <button type="button" class="user-menu-item" @click="goto('detection')">
                     <Icon name="database" :size="14" />

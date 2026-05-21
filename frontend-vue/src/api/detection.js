@@ -30,6 +30,14 @@ export function previewDetectionDocument(file, { reportType }) {
   });
 }
 
+export function importDetectionDocumentPreview(payload) {
+  return request('/api/v1/detection/documents/import', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    timeoutMs: 60000,
+  });
+}
+
 export function getDetectionReport(reportId) {
   return request(`/api/v1/detection/reports/${encodeURIComponent(reportId)}`);
 }

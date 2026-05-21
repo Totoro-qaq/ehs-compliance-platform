@@ -6,6 +6,7 @@ import {
   createRegulatoryLimit,
   deleteRegulatoryLimit,
   getDetectionReport,
+  importDetectionDocumentPreview,
   listDetectionReports,
   listDetectionResults,
   listRegulatoryLimits,
@@ -108,6 +109,7 @@ const selectedDocument = ref(null);
 const documentLabel = ref('点击选择 PDF / DOCX / DOC / TXT 文件');
 const documentReportType = ref('OCCUPATIONAL_HEALTH');
 const documentPreviewBusy = ref(false);
+const documentImportBusy = ref(false);
 const documentPreview = ref(null);
 
 const drawerOpen = ref(false);
@@ -165,6 +167,112 @@ const resultSummary = computed(() => {
   };
 });
 const limitFormTitle = computed(() => (limitForm.id ? '编辑限值' : '新增限值'));
+const documentImportableRows = computed(() =>
+  (documentPreview.value?.rows || []).filter((row) => !row.is_background && row.raw_value !== null),
+);
+
+// ---- 人工确认：行选择 + 行内编辑 ----
+const selectedRowIndices = ref(new Set());
+const rowEdits = ref({});
+
+function _ensureRowEdit(rowIndex) {
+  if (!rowEdits.value[rowIndex]) {
+    rowEdits.value[rowIndex] = {};
+  }
+}
+
+function getEditValue(row, field) {
+  const edits = rowEdits.value[row.row_index];
+  if (edits && field in edits) return edits[field];
+  return row[field];
+}
+
+function setEditValue(row, field, value) {
+  _ensureRowEdit(row.row_index);
+  rowEdits.value[row.row_index][field] = value;
+}
+
+function isRowModified(row) {
+  const edits = rowEdits.value[row.row_index];
+  return !!edits && Object.keys(edits).length > 0;
+}
+
+function isRowSelected(row) {
+  return selectedRowIndices.value.has(row.row_index);
+}
+
+function toggleRow(rowIndex) {
+  const next = new Set(selectedRowIndices.value);
+  if (next.has(rowIndex)) {
+    next.delete(rowIndex);
+  } else {
+    next.add(rowIndex);
+  }
+  selectedRowIndices.value = next;
+}
+
+const allPreviewRowsSelected = computed(() => {
+  const rows = documentPreview.value?.rows || [];
+  return rows.length > 0 && rows.every((r) => selectedRowIndices.value.has(r.row_index));
+});
+
+function toggleAllRows() {
+  const rows = documentPreview.value?.rows || [];
+  if (allPreviewRowsSelected.value) {
+    selectedRowIndices.value = new Set();
+  } else {
+    selectedRowIndices.value = new Set(rows.map((r) => r.row_index));
+  }
+}
+
+function deselectLowConfidence(threshold = 0.7) {
+  const rows = documentPreview.value?.rows || [];
+  const next = new Set(selectedRowIndices.value);
+  for (const r of rows) {
+    if (Number(r.confidence || 0) < threshold) next.delete(r.row_index);
+  }
+  selectedRowIndices.value = next;
+}
+
+const selectedImportCount = computed(() => {
+  const rows = documentPreview.value?.rows || [];
+  return rows.filter((r) => {
+    if (!selectedRowIndices.value.has(r.row_index)) return false;
+    const bg = rowEdits.value[r.row_index]?.is_background;
+    const isBg = bg !== undefined ? bg : r.is_background;
+    const raw = rowEdits.value[r.row_index]?.raw_value;
+    const val = raw !== undefined ? raw : r.raw_value;
+    return !isBg && val !== null && val !== '';
+  }).length;
+});
+
+function buildImportRows() {
+  const rows = documentPreview.value?.rows || [];
+  return rows
+    .filter((r) => selectedRowIndices.value.has(r.row_index))
+    .filter((r) => {
+      const bg = rowEdits.value[r.row_index]?.is_background;
+      const isBg = bg !== undefined ? bg : r.is_background;
+      const raw = rowEdits.value[r.row_index]?.raw_value;
+      const val = raw !== undefined ? raw : r.raw_value;
+      return !isBg && val !== null && val !== '';
+    })
+    .map((r) => {
+      const base = { ...r };
+      const edits = rowEdits.value[r.row_index] || {};
+      for (const [key, val] of Object.entries(edits)) {
+        base[key] = val;
+      }
+      return base;
+    });
+}
+
+function confidenceClass(row) {
+  const c = Number(row.confidence || 0);
+  if (c >= 0.85) return 'conf-high';
+  if (c >= 0.7) return 'conf-medium';
+  return 'conf-low';
+}
 
 function labelOf(options, value) {
   return options.find((item) => item.value === value)?.label || value || '-';
@@ -213,6 +321,8 @@ function resetDocumentPreview() {
   selectedDocument.value = null;
   documentLabel.value = '点击选择 PDF / DOCX / DOC / TXT 文件';
   documentPreview.value = null;
+  selectedRowIndices.value = new Set();
+  rowEdits.value = {};
 }
 
 function onFileChange(event) {
@@ -270,11 +380,45 @@ async function submitDocumentPreview() {
     documentPreview.value = await previewDetectionDocument(file, {
       reportType: documentReportType.value,
     });
-    toast.show(`识别到 ${documentPreview.value?.rows?.length || 0} 条候选检测行`, 'success');
+    // 默认全选所有候选行
+    const rows = documentPreview.value?.rows || [];
+    selectedRowIndices.value = new Set(rows.map((r) => r.row_index));
+    rowEdits.value = {};
+    toast.show(`识别到 ${rows.length} 条候选检测行`, 'success');
   } catch (err) {
     toast.show(formatApiError(err), 'error');
   } finally {
     documentPreviewBusy.value = false;
+  }
+}
+
+async function importDocumentPreview() {
+  if (documentImportBusy.value || !documentPreview.value) return;
+  const importRows = buildImportRows();
+  if (!importRows.length) {
+    toast.show('没有可入库的候选检测行（请勾选至少一条非背景含数值行）', 'error');
+    return;
+  }
+  documentImportBusy.value = true;
+  try {
+    const data = await importDetectionDocumentPreview({
+      filename: documentPreview.value.filename,
+      report_type: documentPreview.value.report_type || documentReportType.value,
+      organization_id: organizationId.value || null,
+      rows: importRows,
+      warnings: documentPreview.value.warnings || [],
+    });
+    resetDocumentPreview();
+    showDocumentPreview.value = false;
+    reportStatusFilter.value = '';
+    reportPage.value = 1;
+    await loadReports();
+    toast.show(`已确认入库 ${data.measurement_count || 0} 条检测结果`, 'success');
+    await openReport(data.report_id);
+  } catch (err) {
+    toast.show(formatApiError(err), 'error');
+  } finally {
+    documentImportBusy.value = false;
   }
 }
 
@@ -683,49 +827,132 @@ watch(activeTab, (next) => {
           <div v-if="documentPreview.warnings?.length" class="preview-warnings">
             <span v-for="warning in documentPreview.warnings" :key="warning">{{ warning }}</span>
           </div>
+          <div v-if="documentPreview.rows?.length" class="preview-toolbar">
+            <button type="button" class="btn-link-sm" @click="toggleAllRows">
+              {{ allPreviewRowsSelected ? '取消全选' : '全选' }}
+            </button>
+            <button type="button" class="btn-link-sm" @click="deselectLowConfidence(0.7)">
+              取消低置信度(&lt;70%)
+            </button>
+            <span class="preview-toolbar-count">
+              已选 {{ selectedImportCount }} 条可入库
+            </span>
+          </div>
           <div class="preview-table-wrap">
-            <table class="mini-table">
+            <table class="mini-table preview-edit-table">
               <thead>
                 <tr>
-                  <th>行</th>
-                  <th>检测点</th>
-                  <th>介质</th>
-                  <th>因子</th>
-                  <th>检测值</th>
-                  <th>预判</th>
-                  <th>置信度</th>
+                  <th class="col-check">
+                    <input type="checkbox" :checked="allPreviewRowsSelected" @change="toggleAllRows" />
+                  </th>
+                  <th class="col-idx">行</th>
+                  <th class="col-point">检测点</th>
+                  <th class="col-medium">介质</th>
+                  <th class="col-indicator">因子</th>
+                  <th class="col-value">检测值</th>
+                  <th class="col-unit">单位</th>
+                  <th class="col-limit-type">限值类型</th>
+                  <th class="col-bg">背景</th>
+                  <th class="col-status">预判</th>
+                  <th class="col-conf">置信度</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-if="!documentPreview.rows?.length" class="empty-row">
-                  <td colspan="7">未识别到候选检测行</td>
+                  <td colspan="11">未识别到候选检测行</td>
                 </tr>
-                <tr v-for="row in documentPreview.rows" :key="`${row.row_index}-${row.indicator_name}`">
-                  <td>{{ row.row_index }}</td>
-                  <td>
-                    {{ row.sample_point }}
+                <tr
+                  v-for="row in documentPreview.rows"
+                  :key="`${row.row_index}-${row.indicator_name}`"
+                  :class="{
+                    'row-selected': isRowSelected(row),
+                    'row-modified': isRowModified(row),
+                    'row-low-conf': Number(row.confidence || 0) < 0.7,
+                  }"
+                >
+                  <td class="col-check">
+                    <input type="checkbox" :checked="isRowSelected(row)" @change="toggleRow(row.row_index)" />
+                  </td>
+                  <td class="col-idx">{{ row.row_index }}</td>
+                  <td class="col-point">
+                    <input
+                      type="text"
+                      class="cell-input"
+                      :value="getEditValue(row, 'sample_point')"
+                      @input="setEditValue(row, 'sample_point', $event.target.value)"
+                    />
                     <small v-if="row.warnings?.length" class="subtle-line">{{
                       row.warnings.join('；')
                     }}</small>
                   </td>
-                  <td>{{ labelOf(MEDIUMS, row.medium) }}</td>
-                  <td>{{ row.indicator_name }}</td>
-                  <td>
-                    {{ formatPreviewValue(row) }}
-                    <small v-if="row.is_background" class="subtle-line">背景/辅助行</small>
+                  <td class="col-medium">
+                    <select
+                      class="cell-select"
+                      :value="getEditValue(row, 'medium')"
+                      @change="setEditValue(row, 'medium', $event.target.value)"
+                    >
+                      <option v-for="item in MEDIUMS" :key="item.value" :value="item.value">
+                        {{ item.label }}
+                      </option>
+                    </select>
+                  </td>
+                  <td class="col-indicator">
+                    <input
+                      type="text"
+                      class="cell-input"
+                      :value="getEditValue(row, 'indicator_name')"
+                      @input="setEditValue(row, 'indicator_name', $event.target.value)"
+                    />
                     <small v-if="row.measurement_kind" class="subtle-line">{{ row.measurement_kind }}</small>
                   </td>
-                  <td>
+                  <td class="col-value">
+                    <input
+                      type="text"
+                      class="cell-input cell-input-num"
+                      :value="getEditValue(row, 'raw_value')"
+                      @input="setEditValue(row, 'raw_value', $event.target.value)"
+                    />
+                    <small v-if="getEditValue(row, 'is_below_detection_limit')" class="subtle-line">低于检出限</small>
+                  </td>
+                  <td class="col-unit">
+                    <input
+                      type="text"
+                      class="cell-input cell-input-unit"
+                      :value="getEditValue(row, 'raw_unit')"
+                      @input="setEditValue(row, 'raw_unit', $event.target.value)"
+                    />
+                  </td>
+                  <td class="col-limit-type">
+                    <select
+                      class="cell-select"
+                      :value="getEditValue(row, 'limit_type')"
+                      @change="setEditValue(row, 'limit_type', $event.target.value || null)"
+                    >
+                      <option value="">--</option>
+                      <option v-for="item in LIMIT_TYPES" :key="item" :value="item">{{ item }}</option>
+                    </select>
+                  </td>
+                  <td class="col-bg">
+                    <input
+                      type="checkbox"
+                      :checked="getEditValue(row, 'is_background')"
+                      @change="setEditValue(row, 'is_background', $event.target.checked)"
+                    />
+                  </td>
+                  <td class="col-status">
                     {{ row.preliminary_status ? complianceText(row.preliminary_status) : '-' }}
-                    <small v-if="row.limit_type || row.report_limit_value" class="subtle-line">
-                      {{ row.limit_type || '报告内限值' }}
-                      <template v-if="row.report_limit_value"> / {{ formatPreviewLimit(row) }}</template>
+                    <small v-if="row.report_limit_value" class="subtle-line">
+                      报告限值 {{ formatPreviewLimit(row) }}
                     </small>
                     <small v-if="row.preliminary_message" class="subtle-line">
                       {{ row.preliminary_message }}
                     </small>
                   </td>
-                  <td>{{ formatNumber(Number(row.confidence) * 100) }}%</td>
+                  <td class="col-conf">
+                    <span :class="['conf-badge', confidenceClass(row)]">
+                      {{ formatNumber(Number(row.confidence) * 100) }}%
+                    </span>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -734,6 +961,22 @@ watch(activeTab, (next) => {
             <summary>查看抽取文本片段</summary>
             <pre>{{ documentPreview.text_excerpt }}</pre>
           </details>
+          <div class="form-actions preview-actions">
+            <span class="preview-actions-hint">
+              将导入 {{ selectedImportCount }} 条（已勾选 {{ selectedRowIndices.size }} 行）
+              <template v-if="documentPreview.rows?.some(r => isRowModified(r))">
+                · <span class="modified-hint">已修改 {{ documentPreview.rows.filter(r => isRowModified(r)).length }} 行</span>
+              </template>
+            </span>
+            <button
+              type="button"
+              class="btn-primary"
+              :disabled="documentImportBusy || !selectedImportCount"
+              @click="importDocumentPreview"
+            >
+              {{ documentImportBusy ? '入库中...' : '确认入库' }}
+            </button>
+          </div>
         </div>
       </div>
     </section>
@@ -804,7 +1047,10 @@ watch(activeTab, (next) => {
             </tr>
             <tr v-for="report in reports" :key="report.id" @click="openReport(report.id)">
               <td>
-                <span class="task-filename">{{ report.filename }}</span>
+                <span class="task-filename">{{ labelOf(REPORT_TYPES, report.report_type) }}</span>
+                <small v-if="report.report_date" class="subtle-line">检测日期 {{ report.report_date }}</small>
+                <small v-else class="subtle-line">上传于 {{ formatTime(report.created_at) }}</small>
+                <small class="subtle-line" style="color: var(--text-tertiary)">{{ report.filename }}</small>
               </td>
               <td>{{ labelOf(REPORT_TYPES, report.report_type) }}</td>
               <td>
@@ -1225,6 +1471,17 @@ watch(activeTab, (next) => {
   white-space: pre-wrap;
   word-break: break-word;
 }
+.preview-actions {
+  margin-top: 12px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+.preview-actions-hint {
+  margin-right: auto;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -1351,6 +1608,155 @@ watch(activeTab, (next) => {
 }
 .empty-state.compact {
   padding: 22px 12px;
+}
+
+/* ---- 人工确认：工具栏 ---- */
+.preview-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.btn-link-sm {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.btn-link-sm:hover {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+}
+.preview-toolbar-count {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+.modified-hint {
+  color: var(--warning);
+}
+
+/* ---- 预览编辑表格 ---- */
+.preview-edit-table {
+  min-width: 980px;
+}
+.preview-edit-table th,
+.preview-edit-table td {
+  vertical-align: top;
+}
+.col-check {
+  width: 32px;
+  text-align: center;
+}
+.col-idx {
+  width: 40px;
+}
+.col-point {
+  min-width: 110px;
+}
+.col-medium {
+  width: 90px;
+}
+.col-indicator {
+  min-width: 100px;
+}
+.col-value {
+  width: 80px;
+}
+.col-unit {
+  width: 64px;
+}
+.col-limit-type {
+  width: 100px;
+}
+.col-bg {
+  width: 44px;
+  text-align: center;
+}
+.col-status {
+  min-width: 80px;
+}
+.col-conf {
+  width: 64px;
+  text-align: center;
+}
+
+.cell-input {
+  width: 100%;
+  padding: 3px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  transition: border-color var(--transition);
+}
+.cell-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-bg);
+}
+.cell-input-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.cell-input-unit {
+  text-align: center;
+}
+.cell-select {
+  width: 100%;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 11px;
+  font-family: inherit;
+}
+.cell-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* ---- 行状态 ---- */
+.preview-edit-table tbody tr.row-selected {
+  background: var(--accent-bg);
+}
+.preview-edit-table tbody tr.row-modified {
+  border-left: 3px solid var(--warning);
+}
+.preview-edit-table tbody tr.row-low-conf {
+  --stripe: rgba(255 160 60 / 0.08);
+  background: var(--stripe);
+}
+.preview-edit-table tbody tr.row-low-conf.row-selected {
+  background: color-mix(in srgb, var(--accent-bg) 70%, var(--stripe));
+}
+
+/* ---- 置信度徽标 ---- */
+.conf-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.conf-high {
+  background: var(--success-bg);
+  color: var(--success);
+}
+.conf-medium {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+.conf-low {
+  background: var(--danger-bg);
+  color: var(--danger);
 }
 
 @media (max-width: 1024px) {

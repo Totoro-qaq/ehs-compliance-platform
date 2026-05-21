@@ -67,6 +67,18 @@ _UNIT_ALIASES: dict[str, str] = {
     'wbgt（°c）': '℃',
     'pH': 'pH',
     'ph': 'pH',
+    'kv/m': 'kV/m',
+    'kV/m': 'kV/m',
+    'j/cm2': 'J/cm2',
+    'J/cm2': 'J/cm2',
+    'j/cm^2': 'J/cm2',
+    'J/cm^2': 'J/cm2',
+    'w/cm2': 'W/cm2',
+    'W/cm2': 'W/cm2',
+    'w/cm^2': 'W/cm2',
+    'W/cm^2': 'W/cm2',
+    'lx': 'lx',
+    'lux': 'lx',
 }
 
 
