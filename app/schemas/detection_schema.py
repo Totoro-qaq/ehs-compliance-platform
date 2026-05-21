@@ -108,6 +108,11 @@ class DetectionParsedRowPreview(BaseModel):
     is_below_detection_limit: bool = False
     is_background: bool = False
     measurement_kind: str | None = None
+    limit_type: LimitType | None = None
+    report_limit_value: Decimal | None = None
+    report_limit_unit: str | None = None
+    preliminary_status: ComplianceStatus | None = None
+    preliminary_message: str | None = None
     warnings: list[str] = Field(default_factory=list)
 
 

@@ -197,6 +197,11 @@ function formatPreviewValue(row) {
   return `${formatNumber(row?.raw_value)} ${row?.raw_unit || ''}`.trim();
 }
 
+function formatPreviewLimit(row) {
+  if (!row?.report_limit_value) return '';
+  return `${formatNumber(row.report_limit_value)} ${row.report_limit_unit || ''}`.trim();
+}
+
 function resetUpload() {
   if (fileInput.value) fileInput.value.value = '';
   selectedFile.value = null;
@@ -687,12 +692,13 @@ watch(activeTab, (next) => {
                   <th>介质</th>
                   <th>因子</th>
                   <th>检测值</th>
+                  <th>预判</th>
                   <th>置信度</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-if="!documentPreview.rows?.length" class="empty-row">
-                  <td colspan="6">未识别到候选检测行</td>
+                  <td colspan="7">未识别到候选检测行</td>
                 </tr>
                 <tr v-for="row in documentPreview.rows" :key="`${row.row_index}-${row.indicator_name}`">
                   <td>{{ row.row_index }}</td>
@@ -708,6 +714,16 @@ watch(activeTab, (next) => {
                     {{ formatPreviewValue(row) }}
                     <small v-if="row.is_background" class="subtle-line">背景/辅助行</small>
                     <small v-if="row.measurement_kind" class="subtle-line">{{ row.measurement_kind }}</small>
+                  </td>
+                  <td>
+                    {{ row.preliminary_status ? complianceText(row.preliminary_status) : '-' }}
+                    <small v-if="row.limit_type || row.report_limit_value" class="subtle-line">
+                      {{ row.limit_type || '报告内限值' }}
+                      <template v-if="row.report_limit_value"> / {{ formatPreviewLimit(row) }}</template>
+                    </small>
+                    <small v-if="row.preliminary_message" class="subtle-line">
+                      {{ row.preliminary_message }}
+                    </small>
                   </td>
                   <td>{{ formatNumber(Number(row.confidence) * 100) }}%</td>
                 </tr>
