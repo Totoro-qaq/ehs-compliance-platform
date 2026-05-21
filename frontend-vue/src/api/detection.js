@@ -19,6 +19,17 @@ export function createDetectionReport(file, { organizationId, reportType }) {
   return request('/api/v1/detection/reports', { method: 'POST', body: form, timeoutMs: 60000 });
 }
 
+export function previewDetectionDocument(file, { reportType }) {
+  const form = new FormData();
+  form.append('file', file);
+  if (reportType) form.append('report_type', reportType);
+  return request('/api/v1/detection/documents/preview', {
+    method: 'POST',
+    body: form,
+    timeoutMs: 90000,
+  });
+}
+
 export function getDetectionReport(reportId) {
   return request(`/api/v1/detection/reports/${encodeURIComponent(reportId)}`);
 }
