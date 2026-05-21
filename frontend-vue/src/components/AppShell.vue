@@ -23,6 +23,7 @@ const navItems = [
   { key: 'product', label: '产品' },
   { key: 'developer', label: '开发人员' },
   { key: 'start', label: '开始评价', view: 'tasks' },
+  { key: 'detection', label: '检测合规', view: 'detection' },
 ];
 
 const userMenuOpen = ref(false);
@@ -144,6 +145,10 @@ onUnmounted(() => document.removeEventListener('click', closeMenuOnOutside));
                   <button type="button" class="user-menu-item" @click="goto('tasks')">
                     <Icon name="clipboard" :size="14" />
                     <span>评估任务</span>
+                  </button>
+                  <button type="button" class="user-menu-item" @click="goto('detection')">
+                    <Icon name="database" :size="14" />
+                    <span>检测合规</span>
                   </button>
                   <button v-if="isAdminVisible" type="button" class="user-menu-item" @click="goto('orgs')">
                     <Icon name="building" :size="14" />
