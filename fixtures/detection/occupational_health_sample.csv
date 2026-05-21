@@ -1,0 +1,4 @@
+sample_point,workplace,post_name,indicator_name,raw_value,raw_unit,duration_minutes
+喷漆岗,涂装车间,喷漆工,苯,50000,μg/m3,60
+喷漆岗,涂装车间,喷漆工,甲苯,20,mg/m3,60
+打磨岗,机加工车间,打磨工,其他粉尘,6,mg/m3,240

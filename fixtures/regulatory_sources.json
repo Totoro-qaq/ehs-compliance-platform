@@ -1,0 +1,25 @@
+[
+  {
+    "standard_code": "GBZ 2.2-2007",
+    "standard_name": "工作场所有害因素职业接触限值 第2部分：物理因素",
+    "publisher": "中华人民共和国卫生部 / 国家卫生健康委员会公开标准页面",
+    "source_page_url": "https://www.nhc.gov.cn/wjw/pyl/200705/39019.shtml",
+    "source_pdf_url": "https://www.nhc.gov.cn/wjw/pyl/200705/39019/files/1739779655603_50074.pdf",
+    "accessed_date": "2026-05-21",
+    "covered_limits": [
+      {
+        "indicator": "高温 WBGT",
+        "medium": "HIGH_TEMPERATURE",
+        "clause": "表8",
+        "seed_scope": "按接触时间率 100%、75%、50%、25% 与 I-IV 级体力劳动强度拆分为 16 条标量限值"
+      },
+      {
+        "indicator": "噪声",
+        "medium": "NOISE",
+        "clause": "表9",
+        "seed_scope": "8h 等效声级 85 dB(A)"
+      }
+    ],
+    "notes": "仓库只保存公开来源索引和结构化种子数据，不内置标准 PDF 二进制文件。"
+  }
+]

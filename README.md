@@ -81,6 +81,14 @@ docker compose up -d redis
 alembic upgrade head
 ```
 
+初始化检测合规限值库：
+
+```bash
+python -m scripts.seed_regulatory_limits
+```
+
+该脚本会幂等写入首批 GBZ 限值，覆盖苯、甲苯、二甲苯、粉尘、噪声和高温 WBGT。公开标准来源索引保存在 `fixtures/regulatory_sources.json`，演示 CSV 位于 `fixtures/detection/`。
+
 启动 API：
 
 ```bash
@@ -100,6 +108,8 @@ cd frontend-vue
 npm install
 npm run dev
 ```
+
+登录后进入顶部导航「检测合规」或访问 `/detection`，可上传 CSV / XLSX / XLSM、运行合规判定，并由管理员维护限值库。页面内置职业卫生、噪声、高温三个样例按钮，方便本地演示。
 
 前端环境变量：
 
@@ -247,6 +257,11 @@ uploads/YYYY/MM/DD/{uuid}_{safe_original_name}.{ext}
 | `GET / DELETE` | `/api/v1/assessment/{task_id}` | 查询 / 软删除任务 |
 | `POST` | `/api/v1/assessment/{task_id}/requeue` | 重新分析失败任务 |
 | `GET` | `/api/v1/assessment/{task_id}/progress` | SSE 任务进度 |
+| `GET / POST` | `/api/v1/detection/reports` | 检测报告列表 / 上传结构化检测数据 |
+| `GET` | `/api/v1/detection/reports/{report_id}` | 检测报告详情 |
+| `POST` | `/api/v1/detection/reports/{report_id}/calculate` | 运行检测合规判定 |
+| `GET` | `/api/v1/detection/reports/{report_id}/results` | 查询检测合规判定结果 |
+| `GET / POST / PUT / DELETE` | `/api/v1/detection/limits` | 法规限值库查询与维护 |
 | `*` | `/api/v1/admin/*` | 管理接口 |
 
 失败任务可以在前端任务列表或详情抽屉中点击「重新分析」。后端只允许 `FAILED` 状态重新投递，普通用户只能操作自己创建的任务。
@@ -363,6 +378,14 @@ Run migrations:
 alembic upgrade head
 ```
 
+Seed detection compliance regulatory limits:
+
+```bash
+python -m scripts.seed_regulatory_limits
+```
+
+The seeder is idempotent and inserts the first GBZ limits for benzene, toluene, xylene, dust, noise, and WBGT heat stress. Public source metadata is stored in `fixtures/regulatory_sources.json`, and demo CSV files are available under `fixtures/detection/`.
+
 Start the API:
 
 ```bash
@@ -382,6 +405,8 @@ cd frontend-vue
 npm install
 npm run dev
 ```
+
+After signing in, open "检测合规" in the top navigation or visit `/detection`. The page supports CSV / XLSX / XLSM upload, compliance calculation, and admin regulatory-limit maintenance. Built-in sample buttons cover occupational health, noise, and high-temperature WBGT workflows.
 
 Frontend environment variable:
 

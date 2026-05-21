@@ -58,6 +58,17 @@ const ICONS = {
     fill: 'currentColor',
     stroke: 'none',
   },
+  database: {
+    paths:
+      '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/>',
+  },
+  play: {
+    paths: '<polygon points="5 3 19 12 5 21 5 3"/>',
+  },
+  save: {
+    paths:
+      '<path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>',
+  },
 };
 
 const cfg = computed(() => ICONS[props.name] || { paths: '' });

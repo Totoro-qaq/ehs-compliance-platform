@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from datetime import date, datetime
+from decimal import Decimal
 from enum import Enum
 
+from sqlalchemy import Date, DateTime
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy import ForeignKey, Integer, String, Text
+from sqlalchemy import ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import ModelBase
@@ -124,3 +127,224 @@ class AssessmentTimelineEvent(ModelBase):
     elapsed_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     task: Mapped[AssessmentTask] = relationship(back_populates='timeline_events')
+
+
+# ----------------------------------------------------------------------------
+# 检测报告合规模块（结构化 MVP）
+#
+# 所有数值字段使用 Numeric / Decimal，避免浮点比较带来的超标判定边界误差；
+# 单位、限值类型等强制走枚举，保留原始值与归一化值两套字段，方便审计。
+# ----------------------------------------------------------------------------
+
+
+class ReportType(str, Enum):
+    """检测报告业务类型，决定 sample.medium 与限值匹配口径。"""
+
+    OCCUPATIONAL_HEALTH = 'OCCUPATIONAL_HEALTH'  # 职业卫生
+    WASTEWATER = 'WASTEWATER'  # 废水
+    EXHAUST_GAS = 'EXHAUST_GAS'  # 废气
+    NOISE = 'NOISE'  # 噪声
+    HIGH_TEMPERATURE = 'HIGH_TEMPERATURE'  # 高温 / WBGT
+
+
+class ReportStatus(str, Enum):
+    """检测报告生命周期。CALCULATED 表示已生成 compliance_results。"""
+
+    UPLOADED = 'UPLOADED'
+    PARSED = 'PARSED'
+    VALIDATED = 'VALIDATED'
+    CALCULATED = 'CALCULATED'
+    FAILED = 'FAILED'
+
+
+class SampleMedium(str, Enum):
+    """采样介质，限值匹配的硬约束之一。"""
+
+    WORKPLACE_AIR = 'WORKPLACE_AIR'
+    WASTEWATER = 'WASTEWATER'
+    EXHAUST_GAS = 'EXHAUST_GAS'
+    NOISE = 'NOISE'
+    HIGH_TEMPERATURE = 'HIGH_TEMPERATURE'
+
+
+class LimitType(str, Enum):
+    """法规限值类型；RANGE 用于 pH 等需要上下限的指标。"""
+
+    MAC = 'MAC'  # 最高容许浓度
+    PC_TWA = 'PC_TWA'  # 时间加权平均容许浓度
+    PC_STEL = 'PC_STEL'  # 短时间接触容许浓度
+    DAILY_AVG = 'DAILY_AVG'  # 日均值
+    INSTANT = 'INSTANT'  # 瞬时值 / 最大允许值
+    RANGE = 'RANGE'  # 上下限范围（pH 等）
+
+
+class ComplianceStatus(str, Enum):
+    """最终合规判定结果。"""
+
+    COMPLIANT = 'COMPLIANT'
+    EXCEEDED = 'EXCEEDED'
+    BORDERLINE = 'BORDERLINE'
+    INSUFFICIENT_DATA = 'INSUFFICIENT_DATA'
+    NEEDS_REVIEW = 'NEEDS_REVIEW'
+
+
+class DetectionReport(ModelBase):
+    """检测报告主表：一份上传文件 + 报告类型 + 状态机。"""
+
+    __tablename__ = 'detection_reports'
+
+    organization_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey('organizations.id', ondelete='RESTRICT'),
+        nullable=False,
+        index=True,
+    )
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    report_type: Mapped[ReportType] = mapped_column(SAEnum(ReportType), nullable=False, index=True)
+    status: Mapped[ReportStatus] = mapped_column(
+        SAEnum(ReportStatus), nullable=False, default=ReportStatus.UPLOADED
+    )
+    report_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    issuer: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('accounts.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+
+    samples: Mapped[list['DetectionSample']] = relationship(
+        back_populates='report', cascade='all, delete-orphan'
+    )
+    compliance_results: Mapped[list['ComplianceResult']] = relationship(
+        back_populates='report', cascade='all, delete-orphan'
+    )
+
+
+class DetectionSample(ModelBase):
+    """检测点 / 样品 / 采样记录。一份报告下挂多个样品。"""
+
+    __tablename__ = 'detection_samples'
+
+    report_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey('detection_reports.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    sample_point: Mapped[str] = mapped_column(String(255), nullable=False)
+    workplace: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    post_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    medium: Mapped[SampleMedium] = mapped_column(SAEnum(SampleMedium), nullable=False, index=True)
+    sample_time_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    sample_time_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 单次采样持续时长（分钟），TWA 计算所需
+    duration_minutes: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    # 岗位/班次工时（小时），PC-TWA 标准时长 8h
+    shift_hours: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    raw_payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    report: Mapped[DetectionReport] = relationship(back_populates='samples')
+    measurements: Mapped[list['DetectionMeasurement']] = relationship(
+        back_populates='sample', cascade='all, delete-orphan'
+    )
+
+
+class DetectionMeasurement(ModelBase):
+    """检测因子结果。raw_* 与 normalized_* 双份字段，方便审计与回滚。"""
+
+    __tablename__ = 'detection_measurements'
+
+    sample_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey('detection_samples.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    indicator_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    indicator_alias: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    cas_no: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    raw_value: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    raw_unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    normalized_value: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    normalized_unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # 检测限 / 方法定量限（< 检出限的样品参与判定时按检测限处理）
+    detect_limit: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    method_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    raw_text: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    sample: Mapped[DetectionSample] = relationship(back_populates='measurements')
+
+
+class RegulatoryLimit(ModelBase):
+    """法规限值表。limit_value / limit_min / limit_max 互补：标量限值用前者，范围限值用后两者。"""
+
+    __tablename__ = 'regulatory_limits'
+
+    indicator_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    cas_no: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    aliases_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    medium: Mapped[SampleMedium] = mapped_column(SAEnum(SampleMedium), nullable=False, index=True)
+    limit_type: Mapped[LimitType] = mapped_column(SAEnum(LimitType), nullable=False, index=True)
+    limit_value: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    limit_min: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    limit_max: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    unit: Mapped[str] = mapped_column(String(32), nullable=False)
+    standard_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    standard_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    clause: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    basis_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    applicability_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 多条限值同时命中时，priority 越小越优先（行业 > 综合，地方严于国家时人工置顶）
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+
+
+class ComplianceResult(ModelBase):
+    """合规判定结果：每条 measurement 对应一条结果，附违反依据。"""
+
+    __tablename__ = 'compliance_results'
+
+    report_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey('detection_reports.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    sample_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey('detection_samples.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    measurement_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey('detection_measurements.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    limit_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('regulatory_limits.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    calculated_value: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    calculated_unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    limit_value: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    limit_unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    limit_type: Mapped[LimitType | None] = mapped_column(SAEnum(LimitType), nullable=True)
+    status: Mapped[ComplianceStatus] = mapped_column(
+        SAEnum(ComplianceStatus), nullable=False, index=True
+    )
+    # 超标倍数 = (calculated - limit) / limit；范围限值场景为 NULL
+    exceedance_multiple: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+    standard_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    standard_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    clause: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    report: Mapped[DetectionReport] = relationship(back_populates='compliance_results')
