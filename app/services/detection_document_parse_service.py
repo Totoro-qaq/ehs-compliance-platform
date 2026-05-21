@@ -34,6 +34,14 @@ _VALUE_UNIT_RE = re.compile(
 )
 _CAS_RE = re.compile(r'\b\d{2,7}-\d{2}-\d\b')
 _WORD_NAMESPACE = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+_PDF_TABLE_SETTINGS = {
+    'vertical_strategy': 'lines',
+    'horizontal_strategy': 'lines',
+    'snap_tolerance': 3,
+    'join_tolerance': 3,
+    'intersection_tolerance': 5,
+    'text_tolerance': 3,
+}
 
 _INDICATOR_HINTS: tuple[str, ...] = (
     '高温WBGT',
@@ -232,11 +240,22 @@ def _roman_level(raw: str) -> str | None:
 
 
 def _find_header_index(header_rows: list[list[str]], *needles: str) -> int | None:
+    compact_needles = [_compact_text(needle) for needle in needles]
     for row in header_rows:
         for idx, cell in enumerate(row):
-            if all(needle in cell for needle in needles):
+            compact_cell = _compact_text(cell)
+            if all(needle in compact_cell for needle in compact_needles):
                 return idx
     return None
+
+
+def _compact_text(raw: str) -> str:
+    return re.sub(r'\s+', '', raw or '')
+
+
+def _normalize_table_cell(raw: object) -> str:
+    text = '' if raw is None else str(raw)
+    return re.sub(r'\s+', ' ', text).strip()
 
 
 def _cell(row: list[str], idx: int | None) -> str:
@@ -267,12 +286,41 @@ def _docx_tables(path: Path) -> list[list[list[str]]]:
             cells: list[str] = []
             for tc in tr.findall('./w:tc', _WORD_NAMESPACE):
                 texts = [node.text for node in tc.findall('.//w:t', _WORD_NAMESPACE) if node.text]
-                cells.append(''.join(texts).strip())
+                cells.append(_normalize_table_cell(''.join(texts)))
             if any(cells):
                 rows.append(cells)
         if rows:
             tables.append(rows)
     return tables
+
+
+def _pdf_tables(path: Path) -> tuple[list[list[list[str]]], list[str]]:
+    try:
+        import pdfplumber
+    except ImportError:
+        return [], ['PDF 表格解析需要安装 pdfplumber；当前已回退到文本层识别']
+
+    tables: list[list[list[str]]] = []
+    warnings: list[str] = []
+    try:
+        with pdfplumber.open(str(path)) as pdf:
+            for page_number, page in enumerate(pdf.pages, start=1):
+                try:
+                    page_tables = page.extract_tables(table_settings=_PDF_TABLE_SETTINGS) or []
+                except Exception as exc:
+                    warnings.append(f'PDF 第 {page_number} 页表格抽取失败，已跳过该页：{exc}')
+                    continue
+                for raw_table in page_tables:
+                    rows: list[list[str]] = []
+                    for raw_row in raw_table:
+                        cells = [_normalize_table_cell(cell) for cell in raw_row]
+                        if any(cells):
+                            rows.append(cells)
+                    if rows:
+                        tables.append(rows)
+    except Exception as exc:
+        return [], [f'PDF 表格解析失败，已回退到文本层识别：{exc}']
+    return tables, warnings
 
 
 def _parse_chemical_table(
@@ -581,12 +629,11 @@ def _parse_illumination_table(
     return rows, next_index
 
 
-def parse_detection_docx_tables(path: str | Path) -> list[ParsedDetectionRow]:
-    tables = _docx_tables(Path(path))
+def parse_detection_tables(tables: list[list[list[str]]]) -> list[ParsedDetectionRow]:
     rows: list[ParsedDetectionRow] = []
     next_index = 1
     for table in tables:
-        joined_header = ' '.join(' '.join(row) for row in table[:2])
+        joined_header = _compact_text(' '.join(' '.join(row) for row in table[:3]))
         parsed: list[ParsedDetectionRow] = []
         if 'WBGT均值' in joined_header and 'WBGT限值' in joined_header:
             parsed, next_index = _parse_heat_table(table, start_index=next_index)
@@ -602,6 +649,15 @@ def parse_detection_docx_tables(path: str | Path) -> list[ParsedDetectionRow]:
             parsed, next_index = _parse_chemical_table(table, start_index=next_index)
         rows.extend(parsed)
     return rows
+
+
+def parse_detection_docx_tables(path: str | Path) -> list[ParsedDetectionRow]:
+    return parse_detection_tables(_docx_tables(Path(path)))
+
+
+def parse_detection_pdf_tables(path: str | Path) -> tuple[list[ParsedDetectionRow], list[str]]:
+    tables, warnings = _pdf_tables(Path(path))
+    return parse_detection_tables(tables), warnings
 
 
 def _infer_medium(line: str, report_type: ReportType) -> SampleMedium:
@@ -742,6 +798,15 @@ class DetectionDocumentParseService:
                 rows = table_rows
                 warnings = [
                     '已按 DOCX 表格结构解析；请在入库前人工核对检测点、因子、单位和数值'
+                ]
+        elif path.suffix.lower() == '.pdf':
+            table_rows, table_warnings = parse_detection_pdf_tables(path)
+            warnings.extend(table_warnings)
+            if table_rows:
+                rows = table_rows
+                warnings = [
+                    '已按 PDF 表格结构解析；请在入库前人工核对检测点、因子、单位和数值',
+                    *table_warnings,
                 ]
         if not text.strip():
             warnings.append('文件未抽取到可用文本；如为扫描 PDF，需要开启 OCR 或先转为文本层 PDF')
