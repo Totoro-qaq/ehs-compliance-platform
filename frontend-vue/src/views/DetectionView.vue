@@ -167,10 +167,6 @@ const resultSummary = computed(() => {
   };
 });
 const limitFormTitle = computed(() => (limitForm.id ? '编辑限值' : '新增限值'));
-const documentImportableRows = computed(() =>
-  (documentPreview.value?.rows || []).filter((row) => !row.is_background && row.raw_value !== null),
-);
-
 // ---- 人工确认：行选择 + 行内编辑 ----
 const selectedRowIndices = ref(new Set());
 const rowEdits = ref({});
@@ -298,11 +294,6 @@ function formatNumber(value) {
   const num = Number(value);
   if (!Number.isFinite(num)) return String(value);
   return num.toLocaleString('zh-CN', { maximumFractionDigits: 6 });
-}
-
-function formatPreviewValue(row) {
-  if (row?.is_below_detection_limit) return '低于检出限';
-  return `${formatNumber(row?.raw_value)} ${row?.raw_unit || ''}`.trim();
 }
 
 function formatPreviewLimit(row) {
@@ -834,9 +825,7 @@ watch(activeTab, (next) => {
             <button type="button" class="btn-link-sm" @click="deselectLowConfidence(0.7)">
               取消低置信度(&lt;70%)
             </button>
-            <span class="preview-toolbar-count">
-              已选 {{ selectedImportCount }} 条可入库
-            </span>
+            <span class="preview-toolbar-count"> 已选 {{ selectedImportCount }} 条可入库 </span>
           </div>
           <div class="preview-table-wrap">
             <table class="mini-table preview-edit-table">
@@ -912,7 +901,9 @@ watch(activeTab, (next) => {
                       :value="getEditValue(row, 'raw_value')"
                       @input="setEditValue(row, 'raw_value', $event.target.value)"
                     />
-                    <small v-if="getEditValue(row, 'is_below_detection_limit')" class="subtle-line">低于检出限</small>
+                    <small v-if="getEditValue(row, 'is_below_detection_limit')" class="subtle-line"
+                      >低于检出限</small
+                    >
                   </td>
                   <td class="col-unit">
                     <input
@@ -964,8 +955,11 @@ watch(activeTab, (next) => {
           <div class="form-actions preview-actions">
             <span class="preview-actions-hint">
               将导入 {{ selectedImportCount }} 条（已勾选 {{ selectedRowIndices.size }} 行）
-              <template v-if="documentPreview.rows?.some(r => isRowModified(r))">
-                · <span class="modified-hint">已修改 {{ documentPreview.rows.filter(r => isRowModified(r)).length }} 行</span>
+              <template v-if="documentPreview.rows?.some((r) => isRowModified(r))">
+                ·
+                <span class="modified-hint"
+                  >已修改 {{ documentPreview.rows.filter((r) => isRowModified(r)).length }} 行</span
+                >
               </template>
             </span>
             <button
