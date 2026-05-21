@@ -12,6 +12,7 @@ from app.schemas.auth_context import CurrentUser
 from app.schemas.detection_schema import (
     ComplianceResultResponse,
     ComplianceRunResponse,
+    DetectionDocumentPreviewResponse,
     DetectionReportCreateResponse,
     DetectionReportDetail,
     DetectionReportSummary,
@@ -21,6 +22,7 @@ from app.schemas.detection_schema import (
 )
 from app.schemas.pagination import Page
 from app.services.detection_compliance_service import DetectionComplianceService
+from app.services.detection_document_parse_service import DetectionDocumentParseService
 
 router = APIRouter(prefix='/detection', tags=['检测报告合规'])
 
@@ -45,6 +47,25 @@ async def create_detection_report(
         report_type=report_type,
         filename=file.filename,
         content=content,
+    )
+
+
+@router.post(
+    '/documents/preview',
+    response_model=DetectionDocumentPreviewResponse,
+    summary='预览解析 PDF/DOCX 检测报告',
+)
+async def preview_detection_document(
+    actor: Annotated[CurrentUser, Depends(get_current_user)],
+    file: UploadFile = File(..., description='PDF / DOCX / DOC / TXT 检测报告文件'),
+    report_type: str = Form(default='OCCUPATIONAL_HEALTH', description='检测报告类型'),
+):
+    _ = actor
+    content = await file.read()
+    return DetectionDocumentParseService.preview(
+        filename=file.filename,
+        content=content,
+        report_type=report_type,
     )
 
 

@@ -9,6 +9,7 @@ import {
   listDetectionReports,
   listDetectionResults,
   listRegulatoryLimits,
+  previewDetectionDocument,
   updateRegulatoryLimit,
 } from '../api/detection';
 import { formatApiError } from '../api/client';
@@ -20,6 +21,7 @@ import { formatTime } from '../utils/format';
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const ALLOWED_EXTENSIONS = new Set(['csv', 'xlsx', 'xlsm']);
+const DOCUMENT_EXTENSIONS = new Set(['pdf', 'docx', 'doc', 'txt']);
 
 const REPORT_TYPES = [
   { value: 'OCCUPATIONAL_HEALTH', label: '职业卫生' },
@@ -99,6 +101,14 @@ const selectedFile = ref(null);
 const fileLabel = ref('点击选择 CSV / XLSX / XLSM 文件');
 const uploadBusy = ref(false);
 const uploadReportType = ref('OCCUPATIONAL_HEALTH');
+
+const showDocumentPreview = ref(false);
+const documentInput = ref(null);
+const selectedDocument = ref(null);
+const documentLabel = ref('点击选择 PDF / DOCX / DOC / TXT 文件');
+const documentReportType = ref('OCCUPATIONAL_HEALTH');
+const documentPreviewBusy = ref(false);
+const documentPreview = ref(null);
 
 const drawerOpen = ref(false);
 const activeReport = ref(null);
@@ -188,6 +198,13 @@ function resetUpload() {
   fileLabel.value = '点击选择 CSV / XLSX / XLSM 文件';
 }
 
+function resetDocumentPreview() {
+  if (documentInput.value) documentInput.value.value = '';
+  selectedDocument.value = null;
+  documentLabel.value = '点击选择 PDF / DOCX / DOC / TXT 文件';
+  documentPreview.value = null;
+}
+
 function onFileChange(event) {
   const file = event.target.files?.[0];
   selectedFile.value = file || null;
@@ -207,6 +224,48 @@ function onFileChange(event) {
     return;
   }
   fileLabel.value = file.name;
+}
+
+function onDocumentChange(event) {
+  const file = event.target.files?.[0];
+  selectedDocument.value = file || null;
+  documentPreview.value = null;
+  if (!file) {
+    resetDocumentPreview();
+    return;
+  }
+  const ext = file.name.split('.').pop()?.toLowerCase() || '';
+  if (!DOCUMENT_EXTENSIONS.has(ext)) {
+    toast.show('仅支持 PDF、DOCX、DOC、TXT 文件', 'error');
+    resetDocumentPreview();
+    return;
+  }
+  if (file.size > MAX_FILE_BYTES) {
+    toast.show('文件大小不能超过 50MB', 'error');
+    resetDocumentPreview();
+    return;
+  }
+  documentLabel.value = file.name;
+}
+
+async function submitDocumentPreview() {
+  if (documentPreviewBusy.value) return;
+  const file = selectedDocument.value || documentInput.value?.files?.[0];
+  if (!file) {
+    toast.show('请选择需要解析预览的报告文件', 'error');
+    return;
+  }
+  documentPreviewBusy.value = true;
+  try {
+    documentPreview.value = await previewDetectionDocument(file, {
+      reportType: documentReportType.value,
+    });
+    toast.show(`识别到 ${documentPreview.value?.rows?.length || 0} 条候选检测行`, 'success');
+  } catch (err) {
+    toast.show(formatApiError(err), 'error');
+  } finally {
+    documentPreviewBusy.value = false;
+  }
 }
 
 async function loadOrganizations() {
@@ -499,6 +558,10 @@ watch(activeTab, (next) => {
           <Icon name="refresh" :size="14" />
           刷新
         </button>
+        <button type="button" class="btn-secondary" @click="showDocumentPreview = !showDocumentPreview">
+          <Icon name="search" :size="14" />
+          解析预览
+        </button>
         <button type="button" class="btn-primary" @click="showUpload = !showUpload">
           <Icon name="upload" :size="14" />
           上传
@@ -561,6 +624,92 @@ watch(activeTab, (next) => {
             </button>
           </div>
         </form>
+      </div>
+    </section>
+
+    <section v-if="showDocumentPreview" class="upload-panel">
+      <div class="upload-panel-inner">
+        <h3>报告解析预览</h3>
+        <form class="upload-form" @submit.prevent="submitDocumentPreview">
+          <div class="form-row">
+            <label class="form-field">
+              <span class="label-text">报告类型</span>
+              <select v-model="documentReportType">
+                <option v-for="item in REPORT_TYPES" :key="item.value" :value="item.value">
+                  {{ item.label }}
+                </option>
+              </select>
+            </label>
+            <label class="form-field file-field">
+              <span class="label-text">报告文件</span>
+              <div :class="['file-drop', { 'has-file': selectedDocument }]">
+                <input
+                  ref="documentInput"
+                  type="file"
+                  accept=".pdf,.docx,.doc,.txt"
+                  @change="onDocumentChange"
+                />
+                <Icon name="search" :size="24" :stroke="1.5" />
+                <span class="file-drop-text">{{ documentLabel }}</span>
+                <span class="file-drop-hint">先抽取文本并识别候选检测行，不直接入库</span>
+              </div>
+            </label>
+          </div>
+          <div class="form-actions">
+            <button type="button" class="btn-secondary" @click="showDocumentPreview = false">关闭</button>
+            <button type="button" class="btn-secondary" @click="resetDocumentPreview">清空</button>
+            <button type="submit" class="btn-primary" :disabled="documentPreviewBusy || !selectedDocument">
+              {{ documentPreviewBusy ? '解析中...' : '解析预览' }}
+            </button>
+          </div>
+        </form>
+
+        <div v-if="documentPreview" class="preview-panel">
+          <div class="preview-summary">
+            <span>{{ documentPreview.filename }}</span>
+            <span>{{ documentPreview.text_char_count }} 字符</span>
+            <span>{{ documentPreview.rows?.length || 0 }} 条候选行</span>
+          </div>
+          <div v-if="documentPreview.warnings?.length" class="preview-warnings">
+            <span v-for="warning in documentPreview.warnings" :key="warning">{{ warning }}</span>
+          </div>
+          <div class="preview-table-wrap">
+            <table class="mini-table">
+              <thead>
+                <tr>
+                  <th>行</th>
+                  <th>检测点</th>
+                  <th>介质</th>
+                  <th>因子</th>
+                  <th>检测值</th>
+                  <th>置信度</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-if="!documentPreview.rows?.length" class="empty-row">
+                  <td colspan="6">未识别到候选检测行</td>
+                </tr>
+                <tr v-for="row in documentPreview.rows" :key="`${row.row_index}-${row.indicator_name}`">
+                  <td>{{ row.row_index }}</td>
+                  <td>
+                    {{ row.sample_point }}
+                    <small v-if="row.warnings?.length" class="subtle-line">{{
+                      row.warnings.join('；')
+                    }}</small>
+                  </td>
+                  <td>{{ labelOf(MEDIUMS, row.medium) }}</td>
+                  <td>{{ row.indicator_name }}</td>
+                  <td>{{ formatNumber(row.raw_value) }} {{ row.raw_unit || '' }}</td>
+                  <td>{{ formatNumber(Number(row.confidence) * 100) }}%</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <details class="text-excerpt">
+            <summary>查看抽取文本片段</summary>
+            <pre>{{ documentPreview.text_excerpt }}</pre>
+          </details>
+        </div>
       </div>
     </section>
 
@@ -998,6 +1147,58 @@ watch(activeTab, (next) => {
   margin-top: 2px;
   color: var(--text-tertiary);
   font-size: 12px;
+}
+.preview-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+.preview-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.preview-summary span,
+.preview-warnings span {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+}
+.preview-warnings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--warning);
+  font-size: 12px;
+}
+.preview-table-wrap {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.text-excerpt {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.text-excerpt summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.text-excerpt pre {
+  max-height: 220px;
+  margin-top: 8px;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .metric-grid {
   display: grid;
