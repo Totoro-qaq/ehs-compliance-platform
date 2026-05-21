@@ -912,7 +912,7 @@ def _parse_generic_chemical_table(
             continue
         contact_hours = _parse_hours(_cell(source_row, duration_idx))
         # 短时间采样口径回填：≤15min 自动从 PC_TWA 修正为 PC_STEL
-        def _effective_limit_type(raw_lt: LimitType | None) -> LimitType | None:
+        def _effective_limit_type(raw_lt: LimitType | None, contact_hours: Decimal | None) -> LimitType | None:
             if contact_hours is not None and contact_hours <= Decimal('0.25') and raw_lt == LimitType.PC_TWA:
                 return LimitType.PC_STEL
             return raw_lt
@@ -931,13 +931,13 @@ def _parse_generic_chemical_table(
                 value=value,
                 report_limit=report_limit,
                 is_below_detection_limit=is_below_detection_limit,
-                limit_type=_effective_limit_type(limit_type),
+                limit_type=_effective_limit_type(limit_type, contact_hours),
             )
             if contact_hours is None:
                 row_warnings.append('接触时间为空，入库前请人工确认')
             if message:
                 row_warnings.append(message)
-            effective_lt = _effective_limit_type(limit_type)
+            effective_lt = _effective_limit_type(limit_type, contact_hours)
             if effective_lt != limit_type:
                 row_warnings.append(
                     f'采样时长≤15min，限值类型从表头”{header}”({limit_type.value})自动修正为 {effective_lt.value}'
