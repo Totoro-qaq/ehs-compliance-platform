@@ -35,10 +35,10 @@ onMounted(loadStats);
   <div class="view-container home-view">
     <section class="hero">
       <div class="hero-content">
-        <div class="hero-badge">智能 EHS 合规评估</div>
+        <div class="hero-badge">智能 EHS 合规评价</div>
         <h1 class="hero-title">让<span class="hero-accent">安全合规</span><br />更智能、更高效</h1>
         <p class="hero-desc">
-          基于 AI 大模型的环境健康安全合规评估平台，自动识别风险点、生成整改建议、对齐国家标准。
+          基于 AI 大模型的环境健康安全合规评价平台，自动识别风险点、生成整改建议、对齐国家标准。
         </p>
         <div class="hero-actions">
           <button class="btn-primary btn-lg" @click="nav('tasks')">
@@ -53,14 +53,14 @@ onMounted(loadStats);
               <line x1="12" y1="5" x2="12" y2="19" />
               <line x1="5" y1="12" x2="19" y2="12" />
             </svg>
-            开始评估
+            开始评价
           </button>
           <button class="btn-secondary btn-lg">了解更多</button>
         </div>
         <div class="hero-stats">
           <div class="stat-item">
             <span class="stat-number">{{ totalTasks }}</span>
-            <span class="stat-label">累计评估任务</span>
+            <span class="stat-label">累计评价任务</span>
           </div>
           <div class="stat-divider"></div>
           <div class="stat-item">

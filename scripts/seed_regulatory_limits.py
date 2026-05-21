@@ -93,6 +93,38 @@ def _seed_noise(dao: RegulatoryLimitDAO) -> int:
     return 1
 
 
+def _seed_power_frequency_electric_field(dao: RegulatoryLimitDAO) -> int:
+    # 工频电场（50 Hz）职业接触限值：8 h 工作日接触限值 5 kV/m。
+    # 来源：GBZ 2.2-2007 工作场所有害因素职业接触限值 第2部分：物理因素 表11。
+    dao.upsert_seed(
+        standard_code=GBZ_22_2007,
+        indicator_name='工频电场',
+        medium=SampleMedium.PHYSICAL_FACTOR,
+        limit_type=LimitType.INSTANT,
+        unit='kV/m',
+        limit_value=_d('5'),
+        aliases_json=serialize_aliases(['Power-frequency electric field', '50Hz 电场', '工频电场强度']),
+        standard_name='工作场所有害因素职业接触限值 第2部分：物理因素',
+        clause='表11',
+        basis_text=(
+            f'{GBZ_22_2007} 表11 工频电场职业接触限值；8 小时工作日接触限值 5 kV/m；'
+            f'公开来源：{GBZ_22_2007_SOURCE_PAGE}'
+        ),
+        effective_from=date(2007, 11, 1),
+        applicability_json=json.dumps(
+            {
+                'source_page_url': GBZ_22_2007_SOURCE_PAGE,
+                'source_pdf_url': GBZ_22_2007_SOURCE_PDF,
+                'frequency_hz': 50,
+                'exposure_basis': '8 h workday occupational exposure limit',
+            },
+            ensure_ascii=False,
+        ),
+        priority=100,
+    )
+    return 1
+
+
 def _seed_high_temperature(dao: RegulatoryLimitDAO) -> int:
     workload_labels = {
         'I': '轻劳动',
@@ -210,6 +242,7 @@ def seed() -> int:
         count += 1
         count += _seed_noise(dao)
         count += _seed_high_temperature(dao)
+        count += _seed_power_frequency_electric_field(dao)
         return count
 
 

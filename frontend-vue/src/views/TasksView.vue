@@ -430,8 +430,8 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
   <div class="view-container">
     <header class="view-header">
       <div>
-        <h1>评估任务</h1>
-        <p class="view-desc">管理和查看 EHS 合规评估任务</p>
+        <h1>评价任务</h1>
+        <p class="view-desc">管理和查看 EHS 合规评价任务</p>
       </div>
       <div class="header-actions">
         <button type="button" class="btn-secondary" @click="refreshClick">
@@ -447,7 +447,7 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
 
     <section v-if="showUpload" class="upload-panel">
       <div class="upload-panel-inner">
-        <h3>创建评估任务</h3>
+        <h3>创建评价任务</h3>
         <p>上传 PDF、TXT、DOC、DOCX 或 CSV 格式的评价材料</p>
         <form class="upload-form" @submit.prevent="submitUpload">
           <div class="form-row">
@@ -461,7 +461,7 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
               </select>
             </label>
             <label class="form-field file-field">
-              <span class="label-text">评估文件</span>
+              <span class="label-text">评价文件</span>
               <div :class="['file-drop', { 'has-file': hasFile }]">
                 <input
                   ref="fileInput"
@@ -479,7 +479,7 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
           <div class="form-actions">
             <button type="button" class="btn-secondary" @click="showUpload = false">取消</button>
             <button type="submit" class="btn-primary" :disabled="uploadBusy || !hasFile">
-              {{ uploadBusy ? '创建中...' : '开始评估' }}
+              {{ uploadBusy ? '创建中...' : '开始评价' }}
             </button>
           </div>
         </form>
@@ -535,7 +535,7 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
           </thead>
           <tbody>
             <tr v-if="!tasks.length" class="empty-row">
-              <td colspan="6">暂无评估任务</td>
+              <td colspan="6">暂无评价任务</td>
             </tr>
             <tr
               v-for="task in tasks"
@@ -625,7 +625,7 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
               </template>
             </dl>
             <div v-if="drawerSummary" class="detail-section">
-              <h3>评估摘要</h3>
+              <h3>评价摘要</h3>
               <p style="font-size: 14px; line-height: 1.7; color: var(--text-secondary)">
                 {{ drawerSummary }}
               </p>

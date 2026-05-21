@@ -22,6 +22,7 @@ _LIMIT_TYPES_FOR_AIR: tuple[LimitType, ...] = (
 )
 _LIMIT_TYPES_FOR_NOISE: tuple[LimitType, ...] = (LimitType.INSTANT, LimitType.DAILY_AVG)
 _LIMIT_TYPES_FOR_HIGH_TEMPERATURE: tuple[LimitType, ...] = (LimitType.INSTANT,)
+_LIMIT_TYPES_FOR_PHYSICAL: tuple[LimitType, ...] = (LimitType.INSTANT, LimitType.RANGE)
 _LIMIT_TYPES_FOR_WATER: tuple[LimitType, ...] = (
     LimitType.DAILY_AVG,
     LimitType.INSTANT,
@@ -37,6 +38,8 @@ def candidate_limit_types(medium: SampleMedium) -> tuple[LimitType, ...]:
         return _LIMIT_TYPES_FOR_NOISE
     if medium == SampleMedium.HIGH_TEMPERATURE:
         return _LIMIT_TYPES_FOR_HIGH_TEMPERATURE
+    if medium == SampleMedium.PHYSICAL_FACTOR:
+        return _LIMIT_TYPES_FOR_PHYSICAL
     if medium == SampleMedium.WASTEWATER:
         return _LIMIT_TYPES_FOR_WATER
     if medium == SampleMedium.EXHAUST_GAS:

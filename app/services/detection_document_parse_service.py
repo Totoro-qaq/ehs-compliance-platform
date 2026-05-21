@@ -14,9 +14,28 @@ from pathlib import Path
 from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
 
+from sqlalchemy.orm import Session
+
 from app.core.config import settings
 from app.core.exceptions import EHSException
-from app.models.db_models import ComplianceStatus, LimitType, ReportType, SampleMedium
+from app.core.patterns import is_uuid
+from app.dao.detection_dao import DetectionReportDAO
+from app.dao.organization_dao import OrganizationDAO
+from app.models.db_models import (
+    ComplianceStatus,
+    DetectionMeasurement,
+    DetectionSample,
+    LimitType,
+    ReportStatus,
+    ReportType,
+    SampleMedium,
+)
+from app.schemas.auth_context import CurrentUser
+from app.schemas.detection_schema import (
+    DetectionDocumentImportRequest,
+    DetectionReportCreateResponse,
+)
+from app.services.access_control import ensure_client_org_id_allowed
 from app.services.detection_calculation_service import normalize_unit
 from app.services.pdf_text_service import DocumentTextExtractError, extract_text_from_document_file
 
@@ -103,6 +122,19 @@ def _default_medium(report_type: ReportType) -> SampleMedium:
         return SampleMedium.NOISE
     if report_type == ReportType.HIGH_TEMPERATURE:
         return SampleMedium.HIGH_TEMPERATURE
+    return SampleMedium.WORKPLACE_AIR
+
+
+def _row_medium(row: ParsedDetectionRow) -> SampleMedium:
+    if row.medium is not None:
+        return row.medium
+    if row.measurement_kind in {
+        'laser_exposure',
+        'laser_irradiance',
+        'power_frequency_electric_field',
+        'illumination',
+    }:
+        return SampleMedium.PHYSICAL_FACTOR
     return SampleMedium.WORKPLACE_AIR
 
 
@@ -518,8 +550,16 @@ def _parse_laser_table(
         contact_hours = _parse_hours(_cell(source_row, 4))
         exposure_value, is_below_exposure, exposure_warnings = _parse_report_number(_cell(source_row, 5))
         irradiance_value, is_below_irradiance, irradiance_warnings = _parse_report_number(_cell(source_row, 6))
+        exposure_limit, _, _ = _parse_report_number(_cell(source_row, 7))
+        irradiance_limit, _, _ = _parse_report_number(_cell(source_row, 8))
         raw_text = _table_raw_text(source_row)[:500]
         if exposure_value is not None:
+            exposure_status, exposure_message = _prejudge_physical_report_limit(
+                value=exposure_value,
+                report_limit=exposure_limit,
+                is_below_detection_limit=is_below_exposure,
+                label='激光照射量',
+            )
             rows.append(
                 ParsedDetectionRow(
                     row_index=next_index,
@@ -529,17 +569,32 @@ def _parse_laser_table(
                     indicator_name='激光辐射-8h照射量',
                     raw_value=exposure_value,
                     raw_unit='J/cm2',
-                    medium=None,
+                    medium=SampleMedium.PHYSICAL_FACTOR,
                     shift_hours=contact_hours,
                     raw_text=raw_text,
                     confidence=Decimal('0.82'),
                     is_below_detection_limit=is_below_exposure,
                     measurement_kind='laser_exposure',
-                    warnings=exposure_warnings + ['物理因素预览项，暂未接入限值判定'],
+                    limit_type=LimitType.INSTANT,
+                    report_limit_value=exposure_limit,
+                    report_limit_unit='J/cm2' if exposure_limit is not None else None,
+                    preliminary_status=exposure_status,
+                    preliminary_message=exposure_message,
+                    warnings=exposure_warnings
+                    + [
+                        exposure_message
+                        or '激光辐射限值依赖波长、照射部位和暴露条件；缺少报告内限值时需人工复核'
+                    ],
                 )
             )
             next_index += 1
         if irradiance_value is not None:
+            irradiance_status, irradiance_message = _prejudge_physical_report_limit(
+                value=irradiance_value,
+                report_limit=irradiance_limit,
+                is_below_detection_limit=is_below_irradiance,
+                label='激光辐照度',
+            )
             rows.append(
                 ParsedDetectionRow(
                     row_index=next_index,
@@ -549,13 +604,22 @@ def _parse_laser_table(
                     indicator_name='激光辐射-8h辐照度',
                     raw_value=irradiance_value,
                     raw_unit='W/cm2',
-                    medium=None,
+                    medium=SampleMedium.PHYSICAL_FACTOR,
                     shift_hours=contact_hours,
                     raw_text=raw_text,
                     confidence=Decimal('0.82'),
                     is_below_detection_limit=is_below_irradiance,
                     measurement_kind='laser_irradiance',
-                    warnings=irradiance_warnings + ['物理因素预览项，暂未接入限值判定'],
+                    limit_type=LimitType.INSTANT,
+                    report_limit_value=irradiance_limit,
+                    report_limit_unit='W/cm2' if irradiance_limit is not None else None,
+                    preliminary_status=irradiance_status,
+                    preliminary_message=irradiance_message,
+                    warnings=irradiance_warnings
+                    + [
+                        irradiance_message
+                        or '激光辐射限值依赖波长、照射部位和暴露条件；缺少报告内限值时需人工复核'
+                    ],
                 )
             )
             next_index += 1
@@ -583,6 +647,13 @@ def _parse_power_frequency_table(
         value, is_below_detection_limit, row_warnings = _parse_report_number(_cell(source_row, 5))
         if value is None:
             value, is_below_detection_limit, row_warnings = _parse_report_number(_cell(source_row, 4))
+        report_limit, _, _ = _parse_report_number(_cell(source_row, 6))
+        status, message = _prejudge_physical_report_limit(
+            value=value,
+            report_limit=report_limit,
+            is_below_detection_limit=is_below_detection_limit,
+            label='工频电场',
+        )
         rows.append(
             ParsedDetectionRow(
                 row_index=next_index,
@@ -592,13 +663,18 @@ def _parse_power_frequency_table(
                 indicator_name='工频电场',
                 raw_value=value,
                 raw_unit='kV/m',
-                medium=None,
+                medium=SampleMedium.PHYSICAL_FACTOR,
                 shift_hours=contact_hours,
                 raw_text=_table_raw_text(source_row)[:500],
                 confidence=Decimal('0.84') if value is not None else Decimal('0.65'),
                 is_below_detection_limit=is_below_detection_limit,
                 measurement_kind='power_frequency_electric_field',
-                warnings=row_warnings + ['物理因素预览项，暂未接入限值判定'],
+                limit_type=LimitType.INSTANT,
+                report_limit_value=report_limit,
+                report_limit_unit='kV/m' if report_limit is not None else None,
+                preliminary_status=status,
+                preliminary_message=message,
+                warnings=row_warnings + ([message] if message else []),
             )
         )
         next_index += 1
@@ -623,6 +699,14 @@ def _parse_illumination_table(
         if indicator != '照度':
             continue
         value, is_below_detection_limit, row_warnings = _parse_report_number(_cell(source_row, 3))
+        report_limit, _, _ = _parse_report_number(_cell(source_row, 4))
+        status, message = _prejudge_physical_report_limit(
+            value=value,
+            report_limit=report_limit,
+            is_below_detection_limit=is_below_detection_limit,
+            label='照度',
+            limit_type=LimitType.RANGE,
+        )
         rows.append(
             ParsedDetectionRow(
                 row_index=next_index,
@@ -632,12 +716,21 @@ def _parse_illumination_table(
                 indicator_name='照度',
                 raw_value=value,
                 raw_unit='lx',
-                medium=None,
+                medium=SampleMedium.PHYSICAL_FACTOR,
                 raw_text=_table_raw_text(source_row)[:500],
                 confidence=Decimal('0.86') if value is not None else Decimal('0.65'),
                 is_below_detection_limit=is_below_detection_limit,
                 measurement_kind='illumination',
-                warnings=row_warnings + ['照度预览项，暂未接入职业接触限值判定'],
+                limit_type=LimitType.RANGE,
+                report_limit_value=report_limit,
+                report_limit_unit='lx' if report_limit is not None else None,
+                preliminary_status=status,
+                preliminary_message=message,
+                warnings=row_warnings
+                + [
+                    message
+                    or '照度限值依赖作业场所/作业面类型；缺少报告内限值时需人工复核'
+                ],
             )
         )
         next_index += 1
@@ -719,15 +812,38 @@ def _prejudge_by_report_limit(
     limit_type: LimitType | None,
 ) -> tuple[ComplianceStatus | None, str | None]:
     limit_label = limit_type.value if limit_type is not None else '报告内'
-    if is_below_detection_limit:
+    if is_below_detection_limit and limit_type != LimitType.RANGE:
         return ComplianceStatus.COMPLIANT, '检测值低于检出限，报告内预判为合格'
     if value is None:
         return ComplianceStatus.INSUFFICIENT_DATA, '检测值缺失，无法报告内预判'
     if report_limit is None:
         return ComplianceStatus.NEEDS_REVIEW, f'未识别到 {limit_label} 限值，需入库后按法规限值库判定'
+    if limit_type == LimitType.RANGE:
+        if value < report_limit:
+            return ComplianceStatus.EXCEEDED, f'检测值低于{limit_label}下限'
+        return ComplianceStatus.COMPLIANT, f'检测值不低于{limit_label}下限'
     if value > report_limit:
         return ComplianceStatus.EXCEEDED, f'检测值超过{limit_label}限值'
     return ComplianceStatus.COMPLIANT, f'检测值未超过{limit_label}限值'
+
+
+def _prejudge_physical_report_limit(
+    *,
+    value: Decimal | None,
+    report_limit: Decimal | None,
+    is_below_detection_limit: bool,
+    label: str,
+    limit_type: LimitType = LimitType.INSTANT,
+) -> tuple[ComplianceStatus | None, str | None]:
+    status, message = _prejudge_by_report_limit(
+        value=value,
+        report_limit=report_limit,
+        is_below_detection_limit=is_below_detection_limit,
+        limit_type=limit_type,
+    )
+    if message and report_limit is not None:
+        message = message.replace(limit_type.value, label)
+    return status, message
 
 
 def _parse_generic_chemical_table(
@@ -795,6 +911,12 @@ def _parse_generic_chemical_table(
         if not indicator or _row_has_any([indicator], '合计', '小计', '危害因素', '检测项目', '项目名称'):
             continue
         contact_hours = _parse_hours(_cell(source_row, duration_idx))
+        # 短时间采样口径回填：≤15min 自动从 PC_TWA 修正为 PC_STEL
+        def _effective_limit_type(raw_lt: LimitType | None) -> LimitType | None:
+            if contact_hours is not None and contact_hours <= Decimal('0.25') and raw_lt == LimitType.PC_TWA:
+                return LimitType.PC_STEL
+            return raw_lt
+
         for value_idx, limit_type, header in value_columns:
             raw_value_text = _cell(source_row, value_idx)
             if _is_empty_or_placeholder(raw_value_text):
@@ -809,12 +931,17 @@ def _parse_generic_chemical_table(
                 value=value,
                 report_limit=report_limit,
                 is_below_detection_limit=is_below_detection_limit,
-                limit_type=limit_type,
+                limit_type=_effective_limit_type(limit_type),
             )
             if contact_hours is None:
                 row_warnings.append('接触时间为空，入库前请人工确认')
             if message:
                 row_warnings.append(message)
+            effective_lt = _effective_limit_type(limit_type)
+            if effective_lt != limit_type:
+                row_warnings.append(
+                    f'采样时长≤15min，限值类型从表头”{header}”({limit_type.value})自动修正为 {effective_lt.value}'
+                )
             rows.append(
                 ParsedDetectionRow(
                     row_index=next_index,
@@ -831,20 +958,20 @@ def _parse_generic_chemical_table(
                     confidence=Decimal('0.74') if status != ComplianceStatus.NEEDS_REVIEW else Decimal('0.66'),
                     is_below_detection_limit=is_below_detection_limit,
                     measurement_kind=(
-                        f'generic_chemical_{limit_type.value.lower()}'
-                        if limit_type is not None
+                        f'generic_chemical_{effective_lt.value.lower()}'
+                        if effective_lt is not None
                         else 'generic_chemical_report_limit'
                     ),
-                    limit_type=limit_type,
+                    limit_type=effective_lt,
                     report_limit_value=report_limit,
                     report_limit_unit=unit if report_limit is not None else None,
                     preliminary_status=status,
                     preliminary_message=message,
                     warnings=row_warnings
                     + [
-                        f'按表头“{header}”映射法规限值类型 {limit_type.value}'
-                        if limit_type is not None
-                        else f'按表头“{header}”使用报告内限值预判，入库后需匹配法规限值类型'
+                        f'按表头”{header}”映射法规限值类型 {effective_lt.value}'
+                        if effective_lt is not None
+                        else f'按表头”{header}”使用报告内限值预判，入库后需匹配法规限值类型'
                     ],
                 )
             )
@@ -1000,6 +1127,55 @@ def parse_detection_text(text: str, *, report_type: ReportType) -> tuple[list[Pa
     return rows, warnings
 
 
+def _measurement_indicator_for_storage(row: ParsedDetectionRow) -> str:
+    if row.measurement_kind in {'laser_exposure', 'laser_irradiance'}:
+        return '激光辐射'
+    return row.indicator_name
+
+
+def _measurement_method_code(row: ParsedDetectionRow) -> str | None:
+    if row.limit_type is None and not row.measurement_kind:
+        return None
+    parts = []
+    if row.measurement_kind:
+        parts.append(row.measurement_kind)
+    if row.limit_type:
+        parts.append(f'limit_type={row.limit_type.value}')
+    return ';'.join(parts)
+
+
+def _row_to_sample(report_id: str, row: ParsedDetectionRow) -> DetectionSample:
+    return DetectionSample(
+        report_id=report_id,
+        sample_point=row.sample_point or '未识别检测点',
+        workplace=row.workplace,
+        post_name=row.post_name,
+        medium=_row_medium(row),
+        duration_minutes=row.duration_minutes,
+        shift_hours=row.shift_hours,
+        raw_payload_json=None,
+        measurements=[
+            DetectionMeasurement(
+                indicator_name=_measurement_indicator_for_storage(row),
+                indicator_alias=row.indicator_name
+                if row.indicator_name != _measurement_indicator_for_storage(row)
+                else None,
+                cas_no=row.cas_no,
+                raw_value=row.raw_value,
+                raw_unit=row.raw_unit,
+                normalized_value=row.raw_value,
+                normalized_unit=normalize_unit(row.raw_unit),
+                detect_limit=row.raw_value if row.is_below_detection_limit else None,
+                source_limit_value=row.report_limit_value,
+                source_limit_unit=row.report_limit_unit,
+                source_limit_type=row.limit_type,
+                method_code=_measurement_method_code(row),
+                raw_text=row.raw_text[:255] if row.raw_text else None,
+            )
+        ],
+    )
+
+
 class DetectionDocumentParseService:
     @staticmethod
     def preview(
@@ -1018,16 +1194,18 @@ class DetectionDocumentParseService:
         parsed_type = _validate_report_type(report_type)
         display_name = _validate_filename(filename)
         path = _store_document(display_name, content)
+        extract_warnings: list[str] = []
         try:
             text = extract_text_from_document_file(path, max_chars=_MAX_PARSE_TEXT_CHARS)
         except DocumentTextExtractError as exc:
-            raise EHSException(
-                f'Detection document text extraction failed: {exc}',
-                code='DETECTION_DOCUMENT_TEXT_EXTRACT_FAILED',
-                status_code=400,
-            ) from exc
+            # 文本抽取完全失败时，不抛 400，改为生成占位文本以触发 NEEDS_REVIEW 兜底
+            text = '[文件文本抽取失败]'
+            extract_warnings.append(
+                f'文本抽取失败：{exc}；请确认文件是否为扫描件（可启用 OCR），或改为人工录入'
+            )
 
         rows, warnings = parse_detection_text(text, report_type=parsed_type)
+        warnings = [*extract_warnings, *warnings]
         if path.suffix.lower() == '.docx':
             table_rows = parse_detection_docx_tables(path)
             if table_rows:
@@ -1046,6 +1224,25 @@ class DetectionDocumentParseService:
                 ]
         if not text.strip():
             warnings.append('文件未抽取到可用文本；如为扫描 PDF，需要开启 OCR 或先转为文本层 PDF')
+        # 4.4 异常报告兜底：有文本但未识别到检测行时，生成 NEEDS_REVIEW 占位行
+        if not rows and text.strip():
+            rows = [
+                ParsedDetectionRow(
+                    row_index=1,
+                    sample_point='待人工确认',
+                    indicator_name='待人工确认',
+                    raw_value=None,
+                    raw_unit=None,
+                    medium=_default_medium(parsed_type),
+                    raw_text=text[:_MAX_PREVIEW_TEXT_CHARS][:500],
+                    confidence=Decimal('0.30'),
+                    measurement_kind='needs_review',
+                    preliminary_status=ComplianceStatus.NEEDS_REVIEW,
+                    preliminary_message='未识别到结构化检测行，请在人工确认页录入检测点/因子/数值/单位后入库',
+                    warnings=['未识别到结构化检测行，请人工录入字段后入库；必要时标注为背景行并取消勾选'],
+                )
+            ]
+            warnings.append('未识别到检测结果行，已生成待人工确认占位行')
         return DetectionDocumentPreview(
             filename=display_name,
             report_type=parsed_type,
@@ -1054,3 +1251,104 @@ class DetectionDocumentParseService:
             rows=rows,
             warnings=warnings,
         )
+
+    @staticmethod
+    def import_preview(
+        *,
+        db: Session,
+        actor: CurrentUser,
+        payload: DetectionDocumentImportRequest,
+    ) -> DetectionReportCreateResponse:
+        organization_id = payload.organization_id or settings.default_organization_id
+        ensure_client_org_id_allowed(actor, requested_organization_id=organization_id)
+        if not is_uuid(organization_id):
+            raise EHSException(
+                'organization_id must be a valid UUID',
+                code='INVALID_ORGANIZATION_ID',
+                status_code=400,
+            )
+        if OrganizationDAO(db).get_by_id(organization_id) is None:
+            raise EHSException('Organization not found', code='ORG_NOT_FOUND', status_code=404)
+        if not payload.rows:
+            raise EHSException(
+                'No parsed rows to import',
+                code='DETECTION_DOCUMENT_IMPORT_EMPTY',
+                status_code=400,
+            )
+
+        display_name = _validate_filename(payload.filename)
+        parsed_type = _validate_report_type(payload.report_type)
+        report_dao = DetectionReportDAO(db)
+        report = report_dao.create_report(
+            organization_id=organization_id,
+            filename=display_name,
+            report_type=parsed_type,
+            file_path=None,
+            created_by_id=actor.account_id,
+        )
+        try:
+            parsed_rows = [
+                ParsedDetectionRow(
+                    row_index=row.row_index,
+                    sample_point=row.sample_point,
+                    workplace=row.workplace,
+                    post_name=row.post_name,
+                    medium=row.medium,
+                    indicator_name=row.indicator_name,
+                    cas_no=row.cas_no,
+                    raw_value=row.raw_value,
+                    raw_unit=row.raw_unit,
+                    duration_minutes=row.duration_minutes,
+                    shift_hours=row.shift_hours,
+                    raw_text=row.raw_text,
+                    confidence=row.confidence,
+                    is_below_detection_limit=row.is_below_detection_limit,
+                    is_background=row.is_background,
+                    measurement_kind=row.measurement_kind,
+                    limit_type=row.limit_type,
+                    report_limit_value=row.report_limit_value,
+                    report_limit_unit=row.report_limit_unit,
+                    preliminary_status=row.preliminary_status,
+                    preliminary_message=row.preliminary_message,
+                    warnings=row.warnings,
+                )
+                for row in payload.rows
+                if not row.is_background and row.raw_value is not None
+            ]
+            if not parsed_rows:
+                raise EHSException(
+                    'No importable parsed rows remain after filtering background or empty rows',
+                    code='DETECTION_DOCUMENT_IMPORT_EMPTY',
+                    status_code=400,
+                )
+            samples = [_row_to_sample(report.id, row) for row in parsed_rows]
+            db.add_all(samples)
+            db.commit()
+            report = report_dao.update_status(report_id=report.id, status=ReportStatus.PARSED) or report
+            return DetectionReportCreateResponse(
+                report_id=report.id,
+                status=report.status,
+                report_type=report.report_type,
+                sample_count=len(samples),
+                measurement_count=len(samples),
+                warnings=[
+                    '已从解析预览确认入库；请运行合规判定并复核低置信度或需复核项目',
+                    *payload.warnings,
+                ],
+            )
+        except EHSException as exc:
+            db.rollback()
+            report_dao.update_status(
+                report_id=report.id,
+                status=ReportStatus.FAILED,
+                error_message=exc.message,
+            )
+            raise
+        except Exception as exc:
+            db.rollback()
+            report_dao.update_status(
+                report_id=report.id,
+                status=ReportStatus.FAILED,
+                error_message=str(exc),
+            )
+            raise
