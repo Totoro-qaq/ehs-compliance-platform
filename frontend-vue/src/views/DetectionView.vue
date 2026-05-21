@@ -192,6 +192,11 @@ function formatNumber(value) {
   return num.toLocaleString('zh-CN', { maximumFractionDigits: 6 });
 }
 
+function formatPreviewValue(row) {
+  if (row?.is_below_detection_limit) return '低于检出限';
+  return `${formatNumber(row?.raw_value)} ${row?.raw_unit || ''}`.trim();
+}
+
 function resetUpload() {
   if (fileInput.value) fileInput.value.value = '';
   selectedFile.value = null;
@@ -699,7 +704,11 @@ watch(activeTab, (next) => {
                   </td>
                   <td>{{ labelOf(MEDIUMS, row.medium) }}</td>
                   <td>{{ row.indicator_name }}</td>
-                  <td>{{ formatNumber(row.raw_value) }} {{ row.raw_unit || '' }}</td>
+                  <td>
+                    {{ formatPreviewValue(row) }}
+                    <small v-if="row.is_background" class="subtle-line">背景/辅助行</small>
+                    <small v-if="row.measurement_kind" class="subtle-line">{{ row.measurement_kind }}</small>
+                  </td>
                   <td>{{ formatNumber(Number(row.confidence) * 100) }}%</td>
                 </tr>
               </tbody>

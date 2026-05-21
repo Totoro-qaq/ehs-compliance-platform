@@ -105,6 +105,9 @@ class DetectionParsedRowPreview(BaseModel):
     shift_hours: Decimal | None = None
     raw_text: str
     confidence: Decimal
+    is_below_detection_limit: bool = False
+    is_background: bool = False
+    measurement_kind: str | None = None
     warnings: list[str] = Field(default_factory=list)
 
 
