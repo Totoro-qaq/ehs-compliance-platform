@@ -39,6 +39,22 @@ def create_access_token(
     return TokenOut(access_token=token, expires_in=expires_in)
 
 
+def refresh_access_token(
+    *,
+    username: str,
+    role: str,
+    account_id: str,
+    organization_id: str | None,
+) -> TokenOut:
+    """用当前有效令牌换取新令牌（滑动窗口，每次刷新重置 1 小时有效期）。"""
+    return create_access_token(
+        username=username,
+        role=role,
+        account_id=account_id,
+        organization_id=organization_id,
+    )
+
+
 def login(db: Session, *, identifier: str, password: str) -> TokenOut:
     dao = AccountDAO(db)
     try:

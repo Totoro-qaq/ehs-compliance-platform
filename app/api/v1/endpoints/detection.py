@@ -37,16 +37,18 @@ async def create_detection_report(
     actor: Annotated[CurrentUser, Depends(get_current_user)],
     file: UploadFile = File(..., description='CSV / XLSX / XLSM 检测数据文件'),
     report_type: str = Form(default='OCCUPATIONAL_HEALTH', description='检测报告类型'),
-    organization_id: str | None = Form(default=None, description='公司 ID；不传则使用默认公司'),
+    report_name: str | None = Form(default=None, description='检测报告名称；不传则按公司、类型和日期自动生成'),
+    organization_id: str | None = Form(default=None, description='公司 ID；普通用户不传则使用本人所属公司'),
     db: Session = Depends(get_db),
 ):
     content = await file.read()
     return DetectionComplianceService.create_report_from_upload(
         db=db,
         actor=actor,
-        organization_id=organization_id or settings.default_organization_id,
+        organization_id=organization_id or actor.organization_id or settings.default_organization_id,
         report_type=report_type,
         filename=file.filename,
+        report_name=report_name,
         content=content,
     )
 

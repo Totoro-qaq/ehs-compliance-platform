@@ -90,6 +90,25 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
 
 
 @router.post(
+    '/refresh',
+    response_model=TokenOut,
+    summary='刷新访问令牌',
+    description=(
+        '用当前有效的 JWT 令牌换取新令牌，每次刷新重置 1 小时有效期（滑动窗口）。\n\n'
+        '- 前端在用户活跃时自动调用，无需用户手动操作\n'
+        '- 若用户不活跃超过 1 小时，前端停止刷新，令牌自然过期'
+    ),
+)
+def refresh_token(actor: Annotated[CurrentUser, Depends(get_current_user)]):
+    return auth_service.refresh_access_token(
+        username=actor.username,
+        role=actor.role,
+        account_id=actor.account_id,
+        organization_id=actor.organization_id,
+    )
+
+
+@router.post(
     '/change-password',
     status_code=204,
     summary='修改密码（当前用户）',

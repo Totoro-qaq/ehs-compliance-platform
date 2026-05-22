@@ -11,14 +11,19 @@ export function listTasks(page = 1, pageSize = 15, filters = {}) {
   return request(`/api/v1/assessment?${params.toString()}`);
 }
 
+export function getPublicStats() {
+  return request('/api/v1/platform/stats');
+}
+
 export function getTask(taskId) {
   return request(`/api/v1/assessment/${encodeURIComponent(taskId)}`);
 }
 
-export function createTask(file, organizationId) {
+export function createTask(file, organizationId, taskName = '') {
   const form = new FormData();
   form.append('file', file);
   if (organizationId) form.append('organization_id', organizationId);
+  if (taskName?.trim()) form.append('task_name', taskName.trim());
   return request('/api/v1/assessment', { method: 'POST', body: form });
 }
 

@@ -75,6 +75,26 @@ _INDICATOR_HINTS: tuple[str, ...] = (
 )
 
 
+def _clean_display_name(value: str | None) -> str | None:
+    cleaned = (value or '').strip()
+    return cleaned[:255] if cleaned else None
+
+
+def _report_type_label(report_type: ReportType) -> str:
+    return {
+        ReportType.OCCUPATIONAL_HEALTH: '职业卫生',
+        ReportType.WASTEWATER: '废水',
+        ReportType.EXHAUST_GAS: '废气',
+        ReportType.NOISE: '噪声',
+        ReportType.HIGH_TEMPERATURE: '高温WBGT',
+    }.get(report_type, report_type.value)
+
+
+def _default_report_name(organization_name: str | None, report_type: ReportType) -> str:
+    org_name = (organization_name or '默认公司').strip() or '默认公司'
+    return f'{org_name} {_report_type_label(report_type)}检测报告 {date.today().isoformat()}'[:255]
+
+
 @dataclass(slots=True)
 class ParsedDetectionRow:
     row_index: int
@@ -1369,7 +1389,7 @@ class DetectionDocumentParseService:
         actor: CurrentUser,
         payload: DetectionDocumentImportRequest,
     ) -> DetectionReportCreateResponse:
-        organization_id = payload.organization_id or settings.default_organization_id
+        organization_id = payload.organization_id or actor.organization_id or settings.default_organization_id
         ensure_client_org_id_allowed(actor, requested_organization_id=organization_id)
         if not is_uuid(organization_id):
             raise EHSException(
@@ -1377,7 +1397,8 @@ class DetectionDocumentParseService:
                 code='INVALID_ORGANIZATION_ID',
                 status_code=400,
             )
-        if OrganizationDAO(db).get_by_id(organization_id) is None:
+        organization = OrganizationDAO(db).get_by_id(organization_id)
+        if organization is None:
             raise EHSException('Organization not found', code='ORG_NOT_FOUND', status_code=404)
         if not payload.rows:
             raise EHSException(
@@ -1388,10 +1409,15 @@ class DetectionDocumentParseService:
 
         display_name = _validate_filename(payload.filename)
         parsed_type = _validate_report_type(payload.report_type)
+        business_name = _clean_display_name(payload.report_name) or _default_report_name(
+            organization.name,
+            parsed_type,
+        )
         report_dao = DetectionReportDAO(db)
         report = report_dao.create_report(
             organization_id=organization_id,
             filename=display_name,
+            report_name=business_name,
             report_type=parsed_type,
             file_path=None,
             created_by_id=actor.account_id,
@@ -1437,6 +1463,7 @@ class DetectionDocumentParseService:
             report = report_dao.update_status(report_id=report.id, status=ReportStatus.PARSED) or report
             return DetectionReportCreateResponse(
                 report_id=report.id,
+                report_name=report.report_name,
                 status=report.status,
                 report_type=report.report_type,
                 sample_count=len(samples),

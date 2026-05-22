@@ -38,7 +38,13 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(EHSException)
     async def ehs_exception_handler(request: Request, exc: EHSException) -> JSONResponse:
-        _log.warning('业务异常 [%s] %s', exc.code, exc.message, exc_info=True)
+        _log.warning(
+            '业务异常 [%s] status=%s path=%s message=%s',
+            exc.code,
+            exc.status_code,
+            request.url.path,
+            exc.message,
+        )
         return JSONResponse(
             status_code=exc.status_code,
             content=ApiEnvelope.fail(

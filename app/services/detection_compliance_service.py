@@ -128,6 +128,26 @@ def _parse_medium(raw: str | None) -> SampleMedium | None:
         ) from exc
 
 
+def _clean_display_name(value: str | None) -> str | None:
+    cleaned = (value or '').strip()
+    return cleaned[:255] if cleaned else None
+
+
+def _report_type_label(report_type: ReportType) -> str:
+    return {
+        ReportType.OCCUPATIONAL_HEALTH: '职业卫生',
+        ReportType.WASTEWATER: '废水',
+        ReportType.EXHAUST_GAS: '废气',
+        ReportType.NOISE: '噪声',
+        ReportType.HIGH_TEMPERATURE: '高温WBGT',
+    }.get(report_type, report_type.value)
+
+
+def _default_report_name(organization_name: str | None, report_type: ReportType) -> str:
+    org_name = (organization_name or '默认公司').strip() or '默认公司'
+    return f'{org_name} {_report_type_label(report_type)}检测报告 {date.today().isoformat()}'[:255]
+
+
 def _validate_filename(filename: str | None) -> str:
     if not filename or not filename.strip():
         raise EHSException(
@@ -263,6 +283,7 @@ class DetectionComplianceService:
         report_type: str | ReportType,
         filename: str | None,
         content: bytes,
+        report_name: str | None = None,
     ) -> DetectionReportCreateResponse:
         ensure_client_org_id_allowed(actor, requested_organization_id=organization_id)
         if not is_uuid(organization_id):
@@ -271,7 +292,8 @@ class DetectionComplianceService:
                 code='INVALID_ORGANIZATION_ID',
                 status_code=400,
             )
-        if OrganizationDAO(db).get_by_id(organization_id) is None:
+        organization = OrganizationDAO(db).get_by_id(organization_id)
+        if organization is None:
             raise EHSException('Organization not found', code='ORG_NOT_FOUND', status_code=404)
         if len(content) > settings.max_upload_bytes:
             raise EHSException(
@@ -282,6 +304,10 @@ class DetectionComplianceService:
             )
 
         parsed_type = _parse_report_type(report_type)
+        business_name = _clean_display_name(report_name) or _default_report_name(
+            organization.name,
+            parsed_type,
+        )
         display_name = _validate_filename(filename)
         file_path = _store_upload(display_name, content)
 
@@ -289,6 +315,7 @@ class DetectionComplianceService:
         report = report_dao.create_report(
             organization_id=organization_id,
             filename=display_name,
+            report_name=business_name,
             report_type=parsed_type,
             file_path=file_path,
             created_by_id=actor.account_id,
@@ -326,6 +353,7 @@ class DetectionComplianceService:
             ) or report
             return DetectionReportCreateResponse(
                 report_id=report.id,
+                report_name=report.report_name,
                 status=report.status,
                 report_type=report.report_type,
                 sample_count=len(parsed.samples),
@@ -470,7 +498,7 @@ class DetectionComplianceService:
         page: int,
         page_size: int,
     ) -> Page[RegulatoryLimitResponse]:
-        ensure_admin(actor)
+        _ = actor
         items, total = RegulatoryLimitDAO(db).list_filtered(
             indicator_name=indicator_name,
             medium=_parse_medium(medium),
