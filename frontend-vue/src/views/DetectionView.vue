@@ -1036,17 +1036,14 @@ watch(activeTab, (next) => {
             <tr>
               <th>因子</th>
               <th>介质</th>
-              <th>类型</th>
+              <th>限值类型</th>
               <th>限值</th>
-              <th>标准编号</th>
-              <th>标准名称</th>
-              <th>条款</th>
-              <th>依据说明</th>
+              <th>来源依据</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="!limits.length" class="empty-row">
-              <td colspan="8">{{ limitsBusy ? '加载中...' : '暂无限值' }}</td>
+              <td colspan="5">{{ limitsBusy ? '加载中...' : '暂无限值' }}</td>
             </tr>
             <tr v-for="limit in limits" :key="limit.id">
               <td>
@@ -1058,18 +1055,23 @@ watch(activeTab, (next) => {
               </td>
               <td>{{ labelOf(MEDIUMS, limit.medium) }}</td>
               <td>{{ limit.limit_type }}</td>
-              <td>
+              <td class="col-limit-value">
                 <template v-if="limit.limit_type === 'RANGE'">
-                  {{ formatNumber(limit.limit_min) }} - {{ formatNumber(limit.limit_max) }} {{ limit.unit }}
+                  <span class="limit-number">{{ formatNumber(limit.limit_min) }}</span>
+                  <span class="limit-sep">~</span>
+                  <span class="limit-number">{{ formatNumber(limit.limit_max) }}</span>
                 </template>
-                <template v-else>{{ formatNumber(limit.limit_value) }} {{ limit.unit }}</template>
+                <template v-else>
+                  <span class="limit-number">{{ formatNumber(limit.limit_value) }}</span>
+                </template>
+                <span class="limit-unit">{{ limit.unit }}</span>
               </td>
-              <td>{{ limit.standard_code || '-' }}</td>
-              <td>
-                <span>{{ limit.standard_name || '-' }}</span>
+              <td class="col-limit-source">
+                <span class="limit-source-code">{{ limit.standard_code || '-' }}</span>
+                <small v-if="limit.standard_name" class="subtle-line">{{ limit.standard_name }}</small>
+                <small v-if="limit.clause" class="subtle-line">条款 {{ limit.clause }}</small>
+                <small v-if="limit.basis_text" class="subtle-line basis-text">{{ limit.basis_text }}</small>
               </td>
-              <td>{{ limit.clause || '-' }}</td>
-              <td>{{ limit.basis_text || '-' }}</td>
             </tr>
           </tbody>
         </table>
@@ -1696,5 +1698,47 @@ watch(activeTab, (next) => {
 }
 .upload-guide-body strong {
   color: var(--text);
+}
+
+/* ---- 限值表格优化 ---- */
+.col-limit-value {
+  white-space: nowrap;
+}
+.limit-number {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 13px;
+}
+.limit-sep {
+  margin: 0 4px;
+  color: var(--text-tertiary);
+}
+.limit-unit {
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+.col-limit-source {
+  max-width: 320px;
+}
+.limit-source-code {
+  display: block;
+  font-weight: 600;
+  font-size: 13px;
+}
+.col-limit-source .subtle-line {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.col-limit-source .basis-text {
+  color: var(--text-tertiary);
+  font-style: italic;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>
