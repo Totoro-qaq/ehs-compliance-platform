@@ -19,7 +19,7 @@ import { formatTime } from '../utils/format';
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const ALLOWED_EXTENSIONS = new Set(['csv', 'xlsx', 'xlsm']);
-const DOCUMENT_EXTENSIONS = new Set(['pdf', 'docx', 'doc', 'txt']);
+const DOCUMENT_EXTENSIONS = new Set(['pdf', 'docx', 'doc', 'txt', 'zip']);
 
 const REPORT_TYPES = [
   { value: 'OCCUPATIONAL_HEALTH', label: '职业卫生' },
@@ -47,33 +47,18 @@ const SAMPLE_FILES = [
   {
     key: 'occupational',
     label: '职业卫生样例',
-    filename: 'occupational-health-sample.csv',
+    filename: '职业卫生检测样例.csv',
     reportType: 'OCCUPATIONAL_HEALTH',
+    // 职业病危害因素含化学因素和物理因素，列名均支持中英文，非必填列可留空
     content:
-      'sample_point,workplace,post_name,indicator_name,raw_value,raw_unit,duration_minutes\n' +
-      '喷漆岗,涂装车间,喷漆工,苯,50000,μg/m3,60\n' +
-      '喷漆岗,涂装车间,喷漆工,甲苯,20,mg/m3,60\n' +
-      '打磨岗,机加工车间,打磨工,其他粉尘,6,mg/m3,240\n',
-  },
-  {
-    key: 'noise',
-    label: '噪声样例',
-    filename: 'noise-sample.csv',
-    reportType: 'NOISE',
-    content:
-      'sample_point,workplace,post_name,medium,indicator_name,raw_value,raw_unit,shift_hours\n' +
-      '空压机房,动力车间,巡检工,噪声,噪声,88,dB(A),8\n' +
-      '包装线,成品车间,包装工,噪声,噪声,84,dB(A),8\n',
-  },
-  {
-    key: 'heat',
-    label: '高温样例',
-    filename: 'high-temperature-sample.csv',
-    reportType: 'HIGH_TEMPERATURE',
-    content:
-      'sample_point,workplace,post_name,medium,indicator_name,raw_value,raw_unit\n' +
-      '炼钢平台,炼钢车间,炉前工,高温,高温WBGT-I级-100%,31,WBGT(℃)\n' +
-      '巡检通道,公辅车间,巡检工,高温,高温WBGT-II级-50%,29,WBGT(℃)\n',
+      '检测点,车间,岗位,检测因子,检测值,单位,介质,采样时长(分钟),班次时长\n' +
+      /* 化学因素 */ '喷漆岗,涂装车间,喷漆工,苯,50000,μg/m3,工作场所空气,60,\n' +
+      '喷漆岗,涂装车间,喷漆工,甲苯,20,mg/m3,工作场所空气,60,\n' +
+      '打磨岗,机加工车间,打磨工,其他粉尘,6,mg/m3,工作场所空气,240,\n' +
+      /* 物理因素 */ '空压机房,动力车间,巡检工,噪声,88,dB(A),噪声,,8\n' +
+      '包装线,成品车间,包装工,噪声,84,dB(A),噪声,,8\n' +
+      '炼钢平台,炼钢车间,炉前工,高温WBGT-I级-100%,31,WBGT(℃),高温,,\n' +
+      '巡检通道,公辅车间,巡检工,高温WBGT-II级-50%,29,WBGT(℃),高温,,\n',
   },
 ];
 
@@ -103,7 +88,7 @@ const uploadReportType = ref('OCCUPATIONAL_HEALTH');
 const showDocumentPreview = ref(false);
 const documentInput = ref(null);
 const selectedDocument = ref(null);
-const documentLabel = ref('点击选择 PDF / DOCX / DOC / TXT 文件');
+const documentLabel = ref('点击选择 PDF / DOCX / DOC / TXT / ZIP 文件');
 const documentReportType = ref('OCCUPATIONAL_HEALTH');
 const documentPreviewBusy = ref(false);
 const documentImportBusy = ref(false);
@@ -524,8 +509,8 @@ function goLimitPage(page) {
   loadLimits();
 }
 
-function useSampleCsv(sampleKey = 'occupational') {
-  const sample = SAMPLE_FILES.find((item) => item.key === sampleKey) || SAMPLE_FILES[0];
+function useSampleCsv() {
+  const sample = SAMPLE_FILES[0];
   const blob = new Blob([sample.content], { type: 'text/csv;charset=utf-8' });
   const file = new File([blob], sample.filename, { type: 'text/csv' });
   selectedFile.value = file;
@@ -564,14 +549,6 @@ watch(activeTab, (next) => {
         <button type="button" class="btn-secondary" @click="useSampleCsv()">
           <Icon name="database" :size="14" />
           职业卫生样例
-        </button>
-        <button type="button" class="btn-secondary" @click="useSampleCsv('noise')">
-          <Icon name="database" :size="14" />
-          噪声样例
-        </button>
-        <button type="button" class="btn-secondary" @click="useSampleCsv('heat')">
-          <Icon name="database" :size="14" />
-          高温样例
         </button>
         <button type="button" class="btn-secondary" @click="refreshReports">
           <Icon name="refresh" :size="14" />
@@ -691,6 +668,9 @@ watch(activeTab, (next) => {
             <ul>
               <li><strong>PDF</strong> — 文本层 PDF 直接提取，扫描件需 OCR 服务（Docker 可选启用）</li>
               <li><strong>DOCX / DOC / TXT</strong> — Word 文档和纯文本文件</li>
+              <li>
+                <strong>ZIP</strong> — 压缩包（含多个 PDF/DOCX/TXT），自动解压并逐文件解析，结果标注来源文件
+              </li>
             </ul>
             <h4>文件限制</h4>
             <ul>
@@ -737,7 +717,7 @@ watch(activeTab, (next) => {
                 <input
                   ref="documentInput"
                   type="file"
-                  accept=".pdf,.docx,.doc,.txt"
+                  accept=".pdf,.docx,.doc,.txt,.zip"
                   @change="onDocumentChange"
                 />
                 <Icon name="search" :size="24" :stroke="1.5" />
@@ -781,6 +761,7 @@ watch(activeTab, (next) => {
                     <input type="checkbox" :checked="allPreviewRowsSelected" @change="toggleAllRows" />
                   </th>
                   <th class="col-idx">行</th>
+                  <th v-if="documentPreview.source_files?.length > 1" class="col-source">来源文件</th>
                   <th class="col-point">检测点</th>
                   <th class="col-medium">介质</th>
                   <th class="col-indicator">因子</th>
@@ -794,7 +775,7 @@ watch(activeTab, (next) => {
               </thead>
               <tbody>
                 <tr v-if="!documentPreview.rows?.length" class="empty-row">
-                  <td colspan="11">未识别到候选检测行</td>
+                  <td :colspan="documentPreview.source_files?.length > 1 ? 12 : 11">未识别到候选检测行</td>
                 </tr>
                 <tr
                   v-for="row in documentPreview.rows"
@@ -809,6 +790,9 @@ watch(activeTab, (next) => {
                     <input type="checkbox" :checked="isRowSelected(row)" @change="toggleRow(row.row_index)" />
                   </td>
                   <td class="col-idx">{{ row.row_index }}</td>
+                  <td v-if="documentPreview.source_files?.length > 1" class="col-source">
+                    {{ row.source_file || '-' }}
+                  </td>
                   <td class="col-point">
                     <input
                       type="text"
@@ -1513,6 +1497,12 @@ watch(activeTab, (next) => {
 }
 .col-idx {
   width: 40px;
+}
+.col-source {
+  min-width: 90px;
+  max-width: 140px;
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
 .col-point {
   min-width: 110px;
