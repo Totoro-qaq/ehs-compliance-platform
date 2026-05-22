@@ -1050,7 +1050,8 @@ watch(activeTab, (next) => {
                 <span class="task-filename">{{ limit.indicator_name }}</span>
                 <small v-if="limit.cas_no" class="subtle-line">CAS: {{ limit.cas_no }}</small>
                 <small v-if="limit.aliases?.length" class="subtle-line"
-                  >别名: {{ limit.aliases.join(', ') }}</small
+                  >别名: {{ limit.aliases.slice(0, 3).join(', ')
+                  }}{{ limit.aliases.length > 3 ? ' 等' : '' }}</small
                 >
               </td>
               <td>{{ labelOf(MEDIUMS, limit.medium) }}</td>
@@ -1720,7 +1721,7 @@ watch(activeTab, (next) => {
   color: var(--text-tertiary);
 }
 .col-limit-source {
-  max-width: 320px;
+  min-width: 240px;
 }
 .limit-source-code {
   display: block;
@@ -1736,9 +1737,5 @@ watch(activeTab, (next) => {
 .col-limit-source .basis-text {
   color: var(--text-tertiary);
   font-style: italic;
-  max-width: 300px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 </style>
