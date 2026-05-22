@@ -578,7 +578,7 @@ watch(activeTab, (next) => {
         :class="['tab-pill', { active: activeTab === 'limits' }]"
         @click="activeTab = 'limits'"
       >
-        限值库 @click="activeTab = 'limits'" >
+        限值库
       </button>
     </div>
 
