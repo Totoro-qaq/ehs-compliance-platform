@@ -39,7 +39,7 @@ from app.services.access_control import ensure_client_org_id_allowed
 from app.services.detection_calculation_service import normalize_unit
 from app.services.pdf_text_service import DocumentTextExtractError, extract_text_from_document_file
 
-_ALLOWED_DOCUMENT_EXTENSIONS = frozenset({'.pdf', '.docx', '.doc', '.txt'})
+_ALLOWED_DOCUMENT_EXTENSIONS = frozenset({'.pdf', '.docx', '.doc', '.txt', '.zip'})
 _MAX_PREVIEW_TEXT_CHARS = 4000
 _MAX_PARSE_TEXT_CHARS = 200_000
 
@@ -98,6 +98,7 @@ class ParsedDetectionRow:
     report_limit_unit: str | None = None
     preliminary_status: ComplianceStatus | None = None
     preliminary_message: str | None = None
+    source_file: str | None = None  # ZIP 多文件时标记来源
     warnings: list[str] = field(default_factory=list)
 
 
@@ -108,6 +109,7 @@ class DetectionDocumentPreview:
     text_char_count: int
     text_excerpt: str
     rows: list[ParsedDetectionRow]
+    source_files: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -1194,11 +1196,38 @@ class DetectionDocumentParseService:
         parsed_type = _validate_report_type(report_type)
         display_name = _validate_filename(filename)
         path = _store_document(display_name, content)
+        # ZIP 压缩包：逐文件解析后合并
+        if path.suffix.lower() == '.zip':
+            return DetectionDocumentParseService._preview_zip(
+                path=path,
+                display_name=display_name,
+                parsed_type=parsed_type,
+            )
+        # 单文件解析
+        rows, warnings, text = DetectionDocumentParseService._preview_single_file(
+            path=path,
+            parsed_type=parsed_type,
+        )
+        return DetectionDocumentPreview(
+            filename=display_name,
+            report_type=parsed_type,
+            text_char_count=len(text),
+            text_excerpt=text[:_MAX_PREVIEW_TEXT_CHARS],
+            rows=rows,
+            warnings=warnings,
+        )
+
+    @staticmethod
+    def _preview_single_file(
+        *,
+        path: Path,
+        parsed_type: ReportType,
+    ) -> tuple[list[ParsedDetectionRow], list[str], str]:
+        """解析单个文件，返回 (rows, warnings, text)。"""
         extract_warnings: list[str] = []
         try:
             text = extract_text_from_document_file(path, max_chars=_MAX_PARSE_TEXT_CHARS)
         except DocumentTextExtractError as exc:
-            # 文本抽取完全失败时，不抛 400，改为生成占位文本以触发 NEEDS_REVIEW 兜底
             text = '[文件文本抽取失败]'
             extract_warnings.append(
                 f'文本抽取失败：{exc}；请确认文件是否为扫描件（可启用 OCR），或改为人工录入'
@@ -1243,13 +1272,94 @@ class DetectionDocumentParseService:
                 )
             ]
             warnings.append('未识别到检测结果行，已生成待人工确认占位行')
+        return rows, warnings, text
+
+    @staticmethod
+    def _preview_zip(
+        *,
+        path: Path,
+        display_name: str,
+        parsed_type: ReportType,
+    ) -> DetectionDocumentPreview:
+        """解压 ZIP，逐个解析支持的文件，合并结果并标记 source_file。"""
+        import tempfile
+
+        try:
+            zf = ZipFile(path, 'r')
+            entries = [e for e in zf.infolist() if not e.is_dir()]
+            zf.close()
+        except BadZipFile as exc:
+            raise EHSException(
+                'ZIP 文件损坏或不是有效的 ZIP 压缩包',
+                code='DETECTION_INVALID_ZIP',
+                status_code=400,
+            ) from exc
+
+        if not entries:
+            raise EHSException(
+                'ZIP 压缩包为空',
+                code='DETECTION_EMPTY_ZIP',
+                status_code=400,
+            )
+
+        supported_entries = [
+            e for e in entries
+            if Path(e.filename).suffix.lower() in _ALLOWED_DOCUMENT_EXTENSIONS
+            and Path(e.filename).suffix.lower() != '.zip'
+        ]
+
+        if not supported_entries:
+            raise EHSException(
+                f'ZIP 中未找到支持的文件格式（支持：.pdf .docx .doc .txt），'
+                f'共 {len(entries)} 个文件',
+                code='DETECTION_ZIP_NO_SUPPORTED_FILES',
+                status_code=400,
+            )
+
+        all_rows: list[ParsedDetectionRow] = []
+        all_warnings: list[str] = []
+        source_files: list[str] = []
+        total_chars = 0
+        text_excerpt_parts: list[str] = []
+        row_offset = 0
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zf = ZipFile(path, 'r')
+            for entry in supported_entries:
+                entry_name = Path(entry.filename).name
+                source_files.append(entry_name)
+                zf.extract(entry, tmpdir)
+                entry_path = Path(tmpdir) / entry.filename
+                rows, warnings, text = DetectionDocumentParseService._preview_single_file(
+                    path=entry_path,
+                    parsed_type=parsed_type,
+                )
+                # 标记来源文件并调整行索引
+                for r in rows:
+                    r.source_file = entry_name
+                    r.row_index += row_offset
+                row_offset += len(rows)
+                all_rows.extend(rows)
+                all_warnings.extend(
+                    [f'[{entry_name}] {w}' for w in warnings]
+                )
+                total_chars += len(text)
+                if len(text_excerpt_parts) < 3 and text.strip():
+                    excerpt = text[:300].strip()
+                    text_excerpt_parts.append(f'[{entry_name}] {excerpt}')
+            zf.close()
+
+        if not all_rows:
+            all_warnings.insert(0, 'ZIP 内所有文件均未识别到检测行，请人工核对文件内容')
+
         return DetectionDocumentPreview(
             filename=display_name,
             report_type=parsed_type,
-            text_char_count=len(text),
-            text_excerpt=text[:_MAX_PREVIEW_TEXT_CHARS],
-            rows=rows,
-            warnings=warnings,
+            text_char_count=total_chars,
+            text_excerpt=' ... '.join(text_excerpt_parts)[:_MAX_PREVIEW_TEXT_CHARS],
+            rows=all_rows,
+            source_files=source_files,
+            warnings=all_warnings,
         )
 
     @staticmethod

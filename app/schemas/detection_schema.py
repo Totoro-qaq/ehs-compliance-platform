@@ -95,6 +95,7 @@ class DetectionReportDetail(DetectionReportSummary):
 
 
 class DetectionParsedRowPreview(BaseModel):
+    source_file: str | None = None  # ZIP 多文件时标记来源文件
     row_index: int
     sample_point: str
     workplace: str | None = None
@@ -125,6 +126,7 @@ class DetectionDocumentPreviewResponse(BaseModel):
     text_char_count: int
     text_excerpt: str
     rows: list[DetectionParsedRowPreview] = Field(default_factory=list)
+    source_files: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
 
