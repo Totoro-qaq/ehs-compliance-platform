@@ -6,22 +6,70 @@ import time
 from typing import Any
 
 import redis
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
-from sqlalchemy import text
+from pydantic import BaseModel, Field
+from sqlalchemy import func, select, text
+from sqlalchemy.orm import Session
 
 from app.core import db as db_module
 from app.core.config import settings
+from app.core.db import get_db
 from app.core.logging_setup import get_logger
+from app.models.db_models import AssessmentTask, DetectionReport
 
 router = APIRouter(tags=['运维与探测'])
 _log = get_logger(__name__)
+
+
+class PlatformStatsOut(BaseModel):
+    total_tasks: int = Field(ge=0, description='累计任务数（评价任务 + 检测任务）')
+    assessment_tasks: int = Field(ge=0, description='累计评价任务数')
+    detection_tasks: int = Field(ge=0, description='累计检测任务数')
+    companies_served: int = Field(ge=0, description='已服务公司数量（去重）')
+    completed_tasks: int = Field(ge=0, description='已完成任务总数（评价 SUCCESS + 检测 CALCULATED）')
 
 
 @router.get('/healthz', summary='API v1 健康检查', description='返回状态 JSON；通常需网关将 /api/v1 前缀探活指到此处。')
 def api_v1_healthz():
     """与根路径 /healthz 语义一致，便于统一走 /api/v1 前缀做网关探测。"""
     return {'status': 'ok'}
+
+
+@router.get(
+    '/platform/stats',
+    response_model=PlatformStatsOut,
+    summary='公开平台统计',
+    description='返回首页可公开展示的轻量统计数据，不包含成功/失败等内部运营明细。',
+)
+def public_platform_stats(db: Session = Depends(get_db)):
+    assessment_total = db.scalar(select(func.count()).select_from(AssessmentTask)) or 0
+    detection_total = db.scalar(select(func.count()).select_from(DetectionReport)) or 0
+
+    # 已服务公司数量：跨评价和检测两张表去重统计 organization_id
+    assessment_orgs = select(AssessmentTask.organization_id).distinct()
+    detection_orgs = select(DetectionReport.organization_id).distinct()
+    union_orgs = assessment_orgs.union(detection_orgs).alias()
+    companies_served = db.scalar(select(func.count()).select_from(union_orgs)) or 0
+
+    # 已完成任务总量：评价 SUCCESS + 检测 CALCULATED
+    completed_assessment = (
+        db.scalar(select(func.count()).where(AssessmentTask.status == 'SUCCESS')) or 0
+    )
+    completed_detection = (
+        db.scalar(
+            select(func.count()).where(DetectionReport.status == 'CALCULATED')
+        )
+        or 0
+    )
+
+    return PlatformStatsOut(
+        total_tasks=assessment_total + detection_total,
+        assessment_tasks=assessment_total,
+        detection_tasks=detection_total,
+        companies_served=companies_served,
+        completed_tasks=completed_assessment + completed_detection,
+    )
 
 
 def _check_database() -> tuple[bool, str | None]:

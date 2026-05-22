@@ -37,6 +37,9 @@ class DetectionMeasurementResponse(BaseModel):
     normalized_value: Decimal | None = None
     normalized_unit: str | None = None
     detect_limit: Decimal | None = None
+    source_limit_value: Decimal | None = None
+    source_limit_unit: str | None = None
+    source_limit_type: LimitType | None = None
     method_code: str | None = None
     raw_text: str | None = None
 
@@ -60,6 +63,7 @@ class DetectionReportCreateResponse(BaseModel):
     """上传 Excel/CSV 后的简要返回。"""
 
     report_id: str
+    report_name: str | None = None
     status: ReportStatus
     report_type: ReportType
     sample_count: int = Field(description='已落库的检测点数量')
@@ -74,6 +78,7 @@ class DetectionReportSummary(BaseModel):
 
     id: str
     organization_id: str
+    report_name: str | None = None
     filename: str
     report_type: ReportType
     status: ReportStatus
@@ -92,6 +97,7 @@ class DetectionReportDetail(DetectionReportSummary):
 
 
 class DetectionParsedRowPreview(BaseModel):
+    source_file: str | None = None  # ZIP 多文件时标记来源文件
     row_index: int
     sample_point: str
     workplace: str | None = None
@@ -121,6 +127,16 @@ class DetectionDocumentPreviewResponse(BaseModel):
     report_type: ReportType
     text_char_count: int
     text_excerpt: str
+    rows: list[DetectionParsedRowPreview] = Field(default_factory=list)
+    source_files: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class DetectionDocumentImportRequest(BaseModel):
+    filename: str
+    report_name: str | None = None
+    report_type: ReportType = ReportType.OCCUPATIONAL_HEALTH
+    organization_id: str | None = None
     rows: list[DetectionParsedRowPreview] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 

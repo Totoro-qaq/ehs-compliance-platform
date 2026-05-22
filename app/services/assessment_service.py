@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 from sqlalchemy import or_
@@ -34,6 +35,16 @@ from app.services.access_control import (
 
 
 class AssessmentService:
+    @staticmethod
+    def _clean_display_name(value: str | None) -> str | None:
+        cleaned = (value or '').strip()
+        return cleaned[:255] if cleaned else None
+
+    @staticmethod
+    def _default_task_name(organization_name: str | None) -> str:
+        org_name = (organization_name or '默认公司').strip() or '默认公司'
+        return f'{org_name} EHS合规评价 {date.today().isoformat()}'[:255]
+
     @staticmethod
     def _with_timeline(dao: AssessmentDAO, task: AssessmentTask) -> AssessmentStatusResponse:
         response = AssessmentStatusResponse.model_validate(task)
@@ -89,6 +100,7 @@ class AssessmentService:
         actor: CurrentUser,
         organization_id: str,
         filename: str | None,
+        task_name: str | None,
         content_type: str,
         file_bytes: bytes,
     ) -> AssessmentCreateResponse:
@@ -100,8 +112,13 @@ class AssessmentService:
                 status_code=400,
                 details={'hint': '从 GET /api/v1/organizations 或管理员接口取得 id 字段'},
             )
-        if OrganizationDAO(db).get_by_id(organization_id) is None:
+        organization = OrganizationDAO(db).get_by_id(organization_id)
+        if organization is None:
             raise EHSException('公司不存在', code='ORG_NOT_FOUND', status_code=404)
+        business_name = (
+            AssessmentService._clean_display_name(task_name)
+            or AssessmentService._default_task_name(organization.name)
+        )
 
         if len(file_bytes) > settings.max_upload_bytes:
             raise EHSException(
@@ -123,6 +140,7 @@ class AssessmentService:
         task = dao.create_task(
             organization_id=organization_id,
             filename=display_name,
+            task_name=business_name,
             content_type=content_type,
             file_path=str(file_path),
             created_by_id=actor.account_id,
@@ -130,7 +148,7 @@ class AssessmentService:
 
         AssessmentService._enqueue_assessment_task(task.id)
 
-        return AssessmentCreateResponse(task_id=task.id, status=task.status)
+        return AssessmentCreateResponse(task_id=task.id, task_name=task.task_name, status=task.status)
 
     @staticmethod
     def get_assessment_task(*, db: Session, actor: CurrentUser, task_id: str):
@@ -159,7 +177,7 @@ class AssessmentService:
                 status_code=400,
             )
         if actor.role == AccountRole.ADMIN:
-            oid = organization_id or settings.default_organization_id
+            oid = organization_id
         else:
             uid_org = ensure_user_has_organization(actor)
             if organization_id and organization_id != uid_org:
@@ -171,7 +189,9 @@ class AssessmentService:
             )
             oid = uid_org
 
-        filters = [AssessmentTask.organization_id == oid]
+        filters = []
+        if oid:
+            filters.append(AssessmentTask.organization_id == oid)
         if status:
             try:
                 parsed_status = TaskStatus(status)
@@ -187,7 +207,13 @@ class AssessmentService:
         query = (q or '').strip()
         if query:
             like = f'%{query}%'
-            filters.append(or_(AssessmentTask.filename.like(like), AssessmentTask.id == query))
+            filters.append(
+                or_(
+                    AssessmentTask.task_name.like(like),
+                    AssessmentTask.filename.like(like),
+                    AssessmentTask.id == query,
+                )
+            )
 
         dao = AssessmentDAO(db)
         items, total = dao.list_page(
@@ -241,4 +267,8 @@ class AssessmentService:
             )
             raise
 
-        return AssessmentCreateResponse(task_id=reset_task.id, status=reset_task.status)
+        return AssessmentCreateResponse(
+            task_id=reset_task.id,
+            task_name=reset_task.task_name,
+            status=reset_task.status,
+        )

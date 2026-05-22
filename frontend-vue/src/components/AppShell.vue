@@ -11,20 +11,24 @@ const toast = useToastStore();
 const router = useRouter();
 const route = useRoute();
 
-// 顶部导航：参考 OpenAI 顶栏风格
-// - "版本" 跳 GitHub Releases
-// - "产品" 不跳转，仅展示当前系统名
-// - "开发人员" 不跳转
-// - "开始评价" 与首页 hero 按钮一致，跳 /tasks（需登录）
 const RELEASES_URL = 'https://github.com/Totoro-qaq/ehs-compliance-platform/releases';
 
-const navItems = [
-  { key: 'release', label: '版本', external: RELEASES_URL },
-  { key: 'product', label: '产品' },
-  { key: 'developer', label: '开发人员' },
-  { key: 'start', label: '开始评价', view: 'tasks' },
-  { key: 'detection', label: '检测合规', view: 'detection' },
-];
+const navItems = computed(() => {
+  if (!session.token) {
+    return [
+      { key: 'home', label: '首页', view: 'home' },
+      { key: 'release', label: '版本', external: RELEASES_URL },
+    ];
+  }
+  return [
+    { key: 'home', label: '首页', view: 'home', query: { view: 'home' } },
+    { key: 'workbench', label: '工作台', view: 'home', query: { view: 'workbench' } },
+    { key: 'tasks', label: '评价任务', view: 'tasks' },
+    { key: 'detection', label: '检测合规', view: 'detection' },
+    ...(session.isAdmin ? [{ key: 'orgs', label: '公司管理', view: 'orgs' }] : []),
+    { key: 'settings', label: '账户设置', view: 'settings' },
+  ];
+});
 
 const userMenuOpen = ref(false);
 
@@ -34,8 +38,15 @@ function onNavClick(item) {
     return;
   }
   if (item.view) {
-    router.push({ name: item.view });
+    router.push({ name: item.view, query: item.query });
   }
+}
+
+function isNavActive(item) {
+  if (!item.view || route.name !== item.view) return false;
+  if (item.key === 'home' && session.token) return route.query.view !== 'workbench';
+  if (item.key === 'workbench') return route.query.view === 'workbench';
+  return true;
 }
 
 function gotoLogin() {
@@ -61,7 +72,7 @@ function logout() {
   userMenuOpen.value = false;
   session.clear();
   toast.show('已退出登录', 'info');
-  router.replace({ name: 'home' });
+  router.replace({ name: 'home', query: { view: 'home' } });
 }
 
 const isAdminVisible = computed(() => session.token && session.isAdmin);
@@ -93,7 +104,7 @@ onUnmounted(() => document.removeEventListener('click', closeMenuOnOutside));
             v-for="item in navItems"
             :key="item.key"
             type="button"
-            class="topbar-link"
+            :class="['topbar-link', { active: isNavActive(item) }]"
             @click="onNavClick(item)"
           >
             {{ item.label }}
@@ -138,13 +149,25 @@ onUnmounted(() => document.removeEventListener('click', closeMenuOnOutside));
                   <span class="user-menu-role">{{ session.roleText }}</span>
                 </div>
                 <div class="user-menu-list">
-                  <button type="button" class="user-menu-item" @click="goto('home')">
+                  <button
+                    type="button"
+                    class="user-menu-item"
+                    @click="userMenuOpen = false; router.push({ name: 'home', query: { view: 'home' } })"
+                  >
                     <Icon name="home" :size="14" />
                     <span>首页</span>
                   </button>
+                  <button
+                    type="button"
+                    class="user-menu-item"
+                    @click="userMenuOpen = false; router.push({ name: 'home', query: { view: 'workbench' } })"
+                  >
+                    <Icon name="grid" :size="14" />
+                    <span>工作台</span>
+                  </button>
                   <button type="button" class="user-menu-item" @click="goto('tasks')">
                     <Icon name="clipboard" :size="14" />
-                    <span>评估任务</span>
+                    <span>评价任务</span>
                   </button>
                   <button type="button" class="user-menu-item" @click="goto('detection')">
                     <Icon name="database" :size="14" />

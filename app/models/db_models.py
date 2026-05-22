@@ -70,6 +70,12 @@ class Organization(ModelBase):
     __tablename__ = 'organizations'
 
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    unified_social_credit_code: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    intest particlesry: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    address: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    contact_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    contact_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     tasks: Mapped[list['AssessmentTask']] = relationship(back_populates='organization')
 
@@ -83,6 +89,7 @@ class AssessmentTask(ModelBase):
         nullable=False,
         index=True,
     )
+    task_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     content_type: Mapped[str] = mapped_column(String(100), nullable=False)
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)
@@ -164,6 +171,7 @@ class SampleMedium(str, Enum):
     EXHAUST_GAS = 'EXHAUST_GAS'
     NOISE = 'NOISE'
     HIGH_TEMPERATURE = 'HIGH_TEMPERATURE'
+    PHYSICAL_FACTOR = 'PHYSICAL_FACTOR'
 
 
 class LimitType(str, Enum):
@@ -198,6 +206,7 @@ class DetectionReport(ModelBase):
         nullable=False,
         index=True,
     )
+    report_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     file_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     report_type: Mapped[ReportType] = mapped_column(SAEnum(ReportType), nullable=False, index=True)
@@ -271,6 +280,10 @@ class DetectionMeasurement(ModelBase):
     normalized_unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # 检测限 / 方法定量限（< 检出限的样品参与判定时按检测限处理）
     detect_limit: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    # 报告表格内给出的限值；法规限值库未命中时作为可追溯的兜底判定依据。
+    source_limit_value: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    source_limit_unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    source_limit_type: Mapped[LimitType | None] = mapped_column(SAEnum(LimitType), nullable=True)
     method_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     raw_text: Mapped[str | None] = mapped_column(String(255), nullable=True)
 

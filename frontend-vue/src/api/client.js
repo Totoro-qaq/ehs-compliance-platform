@@ -22,6 +22,23 @@ export function apiUrl(path) {
   return `${base}${path}`;
 }
 
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function connectionError(err, url, requestId, timeoutMs) {
+  if (err?.name === 'AbortError') {
+    return makeApiError(`请求超时：${timeoutMs / 1000}s`, { requestId });
+  }
+  return makeApiError(`无法连接后端：${url}`, { requestId });
+}
+
 function unwrapEnvelope(body) {
   if (body && typeof body === 'object' && Object.prototype.hasOwnProperty.call(body, 'success')) {
     if (!body.success) {
@@ -66,19 +83,35 @@ export async function request(path, options = {}) {
   }
 
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
+  const base = normalizeBase(session.apiBase);
+  const requestUrl = `${base}${path}`;
+  const fetchOptions = { ...options, headers };
   let response;
   try {
-    response = await fetch(apiUrl(path), { ...options, headers, signal: controller.signal });
+    response = await fetchWithTimeout(requestUrl, fetchOptions, timeoutMs);
   } catch (err) {
-    if (err?.name === 'AbortError') {
-      throw makeApiError(`请求超时：${timeoutMs / 1000}s`, { requestId });
+    if (base && path.startsWith('/')) {
+      try {
+        response = await fetchWithTimeout(path, fetchOptions, timeoutMs);
+        session.setApiBase('');
+      } catch {
+        throw connectionError(err, requestUrl, requestId, timeoutMs);
+      }
+    } else {
+      throw connectionError(err, requestUrl, requestId, timeoutMs);
     }
-    throw makeApiError(`无法连接后端：${apiUrl(path)}`, { requestId });
-  } finally {
-    clearTimeout(timer);
+  }
+
+  if (base && path.startsWith('/') && response.status === 404) {
+    try {
+      const fallbackResponse = await fetchWithTimeout(path, fetchOptions, timeoutMs);
+      if (fallbackResponse.ok || fallbackResponse.status !== 404) {
+        response = fallbackResponse;
+        session.setApiBase('');
+      }
+    } catch {
+      /* Keep the original 404 response. */
+    }
   }
 
   const responseRequestId = response.headers.get(REQUEST_ID_HEADER) || requestId;

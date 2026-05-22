@@ -11,11 +11,12 @@ export function listDetectionReports(page = 1, pageSize = 15, filters = {}) {
   return request(`/api/v1/detection/reports?${params.toString()}`);
 }
 
-export function createDetectionReport(file, { organizationId, reportType }) {
+export function createDetectionReport(file, { organizationId, reportType, reportName }) {
   const form = new FormData();
   form.append('file', file);
   if (organizationId) form.append('organization_id', organizationId);
   if (reportType) form.append('report_type', reportType);
+  if (reportName?.trim()) form.append('report_name', reportName.trim());
   return request('/api/v1/detection/reports', { method: 'POST', body: form, timeoutMs: 60000 });
 }
 
@@ -27,6 +28,14 @@ export function previewDetectionDocument(file, { reportType }) {
     method: 'POST',
     body: form,
     timeoutMs: 90000,
+  });
+}
+
+export function importDetectionDocumentPreview(payload) {
+  return request('/api/v1/detection/documents/import', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    timeoutMs: 60000,
   });
 }
 

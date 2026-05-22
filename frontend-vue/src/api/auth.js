@@ -21,6 +21,12 @@ export function changePassword(oldPassword, newPassword) {
   });
 }
 
+export function refreshToken() {
+  return request('/api/v1/auth/refresh', {
+    method: 'POST',
+  });
+}
+
 export function healthCheck() {
   return request('/healthz');
 }

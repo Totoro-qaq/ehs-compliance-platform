@@ -1,16 +1,15 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import {
   calculateDetectionReport,
   createDetectionReport,
-  createRegulatoryLimit,
-  deleteRegulatoryLimit,
   getDetectionReport,
+  importDetectionDocumentPreview,
   listDetectionReports,
   listDetectionResults,
   listRegulatoryLimits,
   previewDetectionDocument,
-  updateRegulatoryLimit,
 } from '../api/detection';
 import { formatApiError } from '../api/client';
 import { listOrganizations } from '../api/organizations';
@@ -21,7 +20,7 @@ import { formatTime } from '../utils/format';
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const ALLOWED_EXTENSIONS = new Set(['csv', 'xlsx', 'xlsm']);
-const DOCUMENT_EXTENSIONS = new Set(['pdf', 'docx', 'doc', 'txt']);
+const DOCUMENT_EXTENSIONS = new Set(['pdf', 'docx', 'doc', 'txt', 'zip']);
 
 const REPORT_TYPES = [
   { value: 'OCCUPATIONAL_HEALTH', label: '职业卫生' },
@@ -49,40 +48,27 @@ const SAMPLE_FILES = [
   {
     key: 'occupational',
     label: '职业卫生样例',
-    filename: 'occupational-health-sample.csv',
+    filename: '职业卫生检测样例.csv',
     reportType: 'OCCUPATIONAL_HEALTH',
+    // 职业病危害因素含化学因素和物理因素，列名均支持中英文，非必填列可留空
     content:
-      'sample_point,workplace,post_name,indicator_name,raw_value,raw_unit,duration_minutes\n' +
-      '喷漆岗,涂装车间,喷漆工,测试因子甲,50000,μg/m3,60\n' +
-      '喷漆岗,涂装车间,喷漆工,测试因子乙,20,mg/m3,60\n' +
-      '打磨岗,机加工车间,打磨工,其他测试颗粒物,6,mg/m3,240\n',
-  },
-  {
-    key: 'noise',
-    label: '噪声样例',
-    filename: 'noise-sample.csv',
-    reportType: 'NOISE',
-    content:
-      'sample_point,workplace,post_name,medium,indicator_name,raw_value,raw_unit,shift_hours\n' +
-      '空压机房,动力车间,巡检工,噪声,噪声,88,dB(A),8\n' +
-      '包装线,成品车间,包装工,噪声,噪声,84,dB(A),8\n',
-  },
-  {
-    key: 'heat',
-    label: '高温样例',
-    filename: 'high-temperature-sample.csv',
-    reportType: 'HIGH_TEMPERATURE',
-    content:
-      'sample_point,workplace,post_name,medium,indicator_name,raw_value,raw_unit\n' +
-      '炼钢平台,炼钢车间,炉前工,高温,测试热指数-A,31,WBGT(℃)\n' +
-      '巡检通道,公辅车间,巡检工,高温,测试热指数-B,29,WBGT(℃)\n',
+      '检测点,车间,岗位,检测因子,检测值,单位,介质,采样时长(分钟),班次时长\n' +
+      /* 化学因素 */ '喷漆岗,涂装车间,喷漆工,测试因子甲,50000,μg/m3,工作场所空气,60,\n' +
+      '喷漆岗,涂装车间,喷漆工,测试因子乙,20,mg/m3,工作场所空气,60,\n' +
+      '打磨岗,机加工车间,打磨工,其他测试颗粒物,6,mg/m3,工作场所空气,240,\n' +
+      /* 物理因素 */ '空压机房,动力车间,巡检工,噪声,88,dB(A),噪声,,8\n' +
+      '包装线,成品车间,包装工,噪声,84,dB(A),噪声,,8\n' +
+      '炼钢平台,炼钢车间,炉前工,测试热指数-A,31,WBGT(℃),高温,,\n' +
+      '巡检通道,公辅车间,巡检工,测试热指数-B,29,WBGT(℃),高温,,\n',
   },
 ];
 
 const session = useSessionStore();
 const toast = useToastStore();
+const route = useRoute();
+const router = useRouter();
 
-const activeTab = ref('reports');
+const activeTab = ref(route.query.tab === 'limits' ? 'limits' : 'reports');
 const organizations = ref([]);
 const organizationId = ref('');
 
@@ -94,21 +80,31 @@ const reportPages = ref(0);
 const reportTypeFilter = ref('');
 const reportStatusFilter = ref('');
 const reportsBusy = ref(false);
+const detectionStats = reactive({
+  total: '-',
+  calculated: '-',
+  pending: '-',
+  failed: '-',
+});
 
 const showUpload = ref(false);
 const fileInput = ref(null);
 const selectedFile = ref(null);
-const fileLabel = ref('点击选择 CSV / XLSX / XLSM 文件');
+const fileLabel = ref('点击选择 CSV / XLSX / PDF / DOCX 文件');
 const uploadBusy = ref(false);
 const uploadReportType = ref('OCCUPATIONAL_HEALTH');
+const uploadReportName = ref('');
 
 const showDocumentPreview = ref(false);
 const documentInput = ref(null);
 const selectedDocument = ref(null);
-const documentLabel = ref('点击选择 PDF / DOCX / DOC / TXT 文件');
+const documentLabel = ref('点击选择 PDF / DOCX / DOC / TXT / ZIP 文件');
 const documentReportType = ref('OCCUPATIONAL_HEALTH');
+const documentReportName = ref('');
 const documentPreviewBusy = ref(false);
+const documentImportBusy = ref(false);
 const documentPreview = ref(null);
+const previewReviewOnly = ref(false);
 
 const drawerOpen = ref(false);
 const activeReport = ref(null);
@@ -126,30 +122,25 @@ const limitFilter = reactive({
   medium: '',
   standardCode: '',
 });
-const showLimitForm = ref(false);
-const limitForm = reactive({
-  id: '',
-  indicator_name: '',
-  cas_no: '',
-  aliasesText: '',
-  medium: 'WORKPLACE_AIR',
-  limit_type: 'PC_TWA',
-  limit_value: '',
-  limit_min: '',
-  limit_max: '',
-  unit: 'mg/m3',
-  standard_code: '',
-  standard_name: '',
-  clause: '',
-  basis_text: '',
-  priority: 100,
-});
-
 const reportCountText = computed(() => `${reportTotal.value} 份报告`);
 const limitCountText = computed(() => `${limitTotal.value} 条限值`);
+const detectionStatItems = computed(() => [
+  { label: '检测任务', value: detectionStats.total, tone: 'accent' },
+  { label: '已判定', value: detectionStats.calculated, tone: 'success' },
+  { label: '待处理', value: detectionStats.pending, tone: 'info' },
+  { label: '失败报告', value: detectionStats.failed, tone: 'danger' },
+]);
 const selectedOrgName = computed(
   () => organizations.value.find((item) => item.id === organizationId.value)?.name || '',
 );
+const defaultReportName = computed(() => {
+  const orgName = selectedOrgName.value || '公司';
+  return `${orgName} ${labelOf(REPORT_TYPES, uploadReportType.value)}检测报告 ${new Date().toISOString().slice(0, 10)}`;
+});
+const defaultDocumentReportName = computed(() => {
+  const orgName = selectedOrgName.value || '公司';
+  return `${orgName} ${labelOf(REPORT_TYPES, documentReportType.value)}检测报告 ${new Date().toISOString().slice(0, 10)}`;
+});
 const activeSampleCount = computed(() => activeReport.value?.samples?.length || 0);
 const activeMeasurementCount = computed(() =>
   (activeReport.value?.samples || []).reduce((sum, sample) => sum + (sample.measurements?.length || 0), 0),
@@ -164,7 +155,168 @@ const resultSummary = computed(() => {
     needsReview: rows.filter((item) => item.status === 'NEEDS_REVIEW').length,
   };
 });
-const limitFormTitle = computed(() => (limitForm.id ? '编辑限值' : '新增限值'));
+const sortedActiveResults = computed(() => {
+  const rank = { EXCEEDED: 0, BORDERLINE: 1, NEEDS_REVIEW: 2, INSUFFICIENT_DATA: 3, COMPLIANT: 4 };
+  return [...(activeResults.value || [])].sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9));
+});
+
+// ---- 人工确认：行选择 + 行内编辑 ----
+const selectedRowIndices = ref(new Set());
+const rowEdits = ref({});
+const previewVisibleColumns = reactive({
+  source: true,
+  medium: true,
+  limitType: true,
+  exclude: true,
+  status: true,
+  confidence: true,
+});
+const previewColumnOptions = [
+  { key: 'source', label: '来源' },
+  { key: 'medium', label: '介质' },
+  { key: 'limitType', label: '限值类型' },
+  { key: 'exclude', label: '排除' },
+  { key: 'status', label: '预判' },
+  { key: 'confidence', label: '核对' },
+];
+const hasPreviewSourceColumn = computed(
+  () => previewVisibleColumns.source && documentPreview.value?.source_files?.length > 1,
+);
+const previewColspan = computed(() => {
+  let count = 6;
+  if (hasPreviewSourceColumn.value) count += 1;
+  if (previewVisibleColumns.medium) count += 1;
+  if (previewVisibleColumns.limitType) count += 1;
+  if (previewVisibleColumns.exclude) count += 1;
+  if (previewVisibleColumns.status) count += 1;
+  if (previewVisibleColumns.confidence) count += 1;
+  return count;
+});
+
+function _ensureRowEdit(rowIndex) {
+  if (!rowEdits.value[rowIndex]) {
+    rowEdits.value[rowIndex] = {};
+  }
+}
+
+function getEditValue(row, field) {
+  const edits = rowEdits.value[row.row_index];
+  if (edits && field in edits) return edits[field];
+  return row[field];
+}
+
+function setEditValue(row, field, value) {
+  _ensureRowEdit(row.row_index);
+  rowEdits.value[row.row_index][field] = value;
+}
+
+function isRowModified(row) {
+  const edits = rowEdits.value[row.row_index];
+  return !!edits && Object.keys(edits).length > 0;
+}
+
+function isRowSelected(row) {
+  return selectedRowIndices.value.has(row.row_index);
+}
+
+function toggleRow(rowIndex) {
+  const next = new Set(selectedRowIndices.value);
+  if (next.has(rowIndex)) {
+    next.delete(rowIndex);
+  } else {
+    next.add(rowIndex);
+  }
+  selectedRowIndices.value = next;
+}
+
+const allPreviewRowsSelected = computed(() => {
+  const rows = displayedPreviewRows.value || [];
+  return rows.length > 0 && rows.every((r) => selectedRowIndices.value.has(r.row_index));
+});
+
+function toggleAllRows() {
+  const rows = displayedPreviewRows.value || [];
+  const next = new Set(selectedRowIndices.value);
+  if (allPreviewRowsSelected.value) {
+    for (const r of rows) next.delete(r.row_index);
+  } else {
+    for (const r of rows) next.add(r.row_index);
+  }
+  selectedRowIndices.value = next;
+}
+
+function deselectLowConfidence(threshold = 0.7) {
+  const rows = documentPreview.value?.rows || [];
+  const next = new Set(selectedRowIndices.value);
+  for (const r of rows) {
+    if (Number(r.confidence || 0) < threshold) next.delete(r.row_index);
+  }
+  selectedRowIndices.value = next;
+}
+
+const selectedImportCount = computed(() => {
+  const rows = documentPreview.value?.rows || [];
+  return rows.filter((r) => selectedRowIndices.value.has(r.row_index) && isImportablePreviewRow(r)).length;
+});
+const previewRows = computed(() => documentPreview.value?.rows || []);
+const previewRowCount = computed(() => previewRows.value.length);
+const selectedPreviewCount = computed(() => selectedRowIndices.value.size);
+const lowConfidenceCount = computed(() =>
+  previewRows.value.filter((r) => Number(r.confidence || 0) < 0.7).length,
+);
+const backgroundRowCount = computed(
+  () => previewRows.value.filter((r) => getEditValue(r, 'is_background')).length,
+);
+const modifiedPreviewCount = computed(() => previewRows.value.filter((r) => isRowModified(r)).length);
+const previewWarningCount = computed(() => documentPreview.value?.warnings?.length || 0);
+const previewImportableTotal = computed(() => previewRows.value.filter((r) => isImportablePreviewRow(r)).length);
+const displayedPreviewRows = computed(() => {
+  if (!previewReviewOnly.value) return previewRows.value;
+  return previewRows.value.filter(
+    (row) =>
+      Number(row.confidence || 0) < 0.7 ||
+      row.warnings?.length ||
+      !isImportablePreviewRow(row) ||
+      row.preliminary_status === 'NEEDS_REVIEW',
+  );
+});
+
+function isImportablePreviewRow(row) {
+  const isBg = getEditValue(row, 'is_background');
+  const raw = getEditValue(row, 'raw_value');
+  const samplePoint = String(getEditValue(row, 'sample_point') || '').trim();
+  const indicatorName = String(getEditValue(row, 'indicator_name') || '').trim();
+  return !isBg && raw !== null && raw !== '' && samplePoint !== '' && indicatorName !== '';
+}
+
+function buildImportRows() {
+  const rows = documentPreview.value?.rows || [];
+  return rows
+    .filter((r) => selectedRowIndices.value.has(r.row_index))
+    .filter((r) => isImportablePreviewRow(r))
+    .map((r) => {
+      const base = { ...r };
+      const edits = rowEdits.value[r.row_index] || {};
+      for (const [key, val] of Object.entries(edits)) {
+        base[key] = val;
+      }
+      return base;
+    });
+}
+
+function confidenceClass(row) {
+  const c = Number(row.confidence || 0);
+  if (c >= 0.85) return 'conf-high';
+  if (c >= 0.7) return 'conf-medium';
+  return 'conf-low';
+}
+
+function confidenceLabel(row) {
+  const c = Number(row.confidence || 0);
+  if (c >= 0.85) return '较可靠';
+  if (c >= 0.7) return '需核对';
+  return '重点核对';
+}
 
 function labelOf(options, value) {
   return options.find((item) => item.value === value)?.label || value || '-';
@@ -192,11 +344,6 @@ function formatNumber(value) {
   return num.toLocaleString('zh-CN', { maximumFractionDigits: 6 });
 }
 
-function formatPreviewValue(row) {
-  if (row?.is_below_detection_limit) return '低于检出限';
-  return `${formatNumber(row?.raw_value)} ${row?.raw_unit || ''}`.trim();
-}
-
 function formatPreviewLimit(row) {
   if (!row?.report_limit_value) return '';
   return `${formatNumber(row.report_limit_value)} ${row.report_limit_unit || ''}`.trim();
@@ -205,14 +352,19 @@ function formatPreviewLimit(row) {
 function resetUpload() {
   if (fileInput.value) fileInput.value.value = '';
   selectedFile.value = null;
-  fileLabel.value = '点击选择 CSV / XLSX / XLSM 文件';
+  fileLabel.value = '点击选择 CSV / XLSX / PDF / DOCX 文件';
+  uploadReportName.value = '';
 }
 
 function resetDocumentPreview() {
   if (documentInput.value) documentInput.value.value = '';
   selectedDocument.value = null;
-  documentLabel.value = '点击选择 PDF / DOCX / DOC / TXT 文件';
+  documentLabel.value = '点击选择 PDF / DOCX / DOC / TXT / ZIP 文件';
+  documentReportName.value = '';
   documentPreview.value = null;
+  previewReviewOnly.value = false;
+  selectedRowIndices.value = new Set();
+  rowEdits.value = {};
 }
 
 function onFileChange(event) {
@@ -223,14 +375,29 @@ function onFileChange(event) {
     return;
   }
   const ext = file.name.split('.').pop()?.toLowerCase() || '';
-  if (!ALLOWED_EXTENSIONS.has(ext)) {
-    toast.show('仅支持 CSV、XLSX、XLSM 文件', 'error');
+  if (!ALLOWED_EXTENSIONS.has(ext) && !DOCUMENT_EXTENSIONS.has(ext)) {
+    toast.show('仅支持 CSV、XLSX、XLSM、PDF、DOCX、DOC、TXT、ZIP 文件', 'error');
     resetUpload();
     return;
   }
   if (file.size > MAX_FILE_BYTES) {
     toast.show('文件大小不能超过 50MB', 'error');
     resetUpload();
+    return;
+  }
+  if (DOCUMENT_EXTENSIONS.has(ext)) {
+    selectedDocument.value = file;
+    documentLabel.value = file.name;
+    documentReportType.value = uploadReportType.value;
+    documentReportName.value = uploadReportName.value;
+    documentPreview.value = null;
+    previewReviewOnly.value = false;
+    selectedRowIndices.value = new Set();
+    rowEdits.value = {};
+    resetUpload();
+    showUpload.value = false;
+    showDocumentPreview.value = true;
+    toast.show('报告文件已切换到解析预览，请确认候选行后再入库', 'info');
     return;
   }
   fileLabel.value = file.name;
@@ -240,13 +407,14 @@ function onDocumentChange(event) {
   const file = event.target.files?.[0];
   selectedDocument.value = file || null;
   documentPreview.value = null;
+  previewReviewOnly.value = false;
   if (!file) {
     resetDocumentPreview();
     return;
   }
   const ext = file.name.split('.').pop()?.toLowerCase() || '';
   if (!DOCUMENT_EXTENSIONS.has(ext)) {
-    toast.show('仅支持 PDF、DOCX、DOC、TXT 文件', 'error');
+    toast.show('仅支持 PDF、DOCX、DOC、TXT、ZIP 文件', 'error');
     resetDocumentPreview();
     return;
   }
@@ -270,11 +438,47 @@ async function submitDocumentPreview() {
     documentPreview.value = await previewDetectionDocument(file, {
       reportType: documentReportType.value,
     });
-    toast.show(`识别到 ${documentPreview.value?.rows?.length || 0} 条候选检测行`, 'success');
+    // 默认全选所有候选行
+    const rows = documentPreview.value?.rows || [];
+    selectedRowIndices.value = new Set(rows.map((r) => r.row_index));
+    rowEdits.value = {};
+    previewReviewOnly.value = false;
+    toast.show(`识别到 ${rows.length} 条候选检测行`, 'success');
   } catch (err) {
     toast.show(formatApiError(err), 'error');
   } finally {
     documentPreviewBusy.value = false;
+  }
+}
+
+async function importDocumentPreview() {
+  if (documentImportBusy.value || !documentPreview.value) return;
+  const importRows = buildImportRows();
+  if (!importRows.length) {
+    toast.show('没有可入库的候选检测行（请勾选至少一条非背景含数值行）', 'error');
+    return;
+  }
+  documentImportBusy.value = true;
+  try {
+    const data = await importDetectionDocumentPreview({
+      filename: documentPreview.value.filename,
+      report_name: documentReportName.value.trim() || null,
+      report_type: documentPreview.value.report_type || documentReportType.value,
+      organization_id: organizationId.value || null,
+      rows: importRows,
+      warnings: documentPreview.value.warnings || [],
+    });
+    resetDocumentPreview();
+    showDocumentPreview.value = false;
+    reportStatusFilter.value = '';
+    reportPage.value = 1;
+    await Promise.all([loadReports(), loadDetectionStats({ silent: true })]);
+    toast.show(`已确认入库 ${data.measurement_count || 0} 条检测结果`, 'success');
+    await openReport(data.report_id);
+  } catch (err) {
+    toast.show(formatApiError(err), 'error');
+  } finally {
+    documentImportBusy.value = false;
   }
 }
 
@@ -309,8 +513,27 @@ async function loadReports({ silent = false } = {}) {
   }
 }
 
+async function loadDetectionStats({ silent = false } = {}) {
+  try {
+    const [total, calculated, failed] = await Promise.all([
+      listDetectionReports(1, 1, { organizationId: organizationId.value }),
+      listDetectionReports(1, 1, { organizationId: organizationId.value, status: 'CALCULATED' }),
+      listDetectionReports(1, 1, { organizationId: organizationId.value, status: 'FAILED' }),
+    ]);
+    const totalCount = total?.total || 0;
+    const calculatedCount = calculated?.total || 0;
+    const failedCount = failed?.total || 0;
+    detectionStats.total = totalCount;
+    detectionStats.calculated = calculatedCount;
+    detectionStats.failed = failedCount;
+    detectionStats.pending = Math.max(totalCount - calculatedCount - failedCount, 0);
+  } catch (err) {
+    if (!silent) toast.show(formatApiError(err), 'error');
+  }
+}
+
 async function refreshReports() {
-  await loadReports();
+  await Promise.all([loadReports(), loadDetectionStats({ silent: true })]);
   toast.show('报告列表已刷新', 'success');
 }
 
@@ -318,7 +541,7 @@ async function submitUpload() {
   if (uploadBusy.value) return;
   const file = selectedFile.value || fileInput.value?.files?.[0];
   if (!file) {
-    toast.show('请选择检测数据文件', 'error');
+    toast.show('请选择检测数据文件或报告文件', 'error');
     return;
   }
   uploadBusy.value = true;
@@ -326,12 +549,13 @@ async function submitUpload() {
     const data = await createDetectionReport(file, {
       organizationId: organizationId.value,
       reportType: uploadReportType.value,
+      reportName: uploadReportName.value,
     });
     resetUpload();
     showUpload.value = false;
     reportStatusFilter.value = '';
     reportPage.value = 1;
-    await loadReports();
+    await Promise.all([loadReports(), loadDetectionStats({ silent: true })]);
     toast.show(`已导入 ${data.measurement_count || 0} 条检测结果`, 'success');
     await openReport(data.report_id);
   } catch (err) {
@@ -362,7 +586,7 @@ async function calculateActiveReport() {
     const run = await calculateDetectionReport(activeReport.value.id);
     activeResults.value = run?.results || [];
     activeReport.value = await getDetectionReport(activeReport.value.id);
-    await loadReports({ silent: true });
+    await Promise.all([loadReports({ silent: true }), loadDetectionStats({ silent: true })]);
     toast.show('合规判定已完成', 'success');
   } catch (err) {
     toast.show(formatApiError(err), 'error');
@@ -383,7 +607,6 @@ function goReportPage(page) {
 }
 
 async function loadLimits({ silent = false } = {}) {
-  if (!session.isAdmin) return;
   limitsBusy.value = true;
   try {
     const page = await listRegulatoryLimits(limitPage.value, limitPageSize, {
@@ -412,123 +635,21 @@ function goLimitPage(page) {
   loadLimits();
 }
 
-function resetLimitForm() {
-  Object.assign(limitForm, {
-    id: '',
-    indicator_name: '',
-    cas_no: '',
-    aliasesText: '',
-    medium: 'WORKPLACE_AIR',
-    limit_type: 'PC_TWA',
-    limit_value: '',
-    limit_min: '',
-    limit_max: '',
-    unit: 'mg/m3',
-    standard_code: '',
-    standard_name: '',
-    clause: '',
-    basis_text: '',
-    priority: 100,
-  });
-}
-
-function openCreateLimit() {
-  resetLimitForm();
-  showLimitForm.value = true;
-}
-
-function openEditLimit(limit) {
-  Object.assign(limitForm, {
-    id: limit.id,
-    indicator_name: limit.indicator_name || '',
-    cas_no: limit.cas_no || '',
-    aliasesText: (limit.aliases || []).join(', '),
-    medium: limit.medium || 'WORKPLACE_AIR',
-    limit_type: limit.limit_type || 'PC_TWA',
-    limit_value: limit.limit_value ?? '',
-    limit_min: limit.limit_min ?? '',
-    limit_max: limit.limit_max ?? '',
-    unit: limit.unit || 'mg/m3',
-    standard_code: limit.standard_code || '',
-    standard_name: limit.standard_name || '',
-    clause: limit.clause || '',
-    basis_text: limit.basis_text || '',
-    priority: limit.priority ?? 100,
-  });
-  showLimitForm.value = true;
-}
-
-function cleanNumber(value) {
-  const text = String(value ?? '').trim();
-  return text === '' ? null : text;
-}
-
-function buildLimitPayload() {
-  return {
-    indicator_name: limitForm.indicator_name.trim(),
-    cas_no: limitForm.cas_no.trim() || null,
-    aliases: limitForm.aliasesText
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean),
-    medium: limitForm.medium,
-    limit_type: limitForm.limit_type,
-    limit_value: cleanNumber(limitForm.limit_value),
-    limit_min: cleanNumber(limitForm.limit_min),
-    limit_max: cleanNumber(limitForm.limit_max),
-    unit: limitForm.unit.trim(),
-    standard_code: limitForm.standard_code.trim(),
-    standard_name: limitForm.standard_name.trim(),
-    clause: limitForm.clause.trim() || null,
-    basis_text: limitForm.basis_text.trim() || null,
-    applicability: {},
-    priority: Number(limitForm.priority || 100),
-  };
-}
-
-async function saveLimit() {
-  try {
-    const payload = buildLimitPayload();
-    if (limitForm.id) {
-      await updateRegulatoryLimit(limitForm.id, payload);
-      toast.show('限值已更新', 'success');
-    } else {
-      await createRegulatoryLimit(payload);
-      toast.show('限值已新增', 'success');
-    }
-    showLimitForm.value = false;
-    await loadLimits({ silent: true });
-  } catch (err) {
-    toast.show(formatApiError(err), 'error');
-  }
-}
-
-async function removeLimit(limit) {
-  if (!confirm(`确认删除限值「${limit.indicator_name} / ${limit.limit_type}」？`)) return;
-  try {
-    await deleteRegulatoryLimit(limit.id);
-    toast.show('限值已删除', 'success');
-    if (limits.value.length === 1 && limitPage.value > 1) limitPage.value -= 1;
-    await loadLimits({ silent: true });
-  } catch (err) {
-    toast.show(formatApiError(err), 'error');
-  }
-}
-
-function useSampleCsv(sampleKey = 'occupational') {
-  const sample = SAMPLE_FILES.find((item) => item.key === sampleKey) || SAMPLE_FILES[0];
+function useSampleCsv() {
+  const sample = SAMPLE_FILES[0];
   const blob = new Blob([sample.content], { type: 'text/csv;charset=utf-8' });
   const file = new File([blob], sample.filename, { type: 'text/csv' });
   selectedFile.value = file;
   fileLabel.value = file.name;
   uploadReportType.value = sample.reportType;
+  uploadReportName.value = '';
   showUpload.value = true;
 }
 
 onMounted(async () => {
   await loadOrganizations();
-  await loadReports();
-  if (session.isAdmin) await loadLimits({ silent: true });
+  await Promise.all([loadReports(), loadDetectionStats({ silent: true })]);
+  await loadLimits({ silent: true });
 });
 
 watch(organizationId, async (next, previous) => {
@@ -536,12 +657,27 @@ watch(organizationId, async (next, previous) => {
   session.setOrgName(org?.name || '');
   if (next === previous) return;
   reportPage.value = 1;
-  await loadReports({ silent: true });
+  await Promise.all([loadReports({ silent: true }), loadDetectionStats({ silent: true })]);
 });
 
 watch(activeTab, (next) => {
-  if (next === 'limits' && session.isAdmin) loadLimits({ silent: true });
+  const query = { ...route.query };
+  if (next === 'limits') {
+    query.tab = 'limits';
+  } else {
+    delete query.tab;
+  }
+  router.replace({ query });
+  if (next === 'limits') loadLimits({ silent: true });
 });
+
+watch(
+  () => route.query.tab,
+  (tab) => {
+    const next = tab === 'limits' ? 'limits' : 'reports';
+    if (activeTab.value !== next) activeTab.value = next;
+  },
+);
 </script>
 
 <template>
@@ -556,28 +692,27 @@ watch(activeTab, (next) => {
           <Icon name="database" :size="14" />
           职业卫生样例
         </button>
-        <button type="button" class="btn-secondary" @click="useSampleCsv('noise')">
-          <Icon name="database" :size="14" />
-          噪声样例
-        </button>
-        <button type="button" class="btn-secondary" @click="useSampleCsv('heat')">
-          <Icon name="database" :size="14" />
-          高温样例
-        </button>
         <button type="button" class="btn-secondary" @click="refreshReports">
           <Icon name="refresh" :size="14" />
           刷新
         </button>
-        <button type="button" class="btn-secondary" @click="showDocumentPreview = !showDocumentPreview">
-          <Icon name="search" :size="14" />
-          解析预览
-        </button>
         <button type="button" class="btn-primary" @click="showUpload = !showUpload">
           <Icon name="upload" :size="14" />
-          上传
+          导入数据/报告
         </button>
       </div>
     </header>
+
+    <div class="task-stat-strip detection-stat-strip">
+      <div
+        v-for="item in detectionStatItems"
+        :key="item.label"
+        :class="['task-stat-card', item.tone]"
+      >
+        <span>{{ item.value }}</span>
+        <small>{{ item.label }}</small>
+      </div>
+    </div>
 
     <div class="tab-strip">
       <button
@@ -590,7 +725,6 @@ watch(activeTab, (next) => {
       <button
         type="button"
         :class="['tab-pill', { active: activeTab === 'limits' }]"
-        :disabled="!session.isAdmin"
         @click="activeTab = 'limits'"
       >
         限值库
@@ -599,15 +733,76 @@ watch(activeTab, (next) => {
 
     <section v-if="showUpload" class="upload-panel">
       <div class="upload-panel-inner">
-        <h3>导入检测数据</h3>
+        <h3>导入检测数据/报告</h3>
+        <details class="upload-guide">
+          <summary><span>上传须知</span><small>检测文件需要包含的信息</small></summary>
+          <div class="upload-guide-body">
+            <h4>支持格式</h4>
+            <ul>
+              <li><strong>CSV</strong> — UTF-8 编码，可用 Excel / WPS 另存为 CSV(UTF-8)</li>
+              <li><strong>XLSX / XLSM</strong> — Excel 工作簿，取第一个 Sheet</li>
+              <li><strong>PDF / DOCX / DOC / TXT / ZIP</strong> — 选择后自动进入报告解析预览</li>
+            </ul>
+            <h4>结构化表格必须包含</h4>
+            <ul>
+              <li><strong>检测点 / sample_point</strong> — 采样点、岗位或监测点名称</li>
+              <li><strong>检测因子 / indicator_name</strong> — 如测试因子甲、测试因子乙、噪声、测试颗粒物、WBGT</li>
+              <li><strong>检测值 / raw_value</strong> — 实测数值；低于检出限可按检出限或原报告数值填写</li>
+              <li><strong>单位 / raw_unit</strong> — 如 mg/m3、μg/m3、dB(A)、WBGT(℃)、mg/L</li>
+            </ul>
+            <h4>建议补充字段</h4>
+            <ul>
+              <li><strong>介质</strong>：工作场所空气、噪声、高温、废水、废气；不填时按报告类型推断</li>
+              <li><strong>车间/岗位</strong>：用于定位问题和后续整改</li>
+              <li><strong>采样时长</strong>：职业卫生化学因素 TWA/STEL、噪声 8h 等效计算会用到</li>
+              <li><strong>班次时长</strong>：噪声和接触时间换算需要</li>
+              <li><strong>CAS 号/别名</strong>：同名或易混淆因子可提高限值匹配准确率</li>
+              <li><strong>报告内限值</strong>：系统限值库未命中时可作为兜底参考，并标记需复核</li>
+            </ul>
+            <h4>PDF / Word 报告建议包含</h4>
+            <ul>
+              <li>报告编号、委托单位、检测日期、检测机构</li>
+              <li>检测点位、岗位/车间、检测因子、检测结果、单位、采样时长</li>
+              <li>原报告中的评价标准、限值、结论或备注</li>
+              <li>多文件 ZIP 建议按报告或附件拆分，系统会标注来源文件</li>
+            </ul>
+            <h4>文件限制</h4>
+            <ul>
+              <li>单文件 ≤ <strong>50MB</strong></li>
+              <li>检测行为单位，单次导入无行数上限</li>
+            </ul>
+            <h4>必需字段</h4>
+            <ul>
+              <li><code>sample_point</code> — 检测点名称</li>
+              <li><code>indicator_name</code> — 检测因子名称</li>
+              <li><code>raw_value</code> — 检测值（数字或 <code>&lt;检出限</code> 等标记）</li>
+              <li><code>raw_unit</code> — 单位（如 mg/m³、dB(A)、WBGT(℃)）</li>
+            </ul>
+            <h4>可选字段</h4>
+            <ul>
+              <li><code>workplace</code> — 车间/场所</li>
+              <li><code>post_name</code> — 岗位名称</li>
+              <li><code>duration_minutes</code> — 接触时长（分钟），≤15min 会自动修正限值类型为 PC_STEL</li>
+              <li><code>shift_hours</code> — 班次时长（小时）</li>
+              <li><code>medium</code> — 介质类型</li>
+            </ul>
+            <h4>行为边界</h4>
+            <ul>
+              <li>导入后系统自动创建检测报告（状态：已上传）</li>
+              <li><strong>不会自动判定合规</strong>——需在报告详情中手动点击「合规判定」触发对标分析</li>
+              <li>判定结果不可编辑，如需修正请重新导入</li>
+            </ul>
+          </div>
+        </details>
         <form class="upload-form" @submit.prevent="submitUpload">
           <div class="form-row">
             <label class="form-field">
               <span class="label-text">所属公司</span>
-              <select v-model="organizationId">
+              <select v-if="session.isAdmin" v-model="organizationId">
                 <option v-if="!organizations.length" value="">默认公司</option>
                 <option v-for="org in organizations" :key="org.id" :value="org.id">{{ org.name }}</option>
               </select>
+              <input v-else :value="selectedOrgName || session.orgName || '默认公司'" disabled />
             </label>
             <label class="form-field">
               <span class="label-text">报告类型</span>
@@ -617,13 +812,22 @@ watch(activeTab, (next) => {
                 </option>
               </select>
             </label>
+            <label class="form-field">
+              <span class="label-text">报告名称</span>
+              <input
+                v-model="uploadReportName"
+                type="text"
+                maxlength="255"
+                :placeholder="defaultReportName"
+              />
+            </label>
             <label class="form-field file-field">
-              <span class="label-text">数据文件</span>
+              <span class="label-text">数据/报告文件</span>
               <div :class="['file-drop', { 'has-file': selectedFile }]">
-                <input ref="fileInput" type="file" accept=".csv,.xlsx,.xlsm" @change="onFileChange" />
+                <input ref="fileInput" type="file" accept=".csv,.xlsx,.xlsm,.pdf,.docx,.doc,.txt,.zip" @change="onFileChange" />
                 <Icon name="upload" :size="24" :stroke="1.5" />
                 <span class="file-drop-text">{{ fileLabel }}</span>
-                <span class="file-drop-hint">支持 CSV, XLSX, XLSM；最大 50MB</span>
+                <span class="file-drop-hint">结构化表格直接导入；报告文件先解析预览；最大 50MB</span>
               </div>
             </label>
           </div>
@@ -640,6 +844,60 @@ watch(activeTab, (next) => {
     <section v-if="showDocumentPreview" class="upload-panel">
       <div class="upload-panel-inner">
         <h3>报告解析预览</h3>
+        <details class="upload-guide">
+          <summary><span>解析规则</span><small>查看格式和边界</small></summary>
+          <div class="upload-guide-body">
+            <h4>支持格式</h4>
+            <ul>
+              <li><strong>PDF</strong> — 文本层 PDF 直接提取，扫描件需 OCR 服务（Docker 可选启用）</li>
+              <li><strong>DOCX / DOC / TXT</strong> — Word 文档和纯文本文件</li>
+              <li>
+                <strong>ZIP</strong> — 压缩包（含多个 PDF/DOCX/TXT），自动解压并逐文件解析，结果标注来源文件
+              </li>
+            </ul>
+            <h4>文件限制</h4>
+            <ul>
+              <li>单文件 ≤ <strong>50MB</strong></li>
+              <li>仅解析前 60,000 字符</li>
+            </ul>
+            <h4>解析范围</h4>
+            <ul>
+              <li>自动识别检测报告中的结构化表格</li>
+              <li>提取：检测点、检测因子、数值、单位、限值(如有)、接触时长</li>
+              <li>支持职业卫生、废水、废气、噪声、高温 WBGT 五类报告</li>
+            </ul>
+            <h4>已知局限</h4>
+            <ul>
+              <li>手写批注、印章遮盖区域无法识别</li>
+              <li>扫描件 PDF 未启用 OCR 时文本层为空，会进入「待人工确认」流程</li>
+              <li>多层合并表头、跨页断行可能导致部分字段缺失</li>
+              <li>报告内嵌标准限值与系统限值库可能不一致，以系统限值库为准</li>
+            </ul>
+            <h4>行为边界</h4>
+            <ul>
+              <li>预览页<strong>仅展示解析结果，不会直接写入数据库</strong></li>
+              <li>必须进入人工确认页：逐行核对、修正错误字段、勾选需要入库的数据行</li>
+              <li>未勾选的行不会入库（含背景行、空白行、错误识别行）</li>
+              <li>低置信度行（confidence &lt; 0.7）会有黄色标记，建议重点核对</li>
+              <li>入库后与结构化导入流程一致：状态为已上传，需手动触发「合规判定」</li>
+              <li>如需重新导入同一份文件，请先删除旧报告避免数据重复</li>
+            </ul>
+          </div>
+        </details>
+        <div class="preview-flow">
+          <div class="preview-step active">
+            <span>1</span>
+            <strong>上传报告</strong>
+          </div>
+          <div :class="['preview-step', { active: documentPreview }]">
+            <span>2</span>
+            <strong>核对数据</strong>
+          </div>
+          <div :class="['preview-step', { active: selectedImportCount > 0 }]">
+            <span>3</span>
+            <strong>确认入库</strong>
+          </div>
+        </div>
         <form class="upload-form" @submit.prevent="submitDocumentPreview">
           <div class="form-row">
             <label class="form-field">
@@ -650,13 +908,22 @@ watch(activeTab, (next) => {
                 </option>
               </select>
             </label>
+            <label class="form-field">
+              <span class="label-text">报告名称</span>
+              <input
+                v-model="documentReportName"
+                type="text"
+                maxlength="255"
+                :placeholder="defaultDocumentReportName"
+              />
+            </label>
             <label class="form-field file-field">
               <span class="label-text">报告文件</span>
               <div :class="['file-drop', { 'has-file': selectedDocument }]">
                 <input
                   ref="documentInput"
                   type="file"
-                  accept=".pdf,.docx,.doc,.txt"
+                  accept=".pdf,.docx,.doc,.txt,.zip"
                   @change="onDocumentChange"
                 />
                 <Icon name="search" :size="24" :stroke="1.5" />
@@ -675,57 +942,202 @@ watch(activeTab, (next) => {
         </form>
 
         <div v-if="documentPreview" class="preview-panel">
-          <div class="preview-summary">
-            <span>{{ documentPreview.filename }}</span>
-            <span>{{ documentPreview.text_char_count }} 字符</span>
-            <span>{{ documentPreview.rows?.length || 0 }} 条候选行</span>
+          <div class="preview-result-head">
+            <div>
+              <span class="preview-kicker">解析结果</span>
+              <h4>{{ documentReportName || defaultDocumentReportName }}</h4>
+              <p>
+                来源文件：{{ documentPreview.filename }}；已识别 {{ previewRowCount }} 行，当前将入库
+                {{ selectedImportCount }} 条检测数据
+              </p>
+            </div>
+            <div class="preview-result-actions">
+              <button type="button" class="btn-secondary" :disabled="documentPreviewBusy" @click="submitDocumentPreview">
+                重新解析
+              </button>
+              <button
+                type="button"
+                class="btn-primary"
+                :disabled="documentImportBusy || !selectedImportCount"
+                @click="importDocumentPreview"
+              >
+                {{ documentImportBusy ? '入库中...' : '确认入库' }}
+              </button>
+            </div>
           </div>
-          <div v-if="documentPreview.warnings?.length" class="preview-warnings">
-            <span v-for="warning in documentPreview.warnings" :key="warning">{{ warning }}</span>
+          <div class="preview-stat-grid">
+            <div class="preview-stat">
+              <span>{{ previewRowCount }}</span>
+              <small>识别行</small>
+            </div>
+            <div class="preview-stat strong">
+              <span>{{ selectedImportCount }}</span>
+              <small>将入库</small>
+            </div>
+            <div class="preview-stat warn">
+              <span>{{ lowConfidenceCount }}</span>
+              <small>需重点核对</small>
+            </div>
+            <div class="preview-stat muted">
+              <span>{{ backgroundRowCount }}</span>
+              <small>已排除</small>
+            </div>
+          </div>
+          <details v-if="documentPreview.warnings?.length" class="preview-warnings">
+            <summary>需要注意 {{ previewWarningCount }} 项</summary>
+            <ul>
+              <li v-for="warning in documentPreview.warnings" :key="warning">{{ warning }}</li>
+            </ul>
+          </details>
+          <div v-if="documentPreview.rows?.length" class="preview-toolbar">
+            <div class="preview-toolbar-main">
+              <label class="preview-toggle">
+                <input v-model="previewReviewOnly" type="checkbox" />
+                <span>只看需核对行</span>
+              </label>
+              <label
+                v-for="column in previewColumnOptions"
+                :key="column.key"
+                class="preview-toggle"
+              >
+                <input v-model="previewVisibleColumns[column.key]" type="checkbox" />
+                <span>{{ column.label }}</span>
+              </label>
+              <button type="button" class="btn-link-sm" @click="toggleAllRows">
+                {{ allPreviewRowsSelected ? '取消全选' : '全选' }}
+              </button>
+              <button type="button" class="btn-link-sm" @click="deselectLowConfidence(0.7)">
+                取消需核对行
+              </button>
+            </div>
+            <span class="preview-toolbar-count">
+              已勾选 {{ selectedPreviewCount }} 行，可入库 {{ previewImportableTotal }} 条
+            </span>
           </div>
           <div class="preview-table-wrap">
-            <table class="mini-table">
+            <table class="mini-table preview-edit-table">
               <thead>
                 <tr>
-                  <th>行</th>
-                  <th>检测点</th>
-                  <th>介质</th>
-                  <th>因子</th>
-                  <th>检测值</th>
-                  <th>预判</th>
-                  <th>置信度</th>
+                  <th class="col-check">
+                    <input type="checkbox" :checked="allPreviewRowsSelected" @change="toggleAllRows" />
+                  </th>
+                  <th class="col-idx">#</th>
+                  <th v-if="hasPreviewSourceColumn" class="col-source">来源文件</th>
+                  <th class="col-point">检测点</th>
+                  <th v-if="previewVisibleColumns.medium" class="col-medium">介质</th>
+                  <th class="col-indicator">因子</th>
+                  <th class="col-value">检测值</th>
+                  <th class="col-unit">单位</th>
+                  <th v-if="previewVisibleColumns.limitType" class="col-limit-type">限值类型</th>
+                  <th v-if="previewVisibleColumns.exclude" class="col-bg">排除</th>
+                  <th v-if="previewVisibleColumns.status" class="col-status">预判</th>
+                  <th v-if="previewVisibleColumns.confidence" class="col-conf">核对</th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-if="!documentPreview.rows?.length" class="empty-row">
-                  <td colspan="7">未识别到候选检测行</td>
+                <tr v-if="!displayedPreviewRows.length" class="empty-row">
+                  <td :colspan="previewColspan">
+                    未识别到可确认数据
+                  </td>
                 </tr>
-                <tr v-for="row in documentPreview.rows" :key="`${row.row_index}-${row.indicator_name}`">
-                  <td>{{ row.row_index }}</td>
-                  <td>
-                    {{ row.sample_point }}
+                <tr
+                  v-for="row in displayedPreviewRows"
+                  :key="`${row.row_index}-${row.indicator_name}`"
+                  :class="{
+                    'row-selected': isRowSelected(row),
+                    'row-modified': isRowModified(row),
+                    'row-low-conf': Number(row.confidence || 0) < 0.7,
+                  }"
+                >
+                  <td class="col-check">
+                    <input type="checkbox" :checked="isRowSelected(row)" @change="toggleRow(row.row_index)" />
+                  </td>
+                  <td class="col-idx">{{ row.row_index }}</td>
+                  <td v-if="hasPreviewSourceColumn" class="col-source">
+                    {{ row.source_file || '-' }}
+                  </td>
+                  <td class="col-point">
+                    <input
+                      type="text"
+                      class="cell-input"
+                      :value="getEditValue(row, 'sample_point')"
+                      @input="setEditValue(row, 'sample_point', $event.target.value)"
+                    />
                     <small v-if="row.warnings?.length" class="subtle-line">{{
                       row.warnings.join('；')
                     }}</small>
                   </td>
-                  <td>{{ labelOf(MEDIUMS, row.medium) }}</td>
-                  <td>{{ row.indicator_name }}</td>
-                  <td>
-                    {{ formatPreviewValue(row) }}
-                    <small v-if="row.is_background" class="subtle-line">背景/辅助行</small>
+                  <td v-if="previewVisibleColumns.medium" class="col-medium">
+                    <select
+                      class="cell-select"
+                      :value="getEditValue(row, 'medium')"
+                      @change="setEditValue(row, 'medium', $event.target.value)"
+                    >
+                      <option v-for="item in MEDIUMS" :key="item.value" :value="item.value">
+                        {{ item.label }}
+                      </option>
+                    </select>
+                  </td>
+                  <td class="col-indicator">
+                    <input
+                      type="text"
+                      class="cell-input"
+                      :value="getEditValue(row, 'indicator_name')"
+                      @input="setEditValue(row, 'indicator_name', $event.target.value)"
+                    />
                     <small v-if="row.measurement_kind" class="subtle-line">{{ row.measurement_kind }}</small>
                   </td>
-                  <td>
+                  <td class="col-value">
+                    <input
+                      type="text"
+                      class="cell-input cell-input-num"
+                      :value="getEditValue(row, 'raw_value')"
+                      @input="setEditValue(row, 'raw_value', $event.target.value)"
+                    />
+                    <small v-if="getEditValue(row, 'is_below_detection_limit')" class="subtle-line"
+                      >低于检出限</small
+                    >
+                  </td>
+                  <td class="col-unit">
+                    <input
+                      type="text"
+                      class="cell-input cell-input-unit"
+                      :value="getEditValue(row, 'raw_unit')"
+                      @input="setEditValue(row, 'raw_unit', $event.target.value)"
+                    />
+                  </td>
+                  <td v-if="previewVisibleColumns.limitType" class="col-limit-type">
+                    <select
+                      class="cell-select"
+                      :value="getEditValue(row, 'limit_type')"
+                      @change="setEditValue(row, 'limit_type', $event.target.value || null)"
+                    >
+                      <option value="">--</option>
+                      <option v-for="item in LIMIT_TYPES" :key="item" :value="item">{{ item }}</option>
+                    </select>
+                  </td>
+                  <td v-if="previewVisibleColumns.exclude" class="col-bg">
+                    <input
+                      type="checkbox"
+                      :checked="getEditValue(row, 'is_background')"
+                      @change="setEditValue(row, 'is_background', $event.target.checked)"
+                    />
+                  </td>
+                  <td v-if="previewVisibleColumns.status" class="col-status">
                     {{ row.preliminary_status ? complianceText(row.preliminary_status) : '-' }}
-                    <small v-if="row.limit_type || row.report_limit_value" class="subtle-line">
-                      {{ row.limit_type || '报告内限值' }}
-                      <template v-if="row.report_limit_value"> / {{ formatPreviewLimit(row) }}</template>
+                    <small v-if="row.report_limit_value" class="subtle-line">
+                      报告限值 {{ formatPreviewLimit(row) }}
                     </small>
                     <small v-if="row.preliminary_message" class="subtle-line">
                       {{ row.preliminary_message }}
                     </small>
                   </td>
-                  <td>{{ formatNumber(Number(row.confidence) * 100) }}%</td>
+                  <td v-if="previewVisibleColumns.confidence" class="col-conf">
+                    <span :class="['conf-badge', confidenceClass(row)]">
+                      {{ confidenceLabel(row) }}
+                    </span>
+                    <small class="subtle-line">{{ formatNumber(Number(row.confidence) * 100) }}%</small>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -734,6 +1146,23 @@ watch(activeTab, (next) => {
             <summary>查看抽取文本片段</summary>
             <pre>{{ documentPreview.text_excerpt }}</pre>
           </details>
+          <div class="form-actions preview-actions">
+            <span class="preview-actions-hint">
+              将导入 {{ selectedImportCount }} 条（已勾选 {{ selectedPreviewCount }} 行）
+              <template v-if="modifiedPreviewCount">
+                ·
+                <span class="modified-hint">已修改 {{ modifiedPreviewCount }} 行</span>
+              </template>
+            </span>
+            <button
+              type="button"
+              class="btn-primary"
+              :disabled="documentImportBusy || !selectedImportCount"
+              @click="importDocumentPreview"
+            >
+              {{ documentImportBusy ? '入库中...' : '确认入库' }}
+            </button>
+          </div>
         </div>
       </div>
     </section>
@@ -742,10 +1171,11 @@ watch(activeTab, (next) => {
       <div class="task-filters detection-filters">
         <label class="filter-field">
           <span class="label-text">公司</span>
-          <select v-model="organizationId">
+          <select v-if="session.isAdmin" v-model="organizationId">
             <option value="">全部公司</option>
             <option v-for="org in organizations" :key="org.id" :value="org.id">{{ org.name }}</option>
           </select>
+          <input v-else :value="selectedOrgName || session.orgName || '默认公司'" disabled />
         </label>
         <label class="filter-field">
           <span class="label-text">类型</span>
@@ -791,7 +1221,7 @@ watch(activeTab, (next) => {
         <table class="task-table">
           <thead>
             <tr>
-              <th>文件</th>
+              <th>报告名称</th>
               <th>类型</th>
               <th>状态</th>
               <th>报告日期</th>
@@ -804,7 +1234,10 @@ watch(activeTab, (next) => {
             </tr>
             <tr v-for="report in reports" :key="report.id" @click="openReport(report.id)">
               <td>
-                <span class="task-filename">{{ report.filename }}</span>
+                <span class="task-filename">{{ report.report_name || labelOf(REPORT_TYPES, report.report_type) }}</span>
+                <small v-if="report.report_date" class="subtle-line">检测日期 {{ report.report_date }}</small>
+                <small v-else class="subtle-line">上传于 {{ formatTime(report.created_at) }}</small>
+                <small class="subtle-line" style="color: var(--text-tertiary)">来源文件：{{ report.filename }}</small>
               </td>
               <td>{{ labelOf(REPORT_TYPES, report.report_type) }}</td>
               <td>
@@ -819,192 +1252,114 @@ watch(activeTab, (next) => {
     </section>
 
     <section v-if="activeTab === 'limits'" class="task-list-section">
-      <div v-if="!session.isAdmin" class="empty-state">仅管理员可维护限值库</div>
-      <template v-else>
-        <div class="task-filters detection-filters">
-          <label class="filter-field">
-            <span class="label-text">因子</span>
-            <input
-              v-model="limitFilter.indicatorName"
-              placeholder="测试因子甲 / pH / 噪声 / 高温WBGT"
-              @keydown.enter="applyLimitFilters"
-            />
-          </label>
-          <label class="filter-field">
-            <span class="label-text">介质</span>
-            <select v-model="limitFilter.medium" @change="applyLimitFilters">
-              <option value="">全部介质</option>
-              <option v-for="item in MEDIUMS" :key="item.value" :value="item.value">{{ item.label }}</option>
-            </select>
-          </label>
-          <label class="filter-field">
-            <span class="label-text">标准编号</span>
-            <input
-              v-model="limitFilter.standardCode"
-              placeholder="TEST-STD 2.1-2019"
-              @keydown.enter="applyLimitFilters"
-            />
-          </label>
-          <button type="button" class="btn-secondary filter-reset" @click="applyLimitFilters">查询</button>
-        </div>
-        <div class="task-list-header">
-          <span class="task-count">{{ limitCountText }}</span>
-          <div class="header-actions">
-            <button type="button" class="btn-primary" @click="openCreateLimit">
-              <Icon name="plus" :size="14" />
-              新增限值
+      <div
+        v-if="
+          !limits.length &&
+          !limitsBusy &&
+          limitFilter.indicatorName === '' &&
+          limitFilter.medium === '' &&
+          limitFilter.standardCode === ''
+        "
+        class="empty-state"
+      >
+        限值库为空，请通过种子脚本导入国家标准限值
+      </div>
+      <div class="task-filters detection-filters">
+        <label class="filter-field">
+          <span class="label-text">因子</span>
+          <input
+            v-model="limitFilter.indicatorName"
+            placeholder="测试因子甲 / pH / 噪声 / 高温WBGT"
+            @keydown.enter="applyLimitFilters"
+          />
+        </label>
+        <label class="filter-field">
+          <span class="label-text">介质</span>
+          <select v-model="limitFilter.medium" @change="applyLimitFilters">
+            <option value="">全部介质</option>
+            <option v-for="item in MEDIUMS" :key="item.value" :value="item.value">{{ item.label }}</option>
+          </select>
+        </label>
+        <label class="filter-field">
+          <span class="label-text">标准编号</span>
+          <input
+            v-model="limitFilter.standardCode"
+            placeholder="TEST-STD 2.1-2019"
+            @keydown.enter="applyLimitFilters"
+          />
+        </label>
+        <button type="button" class="btn-secondary filter-reset" @click="applyLimitFilters">查询</button>
+      </div>
+      <div class="task-list-header">
+        <span class="task-count">{{ limitCountText }}</span>
+      </div>
+      <div class="task-table-wrap">
+        <table class="task-table">
+          <thead>
+            <tr>
+              <th>因子</th>
+              <th>介质</th>
+              <th>限值类型</th>
+              <th>限值</th>
+              <th>来源依据</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="!limits.length" class="empty-row">
+              <td colspan="5">{{ limitsBusy ? '加载中...' : '暂无限值' }}</td>
+            </tr>
+            <tr v-for="limit in limits" :key="limit.id">
+              <td>
+                <span class="task-filename">{{ limit.indicator_name }}</span>
+                <small v-if="limit.cas_no" class="subtle-line">CAS: {{ limit.cas_no }}</small>
+                <small v-if="limit.aliases?.length" class="subtle-line"
+                  >别名: {{ limit.aliases.slice(0, 3).join(', ')
+                  }}{{ limit.aliases.length > 3 ? ' 等' : '' }}</small
+                >
+              </td>
+              <td>{{ labelOf(MEDIUMS, limit.medium) }}</td>
+              <td>{{ limit.limit_type }}</td>
+              <td class="col-limit-value">
+                <template v-if="limit.limit_type === 'RANGE'">
+                  <span class="limit-number">{{ formatNumber(limit.limit_min) }}</span>
+                  <span class="limit-sep">~</span>
+                  <span class="limit-number">{{ formatNumber(limit.limit_max) }}</span>
+                </template>
+                <template v-else>
+                  <span class="limit-number">{{ formatNumber(limit.limit_value) }}</span>
+                </template>
+                <span class="limit-unit">{{ limit.unit }}</span>
+              </td>
+              <td class="col-limit-source">
+                <span class="limit-source-code">{{ limit.standard_code || '-' }}</span>
+                <small v-if="limit.standard_name" class="subtle-line">{{ limit.standard_name }}</small>
+                <small v-if="limit.clause" class="subtle-line">条款 {{ limit.clause }}</small>
+                <small v-if="limit.basis_text" class="subtle-line basis-text">{{ limit.basis_text }}</small>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="task-list-header">
+        <span class="task-count"></span>
+        <div class="pagination">
+          <template v-if="limitPages > 1">
+            <button class="page-btn" :disabled="limitPage <= 1" @click="goLimitPage(limitPage - 1)">
+              &lt;
             </button>
-          </div>
+            <span class="page-info">{{ limitPage }} / {{ limitPages }}</span>
+            <button class="page-btn" :disabled="limitPage >= limitPages" @click="goLimitPage(limitPage + 1)">
+              &gt;
+            </button>
+          </template>
         </div>
-        <section v-if="showLimitForm" class="limit-form-panel">
-          <h3>{{ limitFormTitle }}</h3>
-          <form class="limit-form-grid" @submit.prevent="saveLimit">
-            <label class="form-field">
-              <span class="label-text">因子</span>
-              <input v-model="limitForm.indicator_name" required maxlength="128" />
-            </label>
-            <label class="form-field">
-              <span class="label-text">CAS</span>
-              <input v-model="limitForm.cas_no" maxlength="32" />
-            </label>
-            <label class="form-field">
-              <span class="label-text">别名</span>
-              <input v-model="limitForm.aliasesText" placeholder="英文名, 常用名" />
-            </label>
-            <label class="form-field">
-              <span class="label-text">介质</span>
-              <select v-model="limitForm.medium">
-                <option v-for="item in MEDIUMS" :key="item.value" :value="item.value">
-                  {{ item.label }}
-                </option>
-              </select>
-            </label>
-            <label class="form-field">
-              <span class="label-text">限值类型</span>
-              <select v-model="limitForm.limit_type">
-                <option v-for="item in LIMIT_TYPES" :key="item" :value="item">{{ item }}</option>
-              </select>
-            </label>
-            <label class="form-field">
-              <span class="label-text">限值</span>
-              <input v-model="limitForm.limit_value" placeholder="标量限值" />
-            </label>
-            <label class="form-field">
-              <span class="label-text">下限</span>
-              <input v-model="limitForm.limit_min" placeholder="范围限值" />
-            </label>
-            <label class="form-field">
-              <span class="label-text">上限</span>
-              <input v-model="limitForm.limit_max" placeholder="范围限值" />
-            </label>
-            <label class="form-field">
-              <span class="label-text">单位</span>
-              <input v-model="limitForm.unit" required />
-            </label>
-            <label class="form-field">
-              <span class="label-text">标准编号</span>
-              <input v-model="limitForm.standard_code" required />
-            </label>
-            <label class="form-field">
-              <span class="label-text">标准名称</span>
-              <input v-model="limitForm.standard_name" required />
-            </label>
-            <label class="form-field">
-              <span class="label-text">条款</span>
-              <input v-model="limitForm.clause" />
-            </label>
-            <label class="form-field">
-              <span class="label-text">优先级</span>
-              <input v-model="limitForm.priority" type="number" min="0" max="10000" />
-            </label>
-            <label class="form-field limit-basis">
-              <span class="label-text">依据说明</span>
-              <input v-model="limitForm.basis_text" />
-            </label>
-            <div class="form-actions limit-actions">
-              <button type="button" class="btn-secondary" @click="showLimitForm = false">取消</button>
-              <button type="submit" class="btn-primary">
-                <Icon name="save" :size="14" />
-                保存
-              </button>
-            </div>
-          </form>
-        </section>
-        <div class="task-table-wrap">
-          <table class="task-table">
-            <thead>
-              <tr>
-                <th>因子</th>
-                <th>介质</th>
-                <th>类型</th>
-                <th>限值</th>
-                <th>标准</th>
-                <th style="width: 120px; text-align: right">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-if="!limits.length" class="empty-row">
-                <td colspan="6">{{ limitsBusy ? '加载中...' : '暂无限值' }}</td>
-              </tr>
-              <tr v-for="limit in limits" :key="limit.id">
-                <td>
-                  <span class="task-filename">{{ limit.indicator_name }}</span>
-                  <small v-if="limit.cas_no" class="subtle-line">{{ limit.cas_no }}</small>
-                </td>
-                <td>{{ labelOf(MEDIUMS, limit.medium) }}</td>
-                <td>{{ limit.limit_type }}</td>
-                <td>
-                  <template v-if="limit.limit_type === 'RANGE'">
-                    {{ formatNumber(limit.limit_min) }} - {{ formatNumber(limit.limit_max) }} {{ limit.unit }}
-                  </template>
-                  <template v-else>{{ formatNumber(limit.limit_value) }} {{ limit.unit }}</template>
-                </td>
-                <td>
-                  <span>{{ limit.standard_code }}</span>
-                  <small class="subtle-line">{{ limit.clause || '-' }}</small>
-                </td>
-                <td style="text-align: right">
-                  <button class="btn-icon-sm" title="编辑" @click="openEditLimit(limit)">
-                    <Icon name="edit" :size="14" />
-                  </button>
-                  <button
-                    class="btn-icon-sm"
-                    title="删除"
-                    style="color: var(--danger)"
-                    @click="removeLimit(limit)"
-                  >
-                    <Icon name="trash" :size="14" />
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="task-list-header">
-          <span class="task-count"></span>
-          <div class="pagination">
-            <template v-if="limitPages > 1">
-              <button class="page-btn" :disabled="limitPage <= 1" @click="goLimitPage(limitPage - 1)">
-                &lt;
-              </button>
-              <span class="page-info">{{ limitPage }} / {{ limitPages }}</span>
-              <button
-                class="page-btn"
-                :disabled="limitPage >= limitPages"
-                @click="goLimitPage(limitPage + 1)"
-              >
-                &gt;
-              </button>
-            </template>
-          </div>
-        </div>
-      </template>
+      </div>
     </section>
 
     <Transition name="drawer">
       <aside v-if="drawerOpen" class="task-drawer detection-drawer open">
         <div class="drawer-header">
-          <h2>{{ activeReport?.filename || '报告详情' }}</h2>
+          <h2>{{ activeReport?.report_name || activeReport?.filename || '报告详情' }}</h2>
           <div class="drawer-actions">
             <button
               type="button"
@@ -1025,6 +1380,8 @@ watch(activeTab, (next) => {
             <dl class="detail-meta">
               <dt>报告 ID</dt>
               <dd>{{ activeReport.id }}</dd>
+              <dt>来源文件</dt>
+              <dd>{{ activeReport.filename || '-' }}</dd>
               <dt>类型</dt>
               <dd>{{ labelOf(REPORT_TYPES, activeReport.report_type) }}</dd>
               <dt>状态</dt>
@@ -1062,7 +1419,7 @@ watch(activeTab, (next) => {
               <h3>判定结果</h3>
               <p v-if="!activeResults.length" class="empty-state compact">尚未运行合规判定</p>
               <div v-else class="result-list">
-                <div v-for="result in activeResults" :key="result.id" class="result-row">
+                <div v-for="result in sortedActiveResults" :key="result.id" class="result-row">
                   <div>
                     <span :class="['compliance-badge', result.status]">{{
                       complianceText(result.status)
@@ -1173,37 +1530,144 @@ watch(activeTab, (next) => {
   color: var(--text-tertiary);
   font-size: 12px;
 }
+.preview-flow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 16px;
+}
+.preview-step {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+}
+.preview-step span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-weight: 800;
+}
+.preview-step strong {
+  font-size: 13px;
+}
+.preview-step.active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--text);
+}
+.preview-step.active span {
+  background: var(--accent);
+  color: #fff;
+}
 .preview-panel {
   display: grid;
-  gap: 12px;
-  margin-top: 16px;
+  gap: 14px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
 }
-.preview-summary {
+.preview-result-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.preview-kicker {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+}
+.preview-result-head h4 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.35;
+  word-break: break-word;
+}
+.preview-result-head p {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.preview-result-actions {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
+}
+.preview-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.preview-stat {
+  min-height: 66px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+.preview-stat span {
+  display: block;
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.preview-stat small {
+  display: block;
+  margin-top: 8px;
   color: var(--text-secondary);
   font-size: 12px;
 }
-.preview-summary span,
-.preview-warnings span {
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--panel);
+.preview-stat.strong span {
+  color: var(--success);
+}
+.preview-stat.warn span {
+  color: var(--warning);
+}
+.preview-stat.muted span {
+  color: var(--text-tertiary);
 }
 .preview-warnings {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  color: var(--warning);
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
   font-size: 12px;
+  overflow: hidden;
+}
+.preview-warnings summary {
+  padding: 9px 12px;
+  cursor: pointer;
+  font-weight: 800;
+}
+.preview-warnings ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0 12px 12px 28px;
 }
 .preview-table-wrap {
-  max-height: 320px;
+  max-height: 430px;
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 8px;
+  background: var(--panel);
 }
 .text-excerpt {
   color: var(--text-secondary);
@@ -1224,6 +1688,22 @@ watch(activeTab, (next) => {
   color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
+}
+.preview-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  margin-top: 8px;
+  padding: 12px 0 0;
+  background: var(--panel);
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+.preview-actions-hint {
+  margin-right: auto;
+  color: var(--text-secondary);
+  font-size: 12px;
 }
 .metric-grid {
   display: grid;
@@ -1349,17 +1829,247 @@ watch(activeTab, (next) => {
   color: var(--text-tertiary);
   font-weight: 700;
 }
+.preview-edit-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--panel);
+  box-shadow: inset 0 -1px 0 var(--border);
+}
 .empty-state.compact {
   padding: 22px 12px;
 }
 
+/* ---- 人工确认：工具栏 ---- */
+.preview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 40px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+.preview-toolbar-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.preview-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+.btn-link-sm {
+  min-height: 28px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.btn-link-sm:hover {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+}
+.preview-toolbar-count {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.modified-hint {
+  color: var(--warning);
+}
+
+/* ---- 预览编辑表格 ---- */
+.preview-edit-table {
+  min-width: 1060px;
+}
+.preview-edit-table th,
+.preview-edit-table td {
+  vertical-align: top;
+}
+.col-check {
+  width: 32px;
+  text-align: center;
+}
+.col-idx {
+  width: 40px;
+}
+.col-source {
+  min-width: 90px;
+  max-width: 140px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+.col-point {
+  min-width: 110px;
+}
+.col-medium {
+  width: 90px;
+}
+.col-indicator {
+  min-width: 100px;
+}
+.col-value {
+  width: 80px;
+}
+.col-unit {
+  width: 64px;
+}
+.preview-edit-table .col-check,
+.preview-edit-table .col-idx,
+.preview-edit-table .col-point,
+.preview-edit-table .col-indicator {
+  position: sticky;
+  background: var(--panel);
+  z-index: 1;
+}
+.preview-edit-table thead .col-check,
+.preview-edit-table thead .col-idx,
+.preview-edit-table thead .col-point,
+.preview-edit-table thead .col-indicator {
+  z-index: 4;
+}
+.preview-edit-table .col-check {
+  left: 0;
+}
+.preview-edit-table .col-idx {
+  left: 32px;
+}
+.preview-edit-table .col-point {
+  left: 72px;
+  min-width: 130px;
+}
+.preview-edit-table .col-indicator {
+  left: 202px;
+  min-width: 120px;
+}
+.col-limit-type {
+  width: 100px;
+}
+.col-bg {
+  width: 44px;
+  text-align: center;
+}
+.col-status {
+  min-width: 96px;
+}
+.col-conf {
+  width: 86px;
+  text-align: center;
+}
+
+.cell-input {
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  transition: border-color var(--transition);
+}
+.cell-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-bg);
+}
+.cell-input-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.cell-input-unit {
+  text-align: center;
+}
+.cell-select {
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 11px;
+  font-family: inherit;
+}
+.cell-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* ---- 行状态 ---- */
+.preview-edit-table tbody tr.row-selected {
+  background: var(--accent-bg);
+}
+.preview-edit-table tbody tr:hover {
+  background: var(--bg-subtle);
+}
+.preview-edit-table tbody tr.row-modified {
+  border-left: 3px solid var(--warning);
+}
+.preview-edit-table tbody tr.row-low-conf {
+  --stripe: rgba(255 160 60 / 0.08);
+  background: var(--stripe);
+}
+.preview-edit-table tbody tr.row-low-conf.row-selected {
+  background: color-mix(in srgb, var(--accent-bg) 70%, var(--stripe));
+}
+
+/* ---- 置信度徽标 ---- */
+.conf-badge {
+  display: inline-block;
+  min-width: 54px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.conf-high {
+  background: var(--success-bg);
+  color: var(--success);
+}
+.conf-medium {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+.conf-low {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
 @media (max-width: 1024px) {
   .detection-filters,
-  .limit-form-grid {
+  .limit-form-grid,
+  .preview-stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .limit-basis {
     grid-column: span 2;
+  }
+  .preview-result-head {
+    flex-direction: column;
+  }
+  .preview-result-actions {
+    justify-content: flex-start;
   }
 }
 
@@ -1367,7 +2077,9 @@ watch(activeTab, (next) => {
   .detection-filters,
   .limit-form-grid,
   .metric-grid,
-  .result-row {
+  .result-row,
+  .preview-flow,
+  .preview-stat-grid {
     grid-template-columns: 1fr;
   }
   .limit-basis {
@@ -1376,5 +2088,118 @@ watch(activeTab, (next) => {
   .result-values {
     text-align: left;
   }
+  .preview-toolbar,
+  .preview-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .preview-toolbar-count,
+  .preview-actions-hint {
+    margin-right: 0;
+    white-space: normal;
+  }
+}
+
+/* ---- 上传须知指引 ---- */
+.upload-guide {
+  margin-bottom: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+  overflow: hidden;
+}
+.upload-guide summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--text);
+  background: var(--panel);
+  list-style: none;
+}
+.upload-guide summary::-webkit-details-marker {
+  display: none;
+}
+.upload-guide summary span {
+  font-size: 14px;
+}
+.upload-guide summary small {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+.upload-guide-body {
+  padding: 12px 16px 16px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+.upload-guide-body h4 {
+  margin: 12px 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+.upload-guide-body h4:first-child {
+  margin-top: 0;
+}
+.upload-guide-body ul {
+  margin: 0 0 4px;
+  padding-left: 18px;
+  list-style: disc;
+}
+.upload-guide-body li {
+  margin-bottom: 3px;
+  color: var(--text-tertiary);
+}
+.upload-guide-body code {
+  font-size: 12px;
+  background: #fef3c7;
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: #92400e;
+}
+.upload-guide-body strong {
+  color: var(--text);
+}
+
+/* ---- 限值表格优化 ---- */
+.col-limit-value {
+  white-space: nowrap;
+}
+.limit-number {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 13px;
+}
+.limit-sep {
+  margin: 0 4px;
+  color: var(--text-tertiary);
+}
+.limit-unit {
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+.col-limit-source {
+  min-width: 240px;
+}
+.limit-source-code {
+  display: block;
+  font-weight: 600;
+  font-size: 13px;
+}
+.col-limit-source .subtle-line {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.col-limit-source .basis-text {
+  color: var(--text-tertiary);
+  font-style: italic;
 }
 </style>

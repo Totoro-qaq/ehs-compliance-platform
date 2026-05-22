@@ -33,10 +33,10 @@ router.beforeEach((to) => {
     return { name: 'login', query: to.fullPath !== '/' ? { redirect: to.fullPath } : undefined };
   }
   if (to.meta?.adminOnly && !session.isAdmin) {
-    return { name: 'home' };
+    return { name: 'home', query: { view: 'workbench' } };
   }
   if (session.token && to.name === 'login') {
-    return { name: 'home' };
+    return { name: 'home', query: { view: 'workbench' } };
   }
   return true;
 });

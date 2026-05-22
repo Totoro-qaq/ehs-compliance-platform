@@ -1,11 +1,10 @@
 <script setup>
 import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { fetchCaptcha, formatApiError, normalizeBase } from '../api/client';
-import { healthCheck, login, register } from '../api/auth';
+import { fetchCaptcha, formatApiError } from '../api/client';
+import { login, register } from '../api/auth';
 import { useSessionStore } from '../stores/session';
 import { useToastStore } from '../stores/toast';
-import Icon from '../components/Icon.vue';
 
 const session = useSessionStore();
 const toast = useToastStore();
@@ -17,14 +16,11 @@ function gotoNext() {
   if (target && target.startsWith('/')) {
     router.replace(target);
   } else {
-    router.replace({ name: 'home' });
+    router.replace({ name: 'home', query: { view: 'workbench' } });
   }
 }
 
 const tab = ref('login');
-const apiBase = ref(session.apiBase);
-const apiStatus = reactive({ text: '', color: '' });
-const apiBusy = ref(false);
 const loginBusy = ref(false);
 const registerBusy = ref(false);
 
@@ -42,28 +38,6 @@ async function refreshCaptcha() {
     captchaUrl.value = lastBlobUrl;
   } catch {
     captchaUrl.value = '';
-  }
-}
-
-async function testApi() {
-  if (apiBusy.value) return;
-  apiBusy.value = true;
-  try {
-    const value = normalizeBase(apiBase.value);
-    apiBase.value = value;
-    session.setApiBase(value);
-    const health = await healthCheck();
-    if (health?.status !== 'ok') throw new Error('健康检查异常');
-    apiStatus.text = '连接正常';
-    apiStatus.color = 'var(--success)';
-    toast.show('后端连接正常', 'success');
-    refreshCaptcha();
-  } catch (err) {
-    apiStatus.text = formatApiError(err);
-    apiStatus.color = 'var(--danger)';
-    toast.show(formatApiError(err), 'error');
-  } finally {
-    apiBusy.value = false;
   }
 }
 
@@ -144,21 +118,8 @@ onBeforeUnmount(() => {
             />
           </svg>
         </div>
-        <h1>EHS 合规评估系统</h1>
+        <h1>EHS 合规评价系统</h1>
         <p class="brand-desc">智能环境健康安全合规分析平台</p>
-      </div>
-
-      <div class="api-setting">
-        <label>
-          <span class="label-text">API 地址</span>
-          <div class="input-group">
-            <input v-model="apiBase" type="url" placeholder="http://127.0.0.1:8000" />
-            <button type="button" class="btn-icon" title="测试连接" :disabled="apiBusy" @click="testApi">
-              <Icon name="check" :size="16" />
-            </button>
-          </div>
-        </label>
-        <p class="api-status" :style="{ color: apiStatus.color }">{{ apiStatus.text }}</p>
       </div>
 
       <div class="tab-buttons" role="tablist">
@@ -197,6 +158,7 @@ onBeforeUnmount(() => {
               @click="refreshCaptcha"
             />
           </div>
+          <small class="form-hint">看不清可点击验证码图片刷新</small>
         </label>
         <button type="submit" class="btn-primary btn-lg" :disabled="loginBusy">
           {{ loginBusy ? '登录中...' : '登录' }}
@@ -204,6 +166,7 @@ onBeforeUnmount(() => {
       </form>
 
       <form v-else class="auth-form" @submit.prevent="submitRegister">
+        <p class="form-note">注册后会自动登录；生产环境建议由管理员统一创建账号。</p>
         <label>
           <span class="label-text">用户名</span>
           <input

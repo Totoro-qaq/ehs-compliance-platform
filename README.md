@@ -109,7 +109,7 @@ npm install
 npm run dev
 ```
 
-登录后进入顶部导航「检测合规」或访问 `/detection`，可上传 CSV / XLSX / XLSM、运行合规判定，并由管理员维护限值库。页面内置职业卫生、噪声、高温三个样例按钮，方便本地演示。
+登录后进入顶部导航「检测合规」或访问 `/detection`，可上传 CSV / XLSX / XLSM 结构化数据，也可通过解析预览导入 PDF / DOCX / DOC / TXT / ZIP 报告文件；确认入库后可运行合规判定，并由管理员维护限值库。页面内置职业卫生、噪声、高温三个样例按钮，方便本地演示。
 
 前端环境变量：
 
@@ -406,7 +406,7 @@ npm install
 npm run dev
 ```
 
-After signing in, open "检测合规" in the top navigation or visit `/detection`. The page supports CSV / XLSX / XLSM upload, compliance calculation, and admin regulatory-limit maintenance. Built-in sample buttons cover occupational health, noise, and high-temperature WBGT workflows.
+After signing in, open "检测合规" in the top navigation or visit `/detection`. The page supports CSV / XLSX / XLSM structured upload plus PDF / DOCX / DOC / TXT / ZIP document import through parsing preview. After confirming parsed rows, you can run compliance calculation and maintain regulatory limits as an admin. Built-in sample buttons cover occupational health, noise, and high-temperature WBGT workflows.
 
 Frontend environment variable:
 
