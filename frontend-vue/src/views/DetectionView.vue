@@ -3,15 +3,12 @@ import { computed, onMounted, reactive, ref, watch } from 'vue';
 import {
   calculateDetectionReport,
   createDetectionReport,
-  createRegulatoryLimit,
-  deleteRegulatoryLimit,
   getDetectionReport,
   importDetectionDocumentPreview,
   listDetectionReports,
   listDetectionResults,
   listRegulatoryLimits,
   previewDetectionDocument,
-  updateRegulatoryLimit,
 } from '../api/detection';
 import { formatApiError } from '../api/client';
 import { listOrganizations } from '../api/organizations';
@@ -128,25 +125,6 @@ const limitFilter = reactive({
   medium: '',
   standardCode: '',
 });
-const showLimitForm = ref(false);
-const limitForm = reactive({
-  id: '',
-  indicator_name: '',
-  cas_no: '',
-  aliasesText: '',
-  medium: 'WORKPLACE_AIR',
-  limit_type: 'PC_TWA',
-  limit_value: '',
-  limit_min: '',
-  limit_max: '',
-  unit: 'mg/m3',
-  standard_code: '',
-  standard_name: '',
-  clause: '',
-  basis_text: '',
-  priority: 100,
-});
-
 const reportCountText = computed(() => `${reportTotal.value} 份报告`);
 const limitCountText = computed(() => `${limitTotal.value} 条限值`);
 const selectedOrgName = computed(
@@ -166,7 +144,7 @@ const resultSummary = computed(() => {
     needsReview: rows.filter((item) => item.status === 'NEEDS_REVIEW').length,
   };
 });
-const limitFormTitle = computed(() => (limitForm.id ? '编辑限值' : '新增限值'));
+
 // ---- 人工确认：行选择 + 行内编辑 ----
 const selectedRowIndices = ref(new Set());
 const rowEdits = ref({});
@@ -518,7 +496,6 @@ function goReportPage(page) {
 }
 
 async function loadLimits({ silent = false } = {}) {
-  if (!session.isAdmin) return;
   limitsBusy.value = true;
   try {
     const page = await listRegulatoryLimits(limitPage.value, limitPageSize, {
@@ -547,109 +524,6 @@ function goLimitPage(page) {
   loadLimits();
 }
 
-function resetLimitForm() {
-  Object.assign(limitForm, {
-    id: '',
-    indicator_name: '',
-    cas_no: '',
-    aliasesText: '',
-    medium: 'WORKPLACE_AIR',
-    limit_type: 'PC_TWA',
-    limit_value: '',
-    limit_min: '',
-    limit_max: '',
-    unit: 'mg/m3',
-    standard_code: '',
-    standard_name: '',
-    clause: '',
-    basis_text: '',
-    priority: 100,
-  });
-}
-
-function openCreateLimit() {
-  resetLimitForm();
-  showLimitForm.value = true;
-}
-
-function openEditLimit(limit) {
-  Object.assign(limitForm, {
-    id: limit.id,
-    indicator_name: limit.indicator_name || '',
-    cas_no: limit.cas_no || '',
-    aliasesText: (limit.aliases || []).join(', '),
-    medium: limit.medium || 'WORKPLACE_AIR',
-    limit_type: limit.limit_type || 'PC_TWA',
-    limit_value: limit.limit_value ?? '',
-    limit_min: limit.limit_min ?? '',
-    limit_max: limit.limit_max ?? '',
-    unit: limit.unit || 'mg/m3',
-    standard_code: limit.standard_code || '',
-    standard_name: limit.standard_name || '',
-    clause: limit.clause || '',
-    basis_text: limit.basis_text || '',
-    priority: limit.priority ?? 100,
-  });
-  showLimitForm.value = true;
-}
-
-function cleanNumber(value) {
-  const text = String(value ?? '').trim();
-  return text === '' ? null : text;
-}
-
-function buildLimitPayload() {
-  return {
-    indicator_name: limitForm.indicator_name.trim(),
-    cas_no: limitForm.cas_no.trim() || null,
-    aliases: limitForm.aliasesText
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean),
-    medium: limitForm.medium,
-    limit_type: limitForm.limit_type,
-    limit_value: cleanNumber(limitForm.limit_value),
-    limit_min: cleanNumber(limitForm.limit_min),
-    limit_max: cleanNumber(limitForm.limit_max),
-    unit: limitForm.unit.trim(),
-    standard_code: limitForm.standard_code.trim(),
-    standard_name: limitForm.standard_name.trim(),
-    clause: limitForm.clause.trim() || null,
-    basis_text: limitForm.basis_text.trim() || null,
-    applicability: {},
-    priority: Number(limitForm.priority || 100),
-  };
-}
-
-async function saveLimit() {
-  try {
-    const payload = buildLimitPayload();
-    if (limitForm.id) {
-      await updateRegulatoryLimit(limitForm.id, payload);
-      toast.show('限值已更新', 'success');
-    } else {
-      await createRegulatoryLimit(payload);
-      toast.show('限值已新增', 'success');
-    }
-    showLimitForm.value = false;
-    await loadLimits({ silent: true });
-  } catch (err) {
-    toast.show(formatApiError(err), 'error');
-  }
-}
-
-async function removeLimit(limit) {
-  if (!confirm(`确认删除限值「${limit.indicator_name} / ${limit.limit_type}」？`)) return;
-  try {
-    await deleteRegulatoryLimit(limit.id);
-    toast.show('限值已删除', 'success');
-    if (limits.value.length === 1 && limitPage.value > 1) limitPage.value -= 1;
-    await loadLimits({ silent: true });
-  } catch (err) {
-    toast.show(formatApiError(err), 'error');
-  }
-}
-
 function useSampleCsv(sampleKey = 'occupational') {
   const sample = SAMPLE_FILES.find((item) => item.key === sampleKey) || SAMPLE_FILES[0];
   const blob = new Blob([sample.content], { type: 'text/csv;charset=utf-8' });
@@ -663,7 +537,7 @@ function useSampleCsv(sampleKey = 'occupational') {
 onMounted(async () => {
   await loadOrganizations();
   await loadReports();
-  if (session.isAdmin) await loadLimits({ silent: true });
+  await loadLimits({ silent: true });
 });
 
 watch(organizationId, async (next, previous) => {
@@ -675,7 +549,7 @@ watch(organizationId, async (next, previous) => {
 });
 
 watch(activeTab, (next) => {
-  if (next === 'limits' && session.isAdmin) loadLimits({ silent: true });
+  if (next === 'limits') loadLimits({ silent: true });
 });
 </script>
 
@@ -725,10 +599,9 @@ watch(activeTab, (next) => {
       <button
         type="button"
         :class="['tab-pill', { active: activeTab === 'limits' }]"
-        :disabled="!session.isAdmin"
         @click="activeTab = 'limits'"
       >
-        限值库
+        限值库 @click="activeTab = 'limits'" >
       </button>
     </div>
 
@@ -1132,186 +1005,105 @@ watch(activeTab, (next) => {
     </section>
 
     <section v-if="activeTab === 'limits'" class="task-list-section">
-      <div v-if="!session.isAdmin" class="empty-state">仅管理员可维护限值库</div>
-      <template v-else>
-        <div class="task-filters detection-filters">
-          <label class="filter-field">
-            <span class="label-text">因子</span>
-            <input
-              v-model="limitFilter.indicatorName"
-              placeholder="苯 / pH / 噪声 / 高温WBGT"
-              @keydown.enter="applyLimitFilters"
-            />
-          </label>
-          <label class="filter-field">
-            <span class="label-text">介质</span>
-            <select v-model="limitFilter.medium" @change="applyLimitFilters">
-              <option value="">全部介质</option>
-              <option v-for="item in MEDIUMS" :key="item.value" :value="item.value">{{ item.label }}</option>
-            </select>
-          </label>
-          <label class="filter-field">
-            <span class="label-text">标准编号</span>
-            <input
-              v-model="limitFilter.standardCode"
-              placeholder="GBZ 2.1-2019"
-              @keydown.enter="applyLimitFilters"
-            />
-          </label>
-          <button type="button" class="btn-secondary filter-reset" @click="applyLimitFilters">查询</button>
-        </div>
-        <div class="task-list-header">
-          <span class="task-count">{{ limitCountText }}</span>
-          <div class="header-actions">
-            <button type="button" class="btn-primary" @click="openCreateLimit">
-              <Icon name="plus" :size="14" />
-              新增限值
+      <div
+        v-if="
+          !limits.length &&
+          !limitsBusy &&
+          limitFilter.indicatorName === '' &&
+          limitFilter.medium === '' &&
+          limitFilter.standardCode === ''
+        "
+        class="empty-state"
+      >
+        限值库为空，请通过种子脚本导入国家标准限值
+      </div>
+      <div class="task-filters detection-filters">
+        <label class="filter-field">
+          <span class="label-text">因子</span>
+          <input
+            v-model="limitFilter.indicatorName"
+            placeholder="苯 / pH / 噪声 / 高温WBGT"
+            @keydown.enter="applyLimitFilters"
+          />
+        </label>
+        <label class="filter-field">
+          <span class="label-text">介质</span>
+          <select v-model="limitFilter.medium" @change="applyLimitFilters">
+            <option value="">全部介质</option>
+            <option v-for="item in MEDIUMS" :key="item.value" :value="item.value">{{ item.label }}</option>
+          </select>
+        </label>
+        <label class="filter-field">
+          <span class="label-text">标准编号</span>
+          <input
+            v-model="limitFilter.standardCode"
+            placeholder="GBZ 2.1-2019"
+            @keydown.enter="applyLimitFilters"
+          />
+        </label>
+        <button type="button" class="btn-secondary filter-reset" @click="applyLimitFilters">查询</button>
+      </div>
+      <div class="task-list-header">
+        <span class="task-count">{{ limitCountText }}</span>
+      </div>
+      <div class="task-table-wrap">
+        <table class="task-table">
+          <thead>
+            <tr>
+              <th>因子</th>
+              <th>介质</th>
+              <th>类型</th>
+              <th>限值</th>
+              <th>标准编号</th>
+              <th>标准名称</th>
+              <th>条款</th>
+              <th>依据说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="!limits.length" class="empty-row">
+              <td colspan="8">{{ limitsBusy ? '加载中...' : '暂无限值' }}</td>
+            </tr>
+            <tr v-for="limit in limits" :key="limit.id">
+              <td>
+                <span class="task-filename">{{ limit.indicator_name }}</span>
+                <small v-if="limit.cas_no" class="subtle-line">CAS: {{ limit.cas_no }}</small>
+                <small v-if="limit.aliases?.length" class="subtle-line"
+                  >别名: {{ limit.aliases.join(', ') }}</small
+                >
+              </td>
+              <td>{{ labelOf(MEDIUMS, limit.medium) }}</td>
+              <td>{{ limit.limit_type }}</td>
+              <td>
+                <template v-if="limit.limit_type === 'RANGE'">
+                  {{ formatNumber(limit.limit_min) }} - {{ formatNumber(limit.limit_max) }} {{ limit.unit }}
+                </template>
+                <template v-else>{{ formatNumber(limit.limit_value) }} {{ limit.unit }}</template>
+              </td>
+              <td>{{ limit.standard_code || '-' }}</td>
+              <td>
+                <span>{{ limit.standard_name || '-' }}</span>
+              </td>
+              <td>{{ limit.clause || '-' }}</td>
+              <td>{{ limit.basis_text || '-' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="task-list-header">
+        <span class="task-count"></span>
+        <div class="pagination">
+          <template v-if="limitPages > 1">
+            <button class="page-btn" :disabled="limitPage <= 1" @click="goLimitPage(limitPage - 1)">
+              &lt;
             </button>
-          </div>
+            <span class="page-info">{{ limitPage }} / {{ limitPages }}</span>
+            <button class="page-btn" :disabled="limitPage >= limitPages" @click="goLimitPage(limitPage + 1)">
+              &gt;
+            </button>
+          </template>
         </div>
-        <section v-if="showLimitForm" class="limit-form-panel">
-          <h3>{{ limitFormTitle }}</h3>
-          <form class="limit-form-grid" @submit.prevent="saveLimit">
-            <label class="form-field">
-              <span class="label-text">因子</span>
-              <input v-model="limitForm.indicator_name" required maxlength="128" />
-            </label>
-            <label class="form-field">
-              <span class="label-text">CAS</span>
-              <input v-model="limitForm.cas_no" maxlength="32" />
-            </label>
-            <label class="form-field">
-              <span class="label-text">别名</span>
-              <input v-model="limitForm.aliasesText" placeholder="英文名, 常用名" />
-            </label>
-            <label class="form-field">
-              <span class="label-text">介质</span>
-              <select v-model="limitForm.medium">
-                <option v-for="item in MEDIUMS" :key="item.value" :value="item.value">
-                  {{ item.label }}
-                </option>
-              </select>
-            </label>
-            <label class="form-field">
-              <span class="label-text">限值类型</span>
-              <select v-model="limitForm.limit_type">
-                <option v-for="item in LIMIT_TYPES" :key="item" :value="item">{{ item }}</option>
-              </select>
-            </label>
-            <label class="form-field">
-              <span class="label-text">限值</span>
-              <input v-model="limitForm.limit_value" placeholder="标量限值" />
-            </label>
-            <label class="form-field">
-              <span class="label-text">下限</span>
-              <input v-model="limitForm.limit_min" placeholder="范围限值" />
-            </label>
-            <label class="form-field">
-              <span class="label-text">上限</span>
-              <input v-model="limitForm.limit_max" placeholder="范围限值" />
-            </label>
-            <label class="form-field">
-              <span class="label-text">单位</span>
-              <input v-model="limitForm.unit" required />
-            </label>
-            <label class="form-field">
-              <span class="label-text">标准编号</span>
-              <input v-model="limitForm.standard_code" required />
-            </label>
-            <label class="form-field">
-              <span class="label-text">标准名称</span>
-              <input v-model="limitForm.standard_name" required />
-            </label>
-            <label class="form-field">
-              <span class="label-text">条款</span>
-              <input v-model="limitForm.clause" />
-            </label>
-            <label class="form-field">
-              <span class="label-text">优先级</span>
-              <input v-model="limitForm.priority" type="number" min="0" max="10000" />
-            </label>
-            <label class="form-field limit-basis">
-              <span class="label-text">依据说明</span>
-              <input v-model="limitForm.basis_text" />
-            </label>
-            <div class="form-actions limit-actions">
-              <button type="button" class="btn-secondary" @click="showLimitForm = false">取消</button>
-              <button type="submit" class="btn-primary">
-                <Icon name="save" :size="14" />
-                保存
-              </button>
-            </div>
-          </form>
-        </section>
-        <div class="task-table-wrap">
-          <table class="task-table">
-            <thead>
-              <tr>
-                <th>因子</th>
-                <th>介质</th>
-                <th>类型</th>
-                <th>限值</th>
-                <th>标准</th>
-                <th style="width: 120px; text-align: right">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-if="!limits.length" class="empty-row">
-                <td colspan="6">{{ limitsBusy ? '加载中...' : '暂无限值' }}</td>
-              </tr>
-              <tr v-for="limit in limits" :key="limit.id">
-                <td>
-                  <span class="task-filename">{{ limit.indicator_name }}</span>
-                  <small v-if="limit.cas_no" class="subtle-line">{{ limit.cas_no }}</small>
-                </td>
-                <td>{{ labelOf(MEDIUMS, limit.medium) }}</td>
-                <td>{{ limit.limit_type }}</td>
-                <td>
-                  <template v-if="limit.limit_type === 'RANGE'">
-                    {{ formatNumber(limit.limit_min) }} - {{ formatNumber(limit.limit_max) }} {{ limit.unit }}
-                  </template>
-                  <template v-else>{{ formatNumber(limit.limit_value) }} {{ limit.unit }}</template>
-                </td>
-                <td>
-                  <span>{{ limit.standard_code }}</span>
-                  <small class="subtle-line">{{ limit.clause || '-' }}</small>
-                </td>
-                <td style="text-align: right">
-                  <button class="btn-icon-sm" title="编辑" @click="openEditLimit(limit)">
-                    <Icon name="edit" :size="14" />
-                  </button>
-                  <button
-                    class="btn-icon-sm"
-                    title="删除"
-                    style="color: var(--danger)"
-                    @click="removeLimit(limit)"
-                  >
-                    <Icon name="trash" :size="14" />
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="task-list-header">
-          <span class="task-count"></span>
-          <div class="pagination">
-            <template v-if="limitPages > 1">
-              <button class="page-btn" :disabled="limitPage <= 1" @click="goLimitPage(limitPage - 1)">
-                &lt;
-              </button>
-              <span class="page-info">{{ limitPage }} / {{ limitPages }}</span>
-              <button
-                class="page-btn"
-                :disabled="limitPage >= limitPages"
-                @click="goLimitPage(limitPage + 1)"
-              >
-                &gt;
-              </button>
-            </template>
-          </div>
-        </div>
-      </template>
+      </div>
     </section>
 
     <Transition name="drawer">
