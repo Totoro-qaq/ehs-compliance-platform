@@ -91,6 +91,40 @@ class DetectionReportDetail(DetectionReportSummary):
     samples: list[DetectionSampleResponse] = Field(default_factory=list)
 
 
+class DetectionParsedRowPreview(BaseModel):
+    row_index: int
+    sample_point: str
+    workplace: str | None = None
+    post_name: str | None = None
+    medium: SampleMedium | None = None
+    indicator_name: str
+    cas_no: str | None = None
+    raw_value: Decimal | None = None
+    raw_unit: str | None = None
+    duration_minutes: Decimal | None = None
+    shift_hours: Decimal | None = None
+    raw_text: str
+    confidence: Decimal
+    is_below_detection_limit: bool = False
+    is_background: bool = False
+    measurement_kind: str | None = None
+    limit_type: LimitType | None = None
+    report_limit_value: Decimal | None = None
+    report_limit_unit: str | None = None
+    preliminary_status: ComplianceStatus | None = None
+    preliminary_message: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class DetectionDocumentPreviewResponse(BaseModel):
+    filename: str
+    report_type: ReportType
+    text_char_count: int
+    text_excerpt: str
+    rows: list[DetectionParsedRowPreview] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # 法规限值库
 # ---------------------------------------------------------------------------
