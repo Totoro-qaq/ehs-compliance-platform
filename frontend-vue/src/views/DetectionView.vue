@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import {
   calculateDetectionReport,
   createDetectionReport,
@@ -64,8 +65,10 @@ const SAMPLE_FILES = [
 
 const session = useSessionStore();
 const toast = useToastStore();
+const route = useRoute();
+const router = useRouter();
 
-const activeTab = ref('reports');
+const activeTab = ref(route.query.tab === 'limits' ? 'limits' : 'reports');
 const organizations = ref([]);
 const organizationId = ref('');
 
@@ -77,22 +80,31 @@ const reportPages = ref(0);
 const reportTypeFilter = ref('');
 const reportStatusFilter = ref('');
 const reportsBusy = ref(false);
+const detectionStats = reactive({
+  total: '-',
+  calculated: '-',
+  pending: '-',
+  failed: '-',
+});
 
 const showUpload = ref(false);
 const fileInput = ref(null);
 const selectedFile = ref(null);
-const fileLabel = ref('点击选择 CSV / XLSX / XLSM 文件');
+const fileLabel = ref('点击选择 CSV / XLSX / PDF / DOCX 文件');
 const uploadBusy = ref(false);
 const uploadReportType = ref('OCCUPATIONAL_HEALTH');
+const uploadReportName = ref('');
 
 const showDocumentPreview = ref(false);
 const documentInput = ref(null);
 const selectedDocument = ref(null);
 const documentLabel = ref('点击选择 PDF / DOCX / DOC / TXT / ZIP 文件');
 const documentReportType = ref('OCCUPATIONAL_HEALTH');
+const documentReportName = ref('');
 const documentPreviewBusy = ref(false);
 const documentImportBusy = ref(false);
 const documentPreview = ref(null);
+const previewReviewOnly = ref(false);
 
 const drawerOpen = ref(false);
 const activeReport = ref(null);
@@ -112,9 +124,23 @@ const limitFilter = reactive({
 });
 const reportCountText = computed(() => `${reportTotal.value} 份报告`);
 const limitCountText = computed(() => `${limitTotal.value} 条限值`);
+const detectionStatItems = computed(() => [
+  { label: '检测任务', value: detectionStats.total, tone: 'accent' },
+  { label: '已判定', value: detectionStats.calculated, tone: 'success' },
+  { label: '待处理', value: detectionStats.pending, tone: 'info' },
+  { label: '失败报告', value: detectionStats.failed, tone: 'danger' },
+]);
 const selectedOrgName = computed(
   () => organizations.value.find((item) => item.id === organizationId.value)?.name || '',
 );
+const defaultReportName = computed(() => {
+  const orgName = selectedOrgName.value || '公司';
+  return `${orgName} ${labelOf(REPORT_TYPES, uploadReportType.value)}检测报告 ${new Date().toISOString().slice(0, 10)}`;
+});
+const defaultDocumentReportName = computed(() => {
+  const orgName = selectedOrgName.value || '公司';
+  return `${orgName} ${labelOf(REPORT_TYPES, documentReportType.value)}检测报告 ${new Date().toISOString().slice(0, 10)}`;
+});
 const activeSampleCount = computed(() => activeReport.value?.samples?.length || 0);
 const activeMeasurementCount = computed(() =>
   (activeReport.value?.samples || []).reduce((sum, sample) => sum + (sample.measurements?.length || 0), 0),
@@ -129,10 +155,43 @@ const resultSummary = computed(() => {
     needsReview: rows.filter((item) => item.status === 'NEEDS_REVIEW').length,
   };
 });
+const sortedActiveResults = computed(() => {
+  const rank = { EXCEEDED: 0, BORDERLINE: 1, NEEDS_REVIEW: 2, INSUFFICIENT_DATA: 3, COMPLIANT: 4 };
+  return [...(activeResults.value || [])].sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9));
+});
 
 // ---- 人工确认：行选择 + 行内编辑 ----
 const selectedRowIndices = ref(new Set());
 const rowEdits = ref({});
+const previewVisibleColumns = reactive({
+  source: true,
+  medium: true,
+  limitType: true,
+  exclude: true,
+  status: true,
+  confidence: true,
+});
+const previewColumnOptions = [
+  { key: 'source', label: '来源' },
+  { key: 'medium', label: '介质' },
+  { key: 'limitType', label: '限值类型' },
+  { key: 'exclude', label: '排除' },
+  { key: 'status', label: '预判' },
+  { key: 'confidence', label: '核对' },
+];
+const hasPreviewSourceColumn = computed(
+  () => previewVisibleColumns.source && documentPreview.value?.source_files?.length > 1,
+);
+const previewColspan = computed(() => {
+  let count = 6;
+  if (hasPreviewSourceColumn.value) count += 1;
+  if (previewVisibleColumns.medium) count += 1;
+  if (previewVisibleColumns.limitType) count += 1;
+  if (previewVisibleColumns.exclude) count += 1;
+  if (previewVisibleColumns.status) count += 1;
+  if (previewVisibleColumns.confidence) count += 1;
+  return count;
+});
 
 function _ensureRowEdit(rowIndex) {
   if (!rowEdits.value[rowIndex]) {
@@ -171,17 +230,19 @@ function toggleRow(rowIndex) {
 }
 
 const allPreviewRowsSelected = computed(() => {
-  const rows = documentPreview.value?.rows || [];
+  const rows = displayedPreviewRows.value || [];
   return rows.length > 0 && rows.every((r) => selectedRowIndices.value.has(r.row_index));
 });
 
 function toggleAllRows() {
-  const rows = documentPreview.value?.rows || [];
+  const rows = displayedPreviewRows.value || [];
+  const next = new Set(selectedRowIndices.value);
   if (allPreviewRowsSelected.value) {
-    selectedRowIndices.value = new Set();
+    for (const r of rows) next.delete(r.row_index);
   } else {
-    selectedRowIndices.value = new Set(rows.map((r) => r.row_index));
+    for (const r of rows) next.add(r.row_index);
   }
+  selectedRowIndices.value = next;
 }
 
 function deselectLowConfidence(threshold = 0.7) {
@@ -195,27 +256,44 @@ function deselectLowConfidence(threshold = 0.7) {
 
 const selectedImportCount = computed(() => {
   const rows = documentPreview.value?.rows || [];
-  return rows.filter((r) => {
-    if (!selectedRowIndices.value.has(r.row_index)) return false;
-    const bg = rowEdits.value[r.row_index]?.is_background;
-    const isBg = bg !== undefined ? bg : r.is_background;
-    const raw = rowEdits.value[r.row_index]?.raw_value;
-    const val = raw !== undefined ? raw : r.raw_value;
-    return !isBg && val !== null && val !== '';
-  }).length;
+  return rows.filter((r) => selectedRowIndices.value.has(r.row_index) && isImportablePreviewRow(r)).length;
 });
+const previewRows = computed(() => documentPreview.value?.rows || []);
+const previewRowCount = computed(() => previewRows.value.length);
+const selectedPreviewCount = computed(() => selectedRowIndices.value.size);
+const lowConfidenceCount = computed(() =>
+  previewRows.value.filter((r) => Number(r.confidence || 0) < 0.7).length,
+);
+const backgroundRowCount = computed(
+  () => previewRows.value.filter((r) => getEditValue(r, 'is_background')).length,
+);
+const modifiedPreviewCount = computed(() => previewRows.value.filter((r) => isRowModified(r)).length);
+const previewWarningCount = computed(() => documentPreview.value?.warnings?.length || 0);
+const previewImportableTotal = computed(() => previewRows.value.filter((r) => isImportablePreviewRow(r)).length);
+const displayedPreviewRows = computed(() => {
+  if (!previewReviewOnly.value) return previewRows.value;
+  return previewRows.value.filter(
+    (row) =>
+      Number(row.confidence || 0) < 0.7 ||
+      row.warnings?.length ||
+      !isImportablePreviewRow(row) ||
+      row.preliminary_status === 'NEEDS_REVIEW',
+  );
+});
+
+function isImportablePreviewRow(row) {
+  const isBg = getEditValue(row, 'is_background');
+  const raw = getEditValue(row, 'raw_value');
+  const samplePoint = String(getEditValue(row, 'sample_point') || '').trim();
+  const indicatorName = String(getEditValue(row, 'indicator_name') || '').trim();
+  return !isBg && raw !== null && raw !== '' && samplePoint !== '' && indicatorName !== '';
+}
 
 function buildImportRows() {
   const rows = documentPreview.value?.rows || [];
   return rows
     .filter((r) => selectedRowIndices.value.has(r.row_index))
-    .filter((r) => {
-      const bg = rowEdits.value[r.row_index]?.is_background;
-      const isBg = bg !== undefined ? bg : r.is_background;
-      const raw = rowEdits.value[r.row_index]?.raw_value;
-      const val = raw !== undefined ? raw : r.raw_value;
-      return !isBg && val !== null && val !== '';
-    })
+    .filter((r) => isImportablePreviewRow(r))
     .map((r) => {
       const base = { ...r };
       const edits = rowEdits.value[r.row_index] || {};
@@ -231,6 +309,13 @@ function confidenceClass(row) {
   if (c >= 0.85) return 'conf-high';
   if (c >= 0.7) return 'conf-medium';
   return 'conf-low';
+}
+
+function confidenceLabel(row) {
+  const c = Number(row.confidence || 0);
+  if (c >= 0.85) return '较可靠';
+  if (c >= 0.7) return '需核对';
+  return '重点核对';
 }
 
 function labelOf(options, value) {
@@ -267,14 +352,17 @@ function formatPreviewLimit(row) {
 function resetUpload() {
   if (fileInput.value) fileInput.value.value = '';
   selectedFile.value = null;
-  fileLabel.value = '点击选择 CSV / XLSX / XLSM 文件';
+  fileLabel.value = '点击选择 CSV / XLSX / PDF / DOCX 文件';
+  uploadReportName.value = '';
 }
 
 function resetDocumentPreview() {
   if (documentInput.value) documentInput.value.value = '';
   selectedDocument.value = null;
-  documentLabel.value = '点击选择 PDF / DOCX / DOC / TXT 文件';
+  documentLabel.value = '点击选择 PDF / DOCX / DOC / TXT / ZIP 文件';
+  documentReportName.value = '';
   documentPreview.value = null;
+  previewReviewOnly.value = false;
   selectedRowIndices.value = new Set();
   rowEdits.value = {};
 }
@@ -287,14 +375,29 @@ function onFileChange(event) {
     return;
   }
   const ext = file.name.split('.').pop()?.toLowerCase() || '';
-  if (!ALLOWED_EXTENSIONS.has(ext)) {
-    toast.show('仅支持 CSV、XLSX、XLSM 文件', 'error');
+  if (!ALLOWED_EXTENSIONS.has(ext) && !DOCUMENT_EXTENSIONS.has(ext)) {
+    toast.show('仅支持 CSV、XLSX、XLSM、PDF、DOCX、DOC、TXT、ZIP 文件', 'error');
     resetUpload();
     return;
   }
   if (file.size > MAX_FILE_BYTES) {
     toast.show('文件大小不能超过 50MB', 'error');
     resetUpload();
+    return;
+  }
+  if (DOCUMENT_EXTENSIONS.has(ext)) {
+    selectedDocument.value = file;
+    documentLabel.value = file.name;
+    documentReportType.value = uploadReportType.value;
+    documentReportName.value = uploadReportName.value;
+    documentPreview.value = null;
+    previewReviewOnly.value = false;
+    selectedRowIndices.value = new Set();
+    rowEdits.value = {};
+    resetUpload();
+    showUpload.value = false;
+    showDocumentPreview.value = true;
+    toast.show('报告文件已切换到解析预览，请确认候选行后再入库', 'info');
     return;
   }
   fileLabel.value = file.name;
@@ -304,13 +407,14 @@ function onDocumentChange(event) {
   const file = event.target.files?.[0];
   selectedDocument.value = file || null;
   documentPreview.value = null;
+  previewReviewOnly.value = false;
   if (!file) {
     resetDocumentPreview();
     return;
   }
   const ext = file.name.split('.').pop()?.toLowerCase() || '';
   if (!DOCUMENT_EXTENSIONS.has(ext)) {
-    toast.show('仅支持 PDF、DOCX、DOC、TXT 文件', 'error');
+    toast.show('仅支持 PDF、DOCX、DOC、TXT、ZIP 文件', 'error');
     resetDocumentPreview();
     return;
   }
@@ -338,6 +442,7 @@ async function submitDocumentPreview() {
     const rows = documentPreview.value?.rows || [];
     selectedRowIndices.value = new Set(rows.map((r) => r.row_index));
     rowEdits.value = {};
+    previewReviewOnly.value = false;
     toast.show(`识别到 ${rows.length} 条候选检测行`, 'success');
   } catch (err) {
     toast.show(formatApiError(err), 'error');
@@ -357,6 +462,7 @@ async function importDocumentPreview() {
   try {
     const data = await importDetectionDocumentPreview({
       filename: documentPreview.value.filename,
+      report_name: documentReportName.value.trim() || null,
       report_type: documentPreview.value.report_type || documentReportType.value,
       organization_id: organizationId.value || null,
       rows: importRows,
@@ -366,7 +472,7 @@ async function importDocumentPreview() {
     showDocumentPreview.value = false;
     reportStatusFilter.value = '';
     reportPage.value = 1;
-    await loadReports();
+    await Promise.all([loadReports(), loadDetectionStats({ silent: true })]);
     toast.show(`已确认入库 ${data.measurement_count || 0} 条检测结果`, 'success');
     await openReport(data.report_id);
   } catch (err) {
@@ -407,8 +513,27 @@ async function loadReports({ silent = false } = {}) {
   }
 }
 
+async function loadDetectionStats({ silent = false } = {}) {
+  try {
+    const [total, calculated, failed] = await Promise.all([
+      listDetectionReports(1, 1, { organizationId: organizationId.value }),
+      listDetectionReports(1, 1, { organizationId: organizationId.value, status: 'CALCULATED' }),
+      listDetectionReports(1, 1, { organizationId: organizationId.value, status: 'FAILED' }),
+    ]);
+    const totalCount = total?.total || 0;
+    const calculatedCount = calculated?.total || 0;
+    const failedCount = failed?.total || 0;
+    detectionStats.total = totalCount;
+    detectionStats.calculated = calculatedCount;
+    detectionStats.failed = failedCount;
+    detectionStats.pending = Math.max(totalCount - calculatedCount - failedCount, 0);
+  } catch (err) {
+    if (!silent) toast.show(formatApiError(err), 'error');
+  }
+}
+
 async function refreshReports() {
-  await loadReports();
+  await Promise.all([loadReports(), loadDetectionStats({ silent: true })]);
   toast.show('报告列表已刷新', 'success');
 }
 
@@ -416,7 +541,7 @@ async function submitUpload() {
   if (uploadBusy.value) return;
   const file = selectedFile.value || fileInput.value?.files?.[0];
   if (!file) {
-    toast.show('请选择检测数据文件', 'error');
+    toast.show('请选择检测数据文件或报告文件', 'error');
     return;
   }
   uploadBusy.value = true;
@@ -424,12 +549,13 @@ async function submitUpload() {
     const data = await createDetectionReport(file, {
       organizationId: organizationId.value,
       reportType: uploadReportType.value,
+      reportName: uploadReportName.value,
     });
     resetUpload();
     showUpload.value = false;
     reportStatusFilter.value = '';
     reportPage.value = 1;
-    await loadReports();
+    await Promise.all([loadReports(), loadDetectionStats({ silent: true })]);
     toast.show(`已导入 ${data.measurement_count || 0} 条检测结果`, 'success');
     await openReport(data.report_id);
   } catch (err) {
@@ -460,7 +586,7 @@ async function calculateActiveReport() {
     const run = await calculateDetectionReport(activeReport.value.id);
     activeResults.value = run?.results || [];
     activeReport.value = await getDetectionReport(activeReport.value.id);
-    await loadReports({ silent: true });
+    await Promise.all([loadReports({ silent: true }), loadDetectionStats({ silent: true })]);
     toast.show('合规判定已完成', 'success');
   } catch (err) {
     toast.show(formatApiError(err), 'error');
@@ -516,12 +642,13 @@ function useSampleCsv() {
   selectedFile.value = file;
   fileLabel.value = file.name;
   uploadReportType.value = sample.reportType;
+  uploadReportName.value = '';
   showUpload.value = true;
 }
 
 onMounted(async () => {
   await loadOrganizations();
-  await loadReports();
+  await Promise.all([loadReports(), loadDetectionStats({ silent: true })]);
   await loadLimits({ silent: true });
 });
 
@@ -530,12 +657,27 @@ watch(organizationId, async (next, previous) => {
   session.setOrgName(org?.name || '');
   if (next === previous) return;
   reportPage.value = 1;
-  await loadReports({ silent: true });
+  await Promise.all([loadReports({ silent: true }), loadDetectionStats({ silent: true })]);
 });
 
 watch(activeTab, (next) => {
+  const query = { ...route.query };
+  if (next === 'limits') {
+    query.tab = 'limits';
+  } else {
+    delete query.tab;
+  }
+  router.replace({ query });
   if (next === 'limits') loadLimits({ silent: true });
 });
+
+watch(
+  () => route.query.tab,
+  (tab) => {
+    const next = tab === 'limits' ? 'limits' : 'reports';
+    if (activeTab.value !== next) activeTab.value = next;
+  },
+);
 </script>
 
 <template>
@@ -554,16 +696,23 @@ watch(activeTab, (next) => {
           <Icon name="refresh" :size="14" />
           刷新
         </button>
-        <button type="button" class="btn-secondary" @click="showDocumentPreview = !showDocumentPreview">
-          <Icon name="search" :size="14" />
-          解析预览
-        </button>
         <button type="button" class="btn-primary" @click="showUpload = !showUpload">
           <Icon name="upload" :size="14" />
-          上传
+          导入数据/报告
         </button>
       </div>
     </header>
+
+    <div class="task-stat-strip detection-stat-strip">
+      <div
+        v-for="item in detectionStatItems"
+        :key="item.label"
+        :class="['task-stat-card', item.tone]"
+      >
+        <span>{{ item.value }}</span>
+        <small>{{ item.label }}</small>
+      </div>
+    </div>
 
     <div class="tab-strip">
       <button
@@ -584,14 +733,38 @@ watch(activeTab, (next) => {
 
     <section v-if="showUpload" class="upload-panel">
       <div class="upload-panel-inner">
-        <h3>导入检测数据</h3>
-        <details class="upload-guide" open>
-          <summary><span>上传须知</span><small>点击展开/收起</small></summary>
+        <h3>导入检测数据/报告</h3>
+        <details class="upload-guide">
+          <summary><span>上传须知</span><small>检测文件需要包含的信息</small></summary>
           <div class="upload-guide-body">
             <h4>支持格式</h4>
             <ul>
               <li><strong>CSV</strong> — UTF-8 编码，可用 Excel / WPS 另存为 CSV(UTF-8)</li>
               <li><strong>XLSX / XLSM</strong> — Excel 工作簿，取第一个 Sheet</li>
+              <li><strong>PDF / DOCX / DOC / TXT / ZIP</strong> — 选择后自动进入报告解析预览</li>
+            </ul>
+            <h4>结构化表格必须包含</h4>
+            <ul>
+              <li><strong>检测点 / sample_point</strong> — 采样点、岗位或监测点名称</li>
+              <li><strong>检测因子 / indicator_name</strong> — 如苯、甲苯、噪声、粉尘、WBGT</li>
+              <li><strong>检测值 / raw_value</strong> — 实测数值；低于检出限可按检出限或原报告数值填写</li>
+              <li><strong>单位 / raw_unit</strong> — 如 mg/m3、μg/m3、dB(A)、WBGT(℃)、mg/L</li>
+            </ul>
+            <h4>建议补充字段</h4>
+            <ul>
+              <li><strong>介质</strong>：工作场所空气、噪声、高温、废水、废气；不填时按报告类型推断</li>
+              <li><strong>车间/岗位</strong>：用于定位问题和后续整改</li>
+              <li><strong>采样时长</strong>：职业卫生化学因素 TWA/STEL、噪声 8h 等效计算会用到</li>
+              <li><strong>班次时长</strong>：噪声和接触时间换算需要</li>
+              <li><strong>CAS 号/别名</strong>：同名或易混淆因子可提高限值匹配准确率</li>
+              <li><strong>报告内限值</strong>：系统限值库未命中时可作为兜底参考，并标记需复核</li>
+            </ul>
+            <h4>PDF / Word 报告建议包含</h4>
+            <ul>
+              <li>报告编号、委托单位、检测日期、检测机构</li>
+              <li>检测点位、岗位/车间、检测因子、检测结果、单位、采样时长</li>
+              <li>原报告中的评价标准、限值、结论或备注</li>
+              <li>多文件 ZIP 建议按报告或附件拆分，系统会标注来源文件</li>
             </ul>
             <h4>文件限制</h4>
             <ul>
@@ -625,10 +798,11 @@ watch(activeTab, (next) => {
           <div class="form-row">
             <label class="form-field">
               <span class="label-text">所属公司</span>
-              <select v-model="organizationId">
+              <select v-if="session.isAdmin" v-model="organizationId">
                 <option v-if="!organizations.length" value="">默认公司</option>
                 <option v-for="org in organizations" :key="org.id" :value="org.id">{{ org.name }}</option>
               </select>
+              <input v-else :value="selectedOrgName || session.orgName || '默认公司'" disabled />
             </label>
             <label class="form-field">
               <span class="label-text">报告类型</span>
@@ -638,13 +812,22 @@ watch(activeTab, (next) => {
                 </option>
               </select>
             </label>
+            <label class="form-field">
+              <span class="label-text">报告名称</span>
+              <input
+                v-model="uploadReportName"
+                type="text"
+                maxlength="255"
+                :placeholder="defaultReportName"
+              />
+            </label>
             <label class="form-field file-field">
-              <span class="label-text">数据文件</span>
+              <span class="label-text">数据/报告文件</span>
               <div :class="['file-drop', { 'has-file': selectedFile }]">
-                <input ref="fileInput" type="file" accept=".csv,.xlsx,.xlsm" @change="onFileChange" />
+                <input ref="fileInput" type="file" accept=".csv,.xlsx,.xlsm,.pdf,.docx,.doc,.txt,.zip" @change="onFileChange" />
                 <Icon name="upload" :size="24" :stroke="1.5" />
                 <span class="file-drop-text">{{ fileLabel }}</span>
-                <span class="file-drop-hint">支持 CSV, XLSX, XLSM；最大 50MB</span>
+                <span class="file-drop-hint">结构化表格直接导入；报告文件先解析预览；最大 50MB</span>
               </div>
             </label>
           </div>
@@ -661,8 +844,8 @@ watch(activeTab, (next) => {
     <section v-if="showDocumentPreview" class="upload-panel">
       <div class="upload-panel-inner">
         <h3>报告解析预览</h3>
-        <details class="upload-guide" open>
-          <summary><span>解析须知</span><small>点击展开/收起</small></summary>
+        <details class="upload-guide">
+          <summary><span>解析规则</span><small>查看格式和边界</small></summary>
           <div class="upload-guide-body">
             <h4>支持格式</h4>
             <ul>
@@ -701,6 +884,20 @@ watch(activeTab, (next) => {
             </ul>
           </div>
         </details>
+        <div class="preview-flow">
+          <div class="preview-step active">
+            <span>1</span>
+            <strong>上传报告</strong>
+          </div>
+          <div :class="['preview-step', { active: documentPreview }]">
+            <span>2</span>
+            <strong>核对数据</strong>
+          </div>
+          <div :class="['preview-step', { active: selectedImportCount > 0 }]">
+            <span>3</span>
+            <strong>确认入库</strong>
+          </div>
+        </div>
         <form class="upload-form" @submit.prevent="submitDocumentPreview">
           <div class="form-row">
             <label class="form-field">
@@ -710,6 +907,15 @@ watch(activeTab, (next) => {
                   {{ item.label }}
                 </option>
               </select>
+            </label>
+            <label class="form-field">
+              <span class="label-text">报告名称</span>
+              <input
+                v-model="documentReportName"
+                type="text"
+                maxlength="255"
+                :placeholder="defaultDocumentReportName"
+              />
             </label>
             <label class="form-field file-field">
               <span class="label-text">报告文件</span>
@@ -736,22 +942,77 @@ watch(activeTab, (next) => {
         </form>
 
         <div v-if="documentPreview" class="preview-panel">
-          <div class="preview-summary">
-            <span>{{ documentPreview.filename }}</span>
-            <span>{{ documentPreview.text_char_count }} 字符</span>
-            <span>{{ documentPreview.rows?.length || 0 }} 条候选行</span>
+          <div class="preview-result-head">
+            <div>
+              <span class="preview-kicker">解析结果</span>
+              <h4>{{ documentReportName || defaultDocumentReportName }}</h4>
+              <p>
+                来源文件：{{ documentPreview.filename }}；已识别 {{ previewRowCount }} 行，当前将入库
+                {{ selectedImportCount }} 条检测数据
+              </p>
+            </div>
+            <div class="preview-result-actions">
+              <button type="button" class="btn-secondary" :disabled="documentPreviewBusy" @click="submitDocumentPreview">
+                重新解析
+              </button>
+              <button
+                type="button"
+                class="btn-primary"
+                :disabled="documentImportBusy || !selectedImportCount"
+                @click="importDocumentPreview"
+              >
+                {{ documentImportBusy ? '入库中...' : '确认入库' }}
+              </button>
+            </div>
           </div>
-          <div v-if="documentPreview.warnings?.length" class="preview-warnings">
-            <span v-for="warning in documentPreview.warnings" :key="warning">{{ warning }}</span>
+          <div class="preview-stat-grid">
+            <div class="preview-stat">
+              <span>{{ previewRowCount }}</span>
+              <small>识别行</small>
+            </div>
+            <div class="preview-stat strong">
+              <span>{{ selectedImportCount }}</span>
+              <small>将入库</small>
+            </div>
+            <div class="preview-stat warn">
+              <span>{{ lowConfidenceCount }}</span>
+              <small>需重点核对</small>
+            </div>
+            <div class="preview-stat muted">
+              <span>{{ backgroundRowCount }}</span>
+              <small>已排除</small>
+            </div>
           </div>
+          <details v-if="documentPreview.warnings?.length" class="preview-warnings">
+            <summary>需要注意 {{ previewWarningCount }} 项</summary>
+            <ul>
+              <li v-for="warning in documentPreview.warnings" :key="warning">{{ warning }}</li>
+            </ul>
+          </details>
           <div v-if="documentPreview.rows?.length" class="preview-toolbar">
-            <button type="button" class="btn-link-sm" @click="toggleAllRows">
-              {{ allPreviewRowsSelected ? '取消全选' : '全选' }}
-            </button>
-            <button type="button" class="btn-link-sm" @click="deselectLowConfidence(0.7)">
-              取消低置信度(&lt;70%)
-            </button>
-            <span class="preview-toolbar-count"> 已选 {{ selectedImportCount }} 条可入库 </span>
+            <div class="preview-toolbar-main">
+              <label class="preview-toggle">
+                <input v-model="previewReviewOnly" type="checkbox" />
+                <span>只看需核对行</span>
+              </label>
+              <label
+                v-for="column in previewColumnOptions"
+                :key="column.key"
+                class="preview-toggle"
+              >
+                <input v-model="previewVisibleColumns[column.key]" type="checkbox" />
+                <span>{{ column.label }}</span>
+              </label>
+              <button type="button" class="btn-link-sm" @click="toggleAllRows">
+                {{ allPreviewRowsSelected ? '取消全选' : '全选' }}
+              </button>
+              <button type="button" class="btn-link-sm" @click="deselectLowConfidence(0.7)">
+                取消需核对行
+              </button>
+            </div>
+            <span class="preview-toolbar-count">
+              已勾选 {{ selectedPreviewCount }} 行，可入库 {{ previewImportableTotal }} 条
+            </span>
           </div>
           <div class="preview-table-wrap">
             <table class="mini-table preview-edit-table">
@@ -760,25 +1021,27 @@ watch(activeTab, (next) => {
                   <th class="col-check">
                     <input type="checkbox" :checked="allPreviewRowsSelected" @change="toggleAllRows" />
                   </th>
-                  <th class="col-idx">行</th>
-                  <th v-if="documentPreview.source_files?.length > 1" class="col-source">来源文件</th>
+                  <th class="col-idx">#</th>
+                  <th v-if="hasPreviewSourceColumn" class="col-source">来源文件</th>
                   <th class="col-point">检测点</th>
-                  <th class="col-medium">介质</th>
+                  <th v-if="previewVisibleColumns.medium" class="col-medium">介质</th>
                   <th class="col-indicator">因子</th>
                   <th class="col-value">检测值</th>
                   <th class="col-unit">单位</th>
-                  <th class="col-limit-type">限值类型</th>
-                  <th class="col-bg">背景</th>
-                  <th class="col-status">预判</th>
-                  <th class="col-conf">置信度</th>
+                  <th v-if="previewVisibleColumns.limitType" class="col-limit-type">限值类型</th>
+                  <th v-if="previewVisibleColumns.exclude" class="col-bg">排除</th>
+                  <th v-if="previewVisibleColumns.status" class="col-status">预判</th>
+                  <th v-if="previewVisibleColumns.confidence" class="col-conf">核对</th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-if="!documentPreview.rows?.length" class="empty-row">
-                  <td :colspan="documentPreview.source_files?.length > 1 ? 12 : 11">未识别到候选检测行</td>
+                <tr v-if="!displayedPreviewRows.length" class="empty-row">
+                  <td :colspan="previewColspan">
+                    未识别到可确认数据
+                  </td>
                 </tr>
                 <tr
-                  v-for="row in documentPreview.rows"
+                  v-for="row in displayedPreviewRows"
                   :key="`${row.row_index}-${row.indicator_name}`"
                   :class="{
                     'row-selected': isRowSelected(row),
@@ -790,7 +1053,7 @@ watch(activeTab, (next) => {
                     <input type="checkbox" :checked="isRowSelected(row)" @change="toggleRow(row.row_index)" />
                   </td>
                   <td class="col-idx">{{ row.row_index }}</td>
-                  <td v-if="documentPreview.source_files?.length > 1" class="col-source">
+                  <td v-if="hasPreviewSourceColumn" class="col-source">
                     {{ row.source_file || '-' }}
                   </td>
                   <td class="col-point">
@@ -804,7 +1067,7 @@ watch(activeTab, (next) => {
                       row.warnings.join('；')
                     }}</small>
                   </td>
-                  <td class="col-medium">
+                  <td v-if="previewVisibleColumns.medium" class="col-medium">
                     <select
                       class="cell-select"
                       :value="getEditValue(row, 'medium')"
@@ -843,7 +1106,7 @@ watch(activeTab, (next) => {
                       @input="setEditValue(row, 'raw_unit', $event.target.value)"
                     />
                   </td>
-                  <td class="col-limit-type">
+                  <td v-if="previewVisibleColumns.limitType" class="col-limit-type">
                     <select
                       class="cell-select"
                       :value="getEditValue(row, 'limit_type')"
@@ -853,14 +1116,14 @@ watch(activeTab, (next) => {
                       <option v-for="item in LIMIT_TYPES" :key="item" :value="item">{{ item }}</option>
                     </select>
                   </td>
-                  <td class="col-bg">
+                  <td v-if="previewVisibleColumns.exclude" class="col-bg">
                     <input
                       type="checkbox"
                       :checked="getEditValue(row, 'is_background')"
                       @change="setEditValue(row, 'is_background', $event.target.checked)"
                     />
                   </td>
-                  <td class="col-status">
+                  <td v-if="previewVisibleColumns.status" class="col-status">
                     {{ row.preliminary_status ? complianceText(row.preliminary_status) : '-' }}
                     <small v-if="row.report_limit_value" class="subtle-line">
                       报告限值 {{ formatPreviewLimit(row) }}
@@ -869,10 +1132,11 @@ watch(activeTab, (next) => {
                       {{ row.preliminary_message }}
                     </small>
                   </td>
-                  <td class="col-conf">
+                  <td v-if="previewVisibleColumns.confidence" class="col-conf">
                     <span :class="['conf-badge', confidenceClass(row)]">
-                      {{ formatNumber(Number(row.confidence) * 100) }}%
+                      {{ confidenceLabel(row) }}
                     </span>
+                    <small class="subtle-line">{{ formatNumber(Number(row.confidence) * 100) }}%</small>
                   </td>
                 </tr>
               </tbody>
@@ -884,12 +1148,10 @@ watch(activeTab, (next) => {
           </details>
           <div class="form-actions preview-actions">
             <span class="preview-actions-hint">
-              将导入 {{ selectedImportCount }} 条（已勾选 {{ selectedRowIndices.size }} 行）
-              <template v-if="documentPreview.rows?.some((r) => isRowModified(r))">
+              将导入 {{ selectedImportCount }} 条（已勾选 {{ selectedPreviewCount }} 行）
+              <template v-if="modifiedPreviewCount">
                 ·
-                <span class="modified-hint"
-                  >已修改 {{ documentPreview.rows.filter((r) => isRowModified(r)).length }} 行</span
-                >
+                <span class="modified-hint">已修改 {{ modifiedPreviewCount }} 行</span>
               </template>
             </span>
             <button
@@ -909,10 +1171,11 @@ watch(activeTab, (next) => {
       <div class="task-filters detection-filters">
         <label class="filter-field">
           <span class="label-text">公司</span>
-          <select v-model="organizationId">
+          <select v-if="session.isAdmin" v-model="organizationId">
             <option value="">全部公司</option>
             <option v-for="org in organizations" :key="org.id" :value="org.id">{{ org.name }}</option>
           </select>
+          <input v-else :value="selectedOrgName || session.orgName || '默认公司'" disabled />
         </label>
         <label class="filter-field">
           <span class="label-text">类型</span>
@@ -958,7 +1221,7 @@ watch(activeTab, (next) => {
         <table class="task-table">
           <thead>
             <tr>
-              <th>文件</th>
+              <th>报告名称</th>
               <th>类型</th>
               <th>状态</th>
               <th>报告日期</th>
@@ -971,10 +1234,10 @@ watch(activeTab, (next) => {
             </tr>
             <tr v-for="report in reports" :key="report.id" @click="openReport(report.id)">
               <td>
-                <span class="task-filename">{{ labelOf(REPORT_TYPES, report.report_type) }}</span>
+                <span class="task-filename">{{ report.report_name || labelOf(REPORT_TYPES, report.report_type) }}</span>
                 <small v-if="report.report_date" class="subtle-line">检测日期 {{ report.report_date }}</small>
                 <small v-else class="subtle-line">上传于 {{ formatTime(report.created_at) }}</small>
-                <small class="subtle-line" style="color: var(--text-tertiary)">{{ report.filename }}</small>
+                <small class="subtle-line" style="color: var(--text-tertiary)">来源文件：{{ report.filename }}</small>
               </td>
               <td>{{ labelOf(REPORT_TYPES, report.report_type) }}</td>
               <td>
@@ -1096,7 +1359,7 @@ watch(activeTab, (next) => {
     <Transition name="drawer">
       <aside v-if="drawerOpen" class="task-drawer detection-drawer open">
         <div class="drawer-header">
-          <h2>{{ activeReport?.filename || '报告详情' }}</h2>
+          <h2>{{ activeReport?.report_name || activeReport?.filename || '报告详情' }}</h2>
           <div class="drawer-actions">
             <button
               type="button"
@@ -1117,6 +1380,8 @@ watch(activeTab, (next) => {
             <dl class="detail-meta">
               <dt>报告 ID</dt>
               <dd>{{ activeReport.id }}</dd>
+              <dt>来源文件</dt>
+              <dd>{{ activeReport.filename || '-' }}</dd>
               <dt>类型</dt>
               <dd>{{ labelOf(REPORT_TYPES, activeReport.report_type) }}</dd>
               <dt>状态</dt>
@@ -1154,7 +1419,7 @@ watch(activeTab, (next) => {
               <h3>判定结果</h3>
               <p v-if="!activeResults.length" class="empty-state compact">尚未运行合规判定</p>
               <div v-else class="result-list">
-                <div v-for="result in activeResults" :key="result.id" class="result-row">
+                <div v-for="result in sortedActiveResults" :key="result.id" class="result-row">
                   <div>
                     <span :class="['compliance-badge', result.status]">{{
                       complianceText(result.status)
@@ -1265,37 +1530,144 @@ watch(activeTab, (next) => {
   color: var(--text-tertiary);
   font-size: 12px;
 }
+.preview-flow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 16px;
+}
+.preview-step {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+}
+.preview-step span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-weight: 800;
+}
+.preview-step strong {
+  font-size: 13px;
+}
+.preview-step.active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--text);
+}
+.preview-step.active span {
+  background: var(--accent);
+  color: #fff;
+}
 .preview-panel {
   display: grid;
-  gap: 12px;
-  margin-top: 16px;
+  gap: 14px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
 }
-.preview-summary {
+.preview-result-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.preview-kicker {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+}
+.preview-result-head h4 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.35;
+  word-break: break-word;
+}
+.preview-result-head p {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.preview-result-actions {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
+}
+.preview-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.preview-stat {
+  min-height: 66px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+.preview-stat span {
+  display: block;
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.preview-stat small {
+  display: block;
+  margin-top: 8px;
   color: var(--text-secondary);
   font-size: 12px;
 }
-.preview-summary span,
-.preview-warnings span {
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--panel);
+.preview-stat.strong span {
+  color: var(--success);
+}
+.preview-stat.warn span {
+  color: var(--warning);
+}
+.preview-stat.muted span {
+  color: var(--text-tertiary);
 }
 .preview-warnings {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  color: var(--warning);
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
   font-size: 12px;
+  overflow: hidden;
+}
+.preview-warnings summary {
+  padding: 9px 12px;
+  cursor: pointer;
+  font-weight: 800;
+}
+.preview-warnings ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0 12px 12px 28px;
 }
 .preview-table-wrap {
-  max-height: 320px;
+  max-height: 430px;
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 8px;
+  background: var(--panel);
 }
 .text-excerpt {
   color: var(--text-secondary);
@@ -1318,7 +1690,12 @@ watch(activeTab, (next) => {
   word-break: break-word;
 }
 .preview-actions {
-  margin-top: 12px;
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  margin-top: 8px;
+  padding: 12px 0 0;
+  background: var(--panel);
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
@@ -1452,6 +1829,13 @@ watch(activeTab, (next) => {
   color: var(--text-tertiary);
   font-weight: 700;
 }
+.preview-edit-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--panel);
+  box-shadow: inset 0 -1px 0 var(--border);
+}
 .empty-state.compact {
   padding: 22px 12px;
 }
@@ -1460,15 +1844,42 @@ watch(activeTab, (next) => {
 .preview-toolbar {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
+  min-height: 40px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+.preview-toolbar-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.preview-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
 }
 .btn-link-sm {
-  padding: 3px 8px;
+  min-height: 28px;
+  padding: 4px 9px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--panel);
   color: var(--accent);
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 700;
   cursor: pointer;
   transition: all var(--transition);
 }
@@ -1477,10 +1888,10 @@ watch(activeTab, (next) => {
   border-color: var(--accent);
 }
 .preview-toolbar-count {
-  margin-left: auto;
   color: var(--text-secondary);
   font-size: 12px;
   font-weight: 600;
+  white-space: nowrap;
 }
 .modified-hint {
   color: var(--warning);
@@ -1488,7 +1899,7 @@ watch(activeTab, (next) => {
 
 /* ---- 预览编辑表格 ---- */
 .preview-edit-table {
-  min-width: 980px;
+  min-width: 1060px;
 }
 .preview-edit-table th,
 .preview-edit-table td {
@@ -1522,6 +1933,34 @@ watch(activeTab, (next) => {
 .col-unit {
   width: 64px;
 }
+.preview-edit-table .col-check,
+.preview-edit-table .col-idx,
+.preview-edit-table .col-point,
+.preview-edit-table .col-indicator {
+  position: sticky;
+  background: var(--panel);
+  z-index: 1;
+}
+.preview-edit-table thead .col-check,
+.preview-edit-table thead .col-idx,
+.preview-edit-table thead .col-point,
+.preview-edit-table thead .col-indicator {
+  z-index: 4;
+}
+.preview-edit-table .col-check {
+  left: 0;
+}
+.preview-edit-table .col-idx {
+  left: 32px;
+}
+.preview-edit-table .col-point {
+  left: 72px;
+  min-width: 130px;
+}
+.preview-edit-table .col-indicator {
+  left: 202px;
+  min-width: 120px;
+}
 .col-limit-type {
   width: 100px;
 }
@@ -1530,16 +1969,17 @@ watch(activeTab, (next) => {
   text-align: center;
 }
 .col-status {
-  min-width: 80px;
+  min-width: 96px;
 }
 .col-conf {
-  width: 64px;
+  width: 86px;
   text-align: center;
 }
 
 .cell-input {
   width: 100%;
-  padding: 3px 5px;
+  min-height: 30px;
+  padding: 4px 6px;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg);
@@ -1562,7 +2002,8 @@ watch(activeTab, (next) => {
 }
 .cell-select {
   width: 100%;
-  padding: 2px 4px;
+  min-height: 30px;
+  padding: 4px 6px;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg);
@@ -1579,6 +2020,9 @@ watch(activeTab, (next) => {
 .preview-edit-table tbody tr.row-selected {
   background: var(--accent-bg);
 }
+.preview-edit-table tbody tr:hover {
+  background: var(--bg-subtle);
+}
 .preview-edit-table tbody tr.row-modified {
   border-left: 3px solid var(--warning);
 }
@@ -1593,7 +2037,8 @@ watch(activeTab, (next) => {
 /* ---- 置信度徽标 ---- */
 .conf-badge {
   display: inline-block;
-  padding: 1px 7px;
+  min-width: 54px;
+  padding: 2px 7px;
   border-radius: 999px;
   font-size: 11px;
   font-weight: 700;
@@ -1613,11 +2058,18 @@ watch(activeTab, (next) => {
 
 @media (max-width: 1024px) {
   .detection-filters,
-  .limit-form-grid {
+  .limit-form-grid,
+  .preview-stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .limit-basis {
     grid-column: span 2;
+  }
+  .preview-result-head {
+    flex-direction: column;
+  }
+  .preview-result-actions {
+    justify-content: flex-start;
   }
 }
 
@@ -1625,7 +2077,9 @@ watch(activeTab, (next) => {
   .detection-filters,
   .limit-form-grid,
   .metric-grid,
-  .result-row {
+  .result-row,
+  .preview-flow,
+  .preview-stat-grid {
     grid-template-columns: 1fr;
   }
   .limit-basis {
@@ -1634,14 +2088,24 @@ watch(activeTab, (next) => {
   .result-values {
     text-align: left;
   }
+  .preview-toolbar,
+  .preview-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .preview-toolbar-count,
+  .preview-actions-hint {
+    margin-right: 0;
+    white-space: normal;
+  }
 }
 
 /* ---- 上传须知指引 ---- */
 .upload-guide {
   margin-bottom: 14px;
-  border: 1px solid #fcd34d;
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: #fffbeb;
+  background: var(--bg-subtle);
   overflow: hidden;
 }
 .upload-guide summary {
@@ -1651,8 +2115,8 @@ watch(activeTab, (next) => {
   padding: 10px 14px;
   cursor: pointer;
   font-weight: 700;
-  color: #92400e;
-  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+  color: var(--text);
+  background: var(--panel);
   list-style: none;
 }
 .upload-guide summary::-webkit-details-marker {
@@ -1663,7 +2127,7 @@ watch(activeTab, (next) => {
 }
 .upload-guide summary small {
   font-size: 11px;
-  color: #a16207;
+  color: var(--text-tertiary);
   font-weight: 500;
 }
 .upload-guide-body {

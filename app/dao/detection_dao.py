@@ -10,7 +10,7 @@ import json
 from collections.abc import Sequence
 from datetime import date
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, case, or_, select
 from sqlalchemy.orm import Session
 
 from app.dao.base_repository import BaseRepository
@@ -37,6 +37,7 @@ class DetectionReportDAO(BaseRepository[DetectionReport]):
         organization_id: str,
         filename: str,
         report_type: str,
+        report_name: str | None = None,
         file_path: str | None = None,
         report_date: date | None = None,
         issuer: str | None = None,
@@ -45,6 +46,7 @@ class DetectionReportDAO(BaseRepository[DetectionReport]):
         report = DetectionReport(
             organization_id=organization_id,
             filename=filename,
+            report_name=report_name,
             report_type=report_type,
             status=ReportStatus.UPLOADED,
             file_path=file_path,
@@ -225,7 +227,9 @@ class RegulatoryLimitDAO(BaseRepository[RegulatoryLimit]):
             .where(*filters)
             .order_by(
                 RegulatoryLimit.priority.asc(),
-                RegulatoryLimit.effective_from.desc().nulls_last(),
+                # MySQL 不支持 NULLS LAST，用 CASE 实现：NULL 排最后
+                case((RegulatoryLimit.effective_from.is_(None), 1), else_=0),
+                RegulatoryLimit.effective_from.desc(),
             )
         )
         return list(self.session.scalars(stmt).all())

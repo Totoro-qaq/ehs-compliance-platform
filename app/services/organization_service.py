@@ -19,7 +19,15 @@ class OrganizationService:
     def create(*, db: Session, actor: CurrentUser, payload: OrganizationCreate) -> OrganizationOut:
         ensure_admin(actor)
         dao = OrganizationDAO(db)
-        org = dao.create(name=payload.name)
+        org = dao.create(
+            name=payload.name,
+            unified_social_credit_code=payload.unified_social_credit_code,
+            industry=payload.industry,
+            address=payload.address,
+            contact_name=payload.contact_name,
+            contact_phone=payload.contact_phone,
+            notes=payload.notes,
+        )
         return OrganizationOut.model_validate(org)
 
     @staticmethod
@@ -58,7 +66,10 @@ class OrganizationService:
     ) -> OrganizationOut:
         ensure_admin(actor)
         dao = OrganizationDAO(db)
-        org = dao.update_by_id(org_id, name=payload.name.strip())
+        fields = payload.model_dump(exclude_unset=True)
+        if 'name' in fields and fields['name'] is not None:
+            fields['name'] = fields['name'].strip()
+        org = dao.update_profile(org_id, **fields) if fields else dao.get_by_id(org_id)
         if org is None:
             raise EHSException('公司不存在', code='ORG_NOT_FOUND', status_code=404)
         return OrganizationOut.model_validate(org)

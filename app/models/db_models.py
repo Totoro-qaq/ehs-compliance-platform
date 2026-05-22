@@ -70,6 +70,12 @@ class Organization(ModelBase):
     __tablename__ = 'organizations'
 
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    unified_social_credit_code: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    industry: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    address: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    contact_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    contact_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     tasks: Mapped[list['AssessmentTask']] = relationship(back_populates='organization')
 
@@ -83,6 +89,7 @@ class AssessmentTask(ModelBase):
         nullable=False,
         index=True,
     )
+    task_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     content_type: Mapped[str] = mapped_column(String(100), nullable=False)
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)
@@ -199,6 +206,7 @@ class DetectionReport(ModelBase):
         nullable=False,
         index=True,
     )
+    report_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     file_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     report_type: Mapped[ReportType] = mapped_column(SAEnum(ReportType), nullable=False, index=True)

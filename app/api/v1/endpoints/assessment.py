@@ -22,24 +22,26 @@ router = APIRouter(prefix='/assessment', tags=['评价任务'])
         '上传 PDF/TXT/Word/CSV 格式的评价材料，系统异步调用 AI 工作流进行 EHS 合规分析。\n\n'
         '- 文件大小上限 50 MB，支持扩展名：.pdf .txt .doc .docx .csv\n'
         '- 成功后返回 `task_id`，可通过 SSE 或轮询接口跟踪进度\n'
-        '- 普通用户仅能指定本人所属公司；管理员可指定任意公司'
+        '- 普通用户不传公司 ID 时使用本人所属公司；管理员不传时使用系统默认公司'
     ),
 )
 async def create_assessment(
     actor: Annotated[CurrentUser, Depends(get_current_user)],
     file: UploadFile = File(..., description='评价相关材料（如 PDF）'),
     organization_id: str | None = Form(
-        default=None, description='公司 ID；不传则使用系统默认公司（管理员可指定其他公司）'
+        default=None, description='公司 ID；普通用户不传则使用本人所属公司，管理员不传则使用系统默认公司'
     ),
+    task_name: str | None = Form(default=None, description='评价任务名称；不传则按公司和日期自动生成'),
     db: Session = Depends(get_db),
 ):
     content = await file.read()
-    oid = organization_id or settings.default_organization_id
+    oid = organization_id or actor.organization_id or settings.default_organization_id
     return await AssessmentService.create_assessment_task(
         db=db,
         actor=actor,
         organization_id=oid,
         filename=file.filename,
+        task_name=task_name,
         content_type=file.content_type or 'application/octet-stream',
         file_bytes=content,
     )

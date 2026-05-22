@@ -23,12 +23,14 @@ class AssessmentDAO(BaseRepository[AssessmentTask]):
         *,
         organization_id: str,
         filename: str,
+        task_name: str | None,
         content_type: str,
         file_path: str,
         created_by_id: str | None = None,
     ) -> AssessmentTask:
         task = AssessmentTask(
             organization_id=organization_id,
+            task_name=task_name,
             filename=filename,
             content_type=content_type,
             file_path=file_path,
