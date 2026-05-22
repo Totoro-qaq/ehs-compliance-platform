@@ -735,6 +735,42 @@ watch(activeTab, (next) => {
     <section v-if="showUpload" class="upload-panel">
       <div class="upload-panel-inner">
         <h3>导入检测数据</h3>
+        <details class="upload-guide" open>
+          <summary><span>上传须知</span><small>点击展开/收起</small></summary>
+          <div class="upload-guide-body">
+            <h4>支持格式</h4>
+            <ul>
+              <li><strong>CSV</strong> — UTF-8 编码，可用 Excel / WPS 另存为 CSV(UTF-8)</li>
+              <li><strong>XLSX / XLSM</strong> — Excel 工作簿，取第一个 Sheet</li>
+            </ul>
+            <h4>文件限制</h4>
+            <ul>
+              <li>单文件 ≤ <strong>50MB</strong></li>
+              <li>检测行为单位，单次导入无行数上限</li>
+            </ul>
+            <h4>必需字段</h4>
+            <ul>
+              <li><code>sample_point</code> — 检测点名称</li>
+              <li><code>indicator_name</code> — 检测因子名称</li>
+              <li><code>raw_value</code> — 检测值（数字或 <code>&lt;检出限</code> 等标记）</li>
+              <li><code>raw_unit</code> — 单位（如 mg/m³、dB(A)、WBGT(℃)）</li>
+            </ul>
+            <h4>可选字段</h4>
+            <ul>
+              <li><code>workplace</code> — 车间/场所</li>
+              <li><code>post_name</code> — 岗位名称</li>
+              <li><code>duration_minutes</code> — 接触时长（分钟），≤15min 会自动修正限值类型为 PC_STEL</li>
+              <li><code>shift_hours</code> — 班次时长（小时）</li>
+              <li><code>medium</code> — 介质类型</li>
+            </ul>
+            <h4>行为边界</h4>
+            <ul>
+              <li>导入后系统自动创建检测报告（状态：已上传）</li>
+              <li><strong>不会自动判定合规</strong>——需在报告详情中手动点击「合规判定」触发对标分析</li>
+              <li>判定结果不可编辑，如需修正请重新导入</li>
+            </ul>
+          </div>
+        </details>
         <form class="upload-form" @submit.prevent="submitUpload">
           <div class="form-row">
             <label class="form-field">
@@ -775,6 +811,43 @@ watch(activeTab, (next) => {
     <section v-if="showDocumentPreview" class="upload-panel">
       <div class="upload-panel-inner">
         <h3>报告解析预览</h3>
+        <details class="upload-guide" open>
+          <summary><span>解析须知</span><small>点击展开/收起</small></summary>
+          <div class="upload-guide-body">
+            <h4>支持格式</h4>
+            <ul>
+              <li><strong>PDF</strong> — 文本层 PDF 直接提取，扫描件需 OCR 服务（Docker 可选启用）</li>
+              <li><strong>DOCX / DOC / TXT</strong> — Word 文档和纯文本文件</li>
+            </ul>
+            <h4>文件限制</h4>
+            <ul>
+              <li>单文件 ≤ <strong>50MB</strong></li>
+              <li>仅解析前 60,000 字符</li>
+            </ul>
+            <h4>解析范围</h4>
+            <ul>
+              <li>自动识别检测报告中的结构化表格</li>
+              <li>提取：检测点、检测因子、数值、单位、限值(如有)、接触时长</li>
+              <li>支持职业卫生、废水、废气、噪声、高温 WBGT 五类报告</li>
+            </ul>
+            <h4>已知局限</h4>
+            <ul>
+              <li>手写批注、印章遮盖区域无法识别</li>
+              <li>扫描件 PDF 未启用 OCR 时文本层为空，会进入「待人工确认」流程</li>
+              <li>多层合并表头、跨页断行可能导致部分字段缺失</li>
+              <li>报告内嵌标准限值与系统限值库可能不一致，以系统限值库为准</li>
+            </ul>
+            <h4>行为边界</h4>
+            <ul>
+              <li>预览页<strong>仅展示解析结果，不会直接写入数据库</strong></li>
+              <li>必须进入人工确认页：逐行核对、修正错误字段、勾选需要入库的数据行</li>
+              <li>未勾选的行不会入库（含背景行、空白行、错误识别行）</li>
+              <li>低置信度行（confidence &lt; 0.7）会有黄色标记，建议重点核对</li>
+              <li>入库后与结构化导入流程一致：状态为已上传，需手动触发「合规判定」</li>
+              <li>如需重新导入同一份文件，请先删除旧报告避免数据重复</li>
+            </ul>
+          </div>
+        </details>
         <form class="upload-form" @submit.prevent="submitDocumentPreview">
           <div class="form-row">
             <label class="form-field">
@@ -1776,5 +1849,70 @@ watch(activeTab, (next) => {
   .result-values {
     text-align: left;
   }
+}
+
+/* ---- 上传须知指引 ---- */
+.upload-guide {
+  margin-bottom: 14px;
+  border: 1px solid #fcd34d;
+  border-radius: var(--radius);
+  background: #fffbeb;
+  overflow: hidden;
+}
+.upload-guide summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-weight: 700;
+  color: #92400e;
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+  list-style: none;
+}
+.upload-guide summary::-webkit-details-marker {
+  display: none;
+}
+.upload-guide summary span {
+  font-size: 14px;
+}
+.upload-guide summary small {
+  font-size: 11px;
+  color: #a16207;
+  font-weight: 500;
+}
+.upload-guide-body {
+  padding: 12px 16px 16px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+.upload-guide-body h4 {
+  margin: 12px 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+.upload-guide-body h4:first-child {
+  margin-top: 0;
+}
+.upload-guide-body ul {
+  margin: 0 0 4px;
+  padding-left: 18px;
+  list-style: disc;
+}
+.upload-guide-body li {
+  margin-bottom: 3px;
+  color: var(--text-tertiary);
+}
+.upload-guide-body code {
+  font-size: 12px;
+  background: #fef3c7;
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: #92400e;
+}
+.upload-guide-body strong {
+  color: var(--text);
 }
 </style>
