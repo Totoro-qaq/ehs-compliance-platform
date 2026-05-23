@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
@@ -32,6 +33,12 @@ class AgentToolResult:
     tool_name: str
     arguments: dict[str, Any]
     result: dict[str, Any]
+
+
+_CONTEXT_CLEANUP_PATTERN = re.compile(
+    r'(的|还有|有哪些|哪些|有什么|什么|检测报告|评价任务|报告|任务|失败|异常|报错|待判定|未判定|没判定|'
+    r'情况|状态|进度|怎么|如何|吗|呢|请|帮我|看一下|看看|总结|概览|,|，|。|？|\?)'
+)
 
 
 def _safe_limit(value: int, *, default: int = 5, maximum: int = 20) -> int:
@@ -86,6 +93,59 @@ def _actor_org_filter(actor: CurrentUser, model) -> list[Any]:
     return [model.organization_id == ensure_user_has_organization(actor)]
 
 
+def _clean_context_term(value: str) -> str | None:
+    cleaned = _CONTEXT_CLEANUP_PATTERN.split(value.strip())[0].strip(' ：:，,。.;；（）()[]【】"\'')
+    if len(cleaned) < 2:
+        return None
+    return cleaned[:80]
+
+
+def _context_terms(user_text: str | None) -> list[str]:
+    text = ' '.join((user_text or '').strip().split())
+    if not text:
+        return []
+
+    terms: list[str] = []
+    quoted = re.findall(r'[“"「『](.+?)[”"」』]', text)
+    terms.extend(item for item in quoted if item.strip())
+
+    patterns = [
+        r'(?:委托单位|委托客户|客户|公司)[:：\s]*([\w\-\u4e00-\u9fff（）()·]+)',
+        r'(?:项目名称|项目)[:：\s]*([\w\-\u4e00-\u9fff（）()·]+)',
+        r'(?:项目编号|编号|报告编号)[:：\s]*([A-Za-z0-9_\-]+)',
+    ]
+    for pattern in patterns:
+        for match in re.findall(pattern, text):
+            terms.append(match)
+
+    cleaned_terms: list[str] = []
+    seen: set[str] = set()
+    for raw in terms:
+        cleaned = _clean_context_term(raw)
+        if cleaned and cleaned not in seen:
+            seen.add(cleaned)
+            cleaned_terms.append(cleaned)
+    return cleaned_terms[:5]
+
+
+def _context_filter(model, context_query: str | None):
+    terms = _context_terms(context_query)
+    if not terms:
+        return None
+    columns = [
+        model.client_name,
+        model.project_name,
+        model.project_code,
+        model.service_type,
+        model.filename,
+    ]
+    if hasattr(model, 'task_name'):
+        columns.append(model.task_name)
+    if hasattr(model, 'report_name'):
+        columns.append(model.report_name)
+    return or_(*(column.ilike(f'%{term}%') for term in terms for column in columns))
+
+
 def _parse_task_status(value: str | None) -> TaskStatus | None:
     if not value:
         return None
@@ -133,22 +193,27 @@ class AgentTools:
     def selected_tools(user_text: str) -> list[tuple[str, dict[str, Any]]]:
         text = user_text.lower()
         tools: list[tuple[str, dict[str, Any]]] = []
+        context_query = user_text if _context_terms(user_text) else None
+        context_args = {'context_query': context_query} if context_query else {}
+
+        if context_query:
+            tools.append(('get_client_project_context', {'query': context_query, 'limit': 8}))
 
         if any(key in user_text for key in ('工作台', '概览', '待处理', '待办', '总结', '今天')):
             tools.append(('get_workbench_summary', {}))
 
         if any(key in user_text for key in ('失败', '异常', '报错')):
-            tools.append(('list_assessment_tasks', {'status': TaskStatus.FAILED.value, 'limit': 8}))
-            tools.append(('list_detection_reports', {'status': ReportStatus.FAILED.value, 'limit': 8}))
+            tools.append(('list_assessment_tasks', {'status': TaskStatus.FAILED.value, 'limit': 8, **context_args}))
+            tools.append(('list_detection_reports', {'status': ReportStatus.FAILED.value, 'limit': 8, **context_args}))
 
         if any(key in user_text for key in ('评价', '任务', '材料')) or 'assessment' in text:
-            tools.append(('list_assessment_tasks', {'limit': 8}))
+            tools.append(('list_assessment_tasks', {'limit': 8, **context_args}))
 
         if any(key in user_text for key in ('检测', '报告', '判定', '超标')) or 'detection' in text:
             status = None
             if any(key in user_text for key in ('未判定', '待判定', '没判定')):
                 status = 'PENDING_CALCULATION'
-            tools.append(('list_detection_reports', {'status': status, 'limit': 8}))
+            tools.append(('list_detection_reports', {'status': status, 'limit': 8, **context_args}))
 
         if any(key in user_text for key in ('限值', '法规', '标准', '条款', 'cas', 'CAS')):
             tools.append(('search_regulatory_limits', {'query': user_text, 'limit': 8}))
@@ -172,11 +237,19 @@ class AgentTools:
     ) -> AgentToolResult:
         if tool_name == 'get_workbench_summary':
             result = AgentTools.get_workbench_summary(db=db, actor=actor)
+        elif tool_name == 'get_client_project_context':
+            result = AgentTools.get_client_project_context(
+                db=db,
+                actor=actor,
+                query=str(arguments.get('query') or ''),
+                limit=int(arguments.get('limit') or 5),
+            )
         elif tool_name == 'list_assessment_tasks':
             result = AgentTools.list_assessment_tasks(
                 db=db,
                 actor=actor,
                 status=arguments.get('status'),
+                context_query=arguments.get('context_query'),
                 limit=int(arguments.get('limit') or 5),
             )
         elif tool_name == 'get_assessment_task':
@@ -191,6 +264,7 @@ class AgentTools:
                 actor=actor,
                 status=arguments.get('status'),
                 report_type=arguments.get('report_type'),
+                context_query=arguments.get('context_query'),
                 limit=int(arguments.get('limit') or 5),
             )
         elif tool_name == 'get_detection_report':
@@ -269,12 +343,16 @@ class AgentTools:
         db: Session,
         actor: CurrentUser,
         status: str | None = None,
+        context_query: str | None = None,
         limit: int = 5,
     ) -> dict[str, Any]:
         parsed_status = _parse_task_status(status)
         filters = _actor_org_filter(actor, AssessmentTask)
         if parsed_status is not None:
             filters.append(AssessmentTask.status == parsed_status)
+        context_clause = _context_filter(AssessmentTask, context_query)
+        if context_clause is not None:
+            filters.append(context_clause)
         max_items = _safe_limit(limit)
         stmt = (
             select(AssessmentTask)
@@ -297,7 +375,12 @@ class AgentTools:
             }
             for item in db.scalars(stmt).all()
         ]
-        return {'status': parsed_status.value if parsed_status else None, 'items': items, 'limit': max_items}
+        return {
+            'status': parsed_status.value if parsed_status else None,
+            'context_terms': _context_terms(context_query),
+            'items': items,
+            'limit': max_items,
+        }
 
     @staticmethod
     def get_assessment_task(*, db: Session, actor: CurrentUser, task_id: str) -> dict[str, Any]:
@@ -330,6 +413,7 @@ class AgentTools:
         actor: CurrentUser,
         status: str | None = None,
         report_type: str | None = None,
+        context_query: str | None = None,
         limit: int = 5,
     ) -> dict[str, Any]:
         pending_calculation = status == 'PENDING_CALCULATION'
@@ -346,6 +430,9 @@ class AgentTools:
             filters.append(DetectionReport.status == parsed_status)
         if parsed_type is not None:
             filters.append(DetectionReport.report_type == parsed_type)
+        context_clause = _context_filter(DetectionReport, context_query)
+        if context_clause is not None:
+            filters.append(context_clause)
         max_items = _safe_limit(limit)
         stmt = (
             select(DetectionReport)
@@ -377,7 +464,65 @@ class AgentTools:
             if parsed_status
             else None,
             'report_type': parsed_type.value if parsed_type else None,
+            'context_terms': _context_terms(context_query),
             'items': items,
+            'limit': max_items,
+        }
+
+    @staticmethod
+    def get_client_project_context(
+        *,
+        db: Session,
+        actor: CurrentUser,
+        query: str,
+        limit: int = 5,
+    ) -> dict[str, Any]:
+        terms = _context_terms(query)
+        max_items = _safe_limit(limit)
+        if not terms:
+            return {
+                'query': query.strip(),
+                'terms': [],
+                'assessment_counts': {},
+                'detection_counts': {},
+                'recent_assessments': [],
+                'recent_reports': [],
+                'limit': max_items,
+            }
+
+        task_filters = _actor_org_filter(actor, AssessmentTask)
+        report_filters = _actor_org_filter(actor, DetectionReport)
+        task_context = _context_filter(AssessmentTask, query)
+        report_context = _context_filter(DetectionReport, query)
+        if task_context is not None:
+            task_filters.append(task_context)
+        if report_context is not None:
+            report_filters.append(report_context)
+
+        task_status_rows = db.execute(
+            select(AssessmentTask.status, func.count()).where(*task_filters).group_by(AssessmentTask.status)
+        ).all()
+        report_status_rows = db.execute(
+            select(DetectionReport.status, func.count()).where(*report_filters).group_by(DetectionReport.status)
+        ).all()
+
+        return {
+            'query': query.strip(),
+            'terms': terms,
+            'assessment_counts': {status.value: count for status, count in task_status_rows},
+            'detection_counts': {status.value: count for status, count in report_status_rows},
+            'recent_assessments': AgentTools.list_assessment_tasks(
+                db=db,
+                actor=actor,
+                context_query=query,
+                limit=max_items,
+            )['items'],
+            'recent_reports': AgentTools.list_detection_reports(
+                db=db,
+                actor=actor,
+                context_query=query,
+                limit=max_items,
+            )['items'],
             'limit': max_items,
         }
 

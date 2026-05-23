@@ -420,3 +420,75 @@ def test_agent_pending_detection_prompt_uses_pending_statuses(
     assert '项目：待判定项目' in answer
     assert '编号：PENDING-001' in answer
     assert '已判定检测报告' not in answer
+
+
+def test_agent_filters_detection_by_client_project_context(
+    client: TestClient,
+    user_token: str,
+    db,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        'app.services.agent_service.AgentService._call_model',
+        AsyncMock(side_effect=RuntimeError('should not call model')),
+    )
+
+    org = db.get(Organization, settings.default_organization_id)
+    assert org is not None
+    db.add_all(
+        [
+            DetectionReport(
+                organization_id=org.id,
+                report_name='安测 A 待判定报告',
+                client_name='安测委托A',
+                project_name='年度检测项目A',
+                project_code='AC-A-001',
+                service_type='检测',
+                filename='client-a.csv',
+                report_type=ReportType.OCCUPATIONAL_HEALTH,
+                status=ReportStatus.PARSED,
+            ),
+            DetectionReport(
+                organization_id=org.id,
+                report_name='安测 B 待判定报告',
+                client_name='安测委托B',
+                project_name='年度检测项目B',
+                project_code='AC-B-001',
+                service_type='检测',
+                filename='client-b.csv',
+                report_type=ReportType.OCCUPATIONAL_HEALTH,
+                status=ReportStatus.PARSED,
+            ),
+            AssessmentTask(
+                organization_id=org.id,
+                task_name='安测 A 评价任务',
+                client_name='安测委托A',
+                project_name='年度检测项目A',
+                project_code='AC-A-001',
+                service_type='评价',
+                filename='client-a-assessment.txt',
+                content_type='text/plain',
+                file_path='uploads/client-a-assessment.txt',
+                status=TaskStatus.SUCCESS,
+                progress=100,
+            ),
+        ]
+    )
+    db.commit()
+
+    resp = client.post(
+        '/api/v1/agent/chat',
+        json={'content': '客户安测委托A 项目年度检测项目A 有哪些检测报告没判定'},
+        headers=_auth(user_token),
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()['data']
+    answer = data['assistant_message']['content']
+    assert data['run']['provider'] == 'rules'
+    assert data['run']['model_name'] == 'fast-summary'
+    assert '客户/项目上下文' in answer
+    assert '安测 A 待判定报告' in answer
+    assert '安测 A 评价任务' in answer
+    assert '安测 B 待判定报告' not in answer
+    assert any(call['tool_name'] == 'get_client_project_context' for call in data['tool_calls'])
