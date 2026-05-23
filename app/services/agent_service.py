@@ -27,6 +27,7 @@ _SYSTEM_PROMPT = """你是 EHS 合规管理平台的企业内助手。
 
 _FAST_SUMMARY_TOOLS = {
     'get_workbench_summary',
+    'get_client_project_context',
     'list_assessment_tasks',
     'list_detection_reports',
     'search_regulatory_limits',
@@ -592,6 +593,40 @@ class AgentService:
                     f'- 当前需要关注的事项约 {todo_total} 个，其中失败异常 {failed_total} 个。',
                 ]
             )
+
+        context_summary = _first_tool(tool_results, 'get_client_project_context')
+        if context_summary:
+            terms = context_summary.get('terms') or []
+            assessment_counts = context_summary.get('assessment_counts') or {}
+            detection_counts = context_summary.get('detection_counts') or {}
+            recent_assessments = context_summary.get('recent_assessments') or []
+            recent_reports = context_summary.get('recent_reports') or []
+            if terms or recent_assessments or recent_reports:
+                lines.append(f'客户/项目上下文：{", ".join(terms) if terms else "已按问题筛选"}')
+                lines.append(
+                    '- 评价任务：'
+                    f'共 {sum(int(value or 0) for value in assessment_counts.values())} 个，'
+                    f'失败 {assessment_counts.get(TaskStatus.FAILED.value, 0)} 个，'
+                    f'处理中 {sum(int(assessment_counts.get(status.value, 0) or 0) for status in (TaskStatus.PENDING, TaskStatus.PARSING, TaskStatus.AI_ANALYZING, TaskStatus.VALIDATING, TaskStatus.PERSISTING))} 个。'
+                )
+                lines.append(
+                    '- 检测报告：'
+                    f'共 {sum(int(value or 0) for value in detection_counts.values())} 个，'
+                    f'待判定 {sum(int(detection_counts.get(status.value, 0) or 0) for status in (ReportStatus.UPLOADED, ReportStatus.PARSED, ReportStatus.VALIDATED))} 个，'
+                    f'失败 {detection_counts.get(ReportStatus.FAILED.value, 0)} 个。'
+                )
+                if recent_assessments:
+                    lines.append('相关评价任务：')
+                    for item in recent_assessments[:3]:
+                        lines.append(
+                            f'- {_format_record(item.get("task_name") or item.get("filename"), item.get("status"), context=_record_context(item))}'
+                        )
+                if recent_reports:
+                    lines.append('相关检测报告：')
+                    for item in recent_reports[:3]:
+                        lines.append(
+                            f'- {_format_record(item.get("report_name") or item.get("filename"), item.get("status"), context=_record_context(item))}'
+                        )
 
         failed_tasks = [
             item
