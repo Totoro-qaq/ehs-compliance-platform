@@ -32,6 +32,10 @@ async def create_assessment(
         default=None, description='公司 ID；普通用户不传则使用本人所属公司，管理员不传则使用系统默认公司'
     ),
     task_name: str | None = Form(default=None, description='评价任务名称；不传则按公司和日期自动生成'),
+    client_name: str | None = Form(default=None, description='委托单位 / 客户公司'),
+    project_name: str | None = Form(default=None, description='项目名称'),
+    project_code: str | None = Form(default=None, description='项目编号'),
+    service_type: str | None = Form(default=None, description='服务类型，如评价/检测/整改/综合'),
     db: Session = Depends(get_db),
 ):
     content = await file.read()
@@ -42,6 +46,10 @@ async def create_assessment(
         organization_id=oid,
         filename=file.filename,
         task_name=task_name,
+        client_name=client_name,
+        project_name=project_name,
+        project_code=project_code,
+        service_type=service_type,
         content_type=file.content_type or 'application/octet-stream',
         file_bytes=content,
     )
@@ -68,6 +76,10 @@ def list_assessments(
     organization_id: str | None = Query(default=None, description='筛选公司 ID'),
     status: str | None = Query(default=None, description='筛选任务状态，如 PENDING / SUCCESS / FAILED'),
     q: str | None = Query(default=None, description='按文件名模糊搜索，或按任务 ID 精确搜索'),
+    client_name: str | None = Query(default=None, description='按委托单位 / 客户公司筛选'),
+    project_name: str | None = Query(default=None, description='按项目名称筛选'),
+    project_code: str | None = Query(default=None, description='按项目编号筛选'),
+    service_type: str | None = Query(default=None, description='按服务类型筛选'),
     page: int = Query(default=1, ge=1, description='页码，从 1 开始'),
     page_size: int = Query(default=20, ge=1, le=200, description='每页条数'),
 ):
@@ -77,6 +89,10 @@ def list_assessments(
         organization_id=organization_id,
         status=status,
         q=q,
+        client_name=client_name,
+        project_name=project_name,
+        project_code=project_code,
+        service_type=service_type,
         page=page,
         page_size=page_size,
     )

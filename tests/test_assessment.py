@@ -93,6 +93,50 @@ class TestAssessmentCRUD:
         org_items = org_resp.json()['data']['items']
         assert any((item.get('task_id') or item.get('id')) == task_id for item in org_items)
 
+    def test_create_list_and_get_include_client_project_context(self, client: TestClient, admin_token: str):
+        delay = MagicMock()
+        with patch('app.tasks.worker.run_assessment_task.delay', new=delay):
+            resp = client.post(
+                '/api/v1/assessment',
+                data={
+                    'task_name': '年度评价任务',
+                    'client_name': '委托客户 A',
+                    'project_name': '职业卫生评价项目',
+                    'project_code': 'PJ-001',
+                    'service_type': '评价',
+                },
+                files={'file': ('client-project.txt', b'EHS test content', 'text/plain')},
+                headers={'Authorization': f'Bearer {admin_token}'},
+            )
+
+        assert resp.status_code == 200
+        created = resp.json()['data']
+        task_id = created['task_id']
+        assert created['client_name'] == '委托客户 A'
+        assert created['project_name'] == '职业卫生评价项目'
+        assert created['project_code'] == 'PJ-001'
+        assert created['service_type'] == '评价'
+
+        listed = client.get(
+            '/api/v1/assessment',
+            params={'client_name': '客户 A', 'project_name': '职业卫生', 'service_type': '评价'},
+            headers={'Authorization': f'Bearer {admin_token}'},
+        )
+        assert listed.status_code == 200
+        items = listed.json()['data']['items']
+        assert any((item.get('task_id') or item.get('id')) == task_id for item in items)
+
+        detail = client.get(
+            f'/api/v1/assessment/{task_id}',
+            headers={'Authorization': f'Bearer {admin_token}'},
+        )
+        assert detail.status_code == 200
+        body = detail.json()['data']
+        assert body['client_name'] == '委托客户 A'
+        assert body['project_name'] == '职业卫生评价项目'
+        assert body['project_code'] == 'PJ-001'
+        assert body['service_type'] == '评价'
+
     def test_soft_delete(self, client: TestClient, admin_token: str):
         task_id = self._create_task(client, admin_token)
         resp = client.delete(

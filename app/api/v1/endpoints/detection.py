@@ -38,6 +38,10 @@ async def create_detection_report(
     file: UploadFile = File(..., description='CSV / XLSX / XLSM 检测数据文件'),
     report_type: str = Form(default='OCCUPATIONAL_HEALTH', description='检测报告类型'),
     report_name: str | None = Form(default=None, description='检测报告名称；不传则按公司、类型和日期自动生成'),
+    client_name: str | None = Form(default=None, description='委托单位 / 客户公司'),
+    project_name: str | None = Form(default=None, description='项目名称'),
+    project_code: str | None = Form(default=None, description='项目编号'),
+    service_type: str | None = Form(default=None, description='服务类型，如评价/检测/整改/综合'),
     organization_id: str | None = Form(default=None, description='公司 ID；普通用户不传则使用本人所属公司'),
     db: Session = Depends(get_db),
 ):
@@ -49,6 +53,10 @@ async def create_detection_report(
         report_type=report_type,
         filename=file.filename,
         report_name=report_name,
+        client_name=client_name,
+        project_name=project_name,
+        project_code=project_code,
+        service_type=service_type,
         content=content,
     )
 
@@ -97,6 +105,10 @@ def list_detection_reports(
     organization_id: str | None = Query(default=None, description='按公司 ID 筛选'),
     report_type: str | None = Query(default=None, description='按报告类型筛选'),
     status: str | None = Query(default=None, description='按报告状态筛选'),
+    client_name: str | None = Query(default=None, description='按委托单位 / 客户公司筛选'),
+    project_name: str | None = Query(default=None, description='按项目名称筛选'),
+    project_code: str | None = Query(default=None, description='按项目编号筛选'),
+    service_type: str | None = Query(default=None, description='按服务类型筛选'),
     page: int = Query(default=1, ge=1, description='页码'),
     page_size: int = Query(default=20, ge=1, le=200, description='每页条数'),
 ):
@@ -106,6 +118,10 @@ def list_detection_reports(
         organization_id=organization_id,
         report_type=report_type,
         status=status,
+        client_name=client_name,
+        project_name=project_name,
+        project_code=project_code,
+        service_type=service_type,
         page=page,
         page_size=page_size,
     )

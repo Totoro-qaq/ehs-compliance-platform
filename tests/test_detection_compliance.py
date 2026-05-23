@@ -52,6 +52,11 @@ def test_upload_csv_calculate_and_list_results(client: TestClient, admin_token: 
         data={
             'organization_id': settings.default_organization_id,
             'report_type': 'OCCUPATIONAL_HEALTH',
+            'report_name': '测试因子甲检测报告',
+            'client_name': '委托客户 B',
+            'project_name': '职业卫生检测项目',
+            'project_code': 'JC-001',
+            'service_type': '检测',
         },
         files={'file': ('test factor A.csv', csv, 'text/csv')},
         headers=_auth(admin_token),
@@ -60,11 +65,29 @@ def test_upload_csv_calculate_and_list_results(client: TestClient, admin_token: 
     body = upload.json()['data']
     assert body['sample_count'] == 1
     assert body['measurement_count'] == 1
+    assert body['client_name'] == '委托客户 B'
+    assert body['project_name'] == '职业卫生检测项目'
+    assert body['project_code'] == 'JC-001'
+    assert body['service_type'] == '检测'
     report_id = body['report_id']
+
+    listed = client.get(
+        '/api/v1/detection/reports',
+        params={'client_name': '客户 B', 'project_name': '职业卫生', 'service_type': '检测'},
+        headers=_auth(admin_token),
+    )
+    assert listed.status_code == 200
+    listed_items = listed.json()['data']['items']
+    assert any(item['id'] == report_id for item in listed_items)
 
     detail = client.get(f'/api/v1/detection/reports/{report_id}', headers=_auth(admin_token))
     assert detail.status_code == 200
-    assert detail.json()['data']['samples'][0]['measurements'][0]['indicator_name'] == '测试因子甲'
+    detail_data = detail.json()['data']
+    assert detail_data['client_name'] == '委托客户 B'
+    assert detail_data['project_name'] == '职业卫生检测项目'
+    assert detail_data['project_code'] == 'JC-001'
+    assert detail_data['service_type'] == '检测'
+    assert detail_data['samples'][0]['measurements'][0]['indicator_name'] == '测试因子甲'
 
     calculated = client.post(
         f'/api/v1/detection/reports/{report_id}/calculate',

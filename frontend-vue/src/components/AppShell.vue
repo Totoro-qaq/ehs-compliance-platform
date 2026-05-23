@@ -25,8 +25,7 @@ const navItems = computed(() => {
     { key: 'workbench', label: '工作台', view: 'home', query: { view: 'workbench' } },
     { key: 'tasks', label: '评价任务', view: 'tasks' },
     { key: 'detection', label: '检测合规', view: 'detection' },
-    ...(session.isAdmin ? [{ key: 'orgs', label: '公司管理', view: 'orgs' }] : []),
-    { key: 'settings', label: '账户设置', view: 'settings' },
+    { key: 'agent', label: 'AI 助手', view: 'agent' },
   ];
 });
 
@@ -172,6 +171,10 @@ onUnmounted(() => document.removeEventListener('click', closeMenuOnOutside));
                   <button type="button" class="user-menu-item" @click="goto('detection')">
                     <Icon name="database" :size="14" />
                     <span>检测合规</span>
+                  </button>
+                  <button type="button" class="user-menu-item" @click="goto('agent')">
+                    <Icon name="message" :size="14" />
+                    <span>AI 助手</span>
                   </button>
                   <button v-if="isAdminVisible" type="button" class="user-menu-item" @click="goto('orgs')">
                     <Icon name="building" :size="14" />

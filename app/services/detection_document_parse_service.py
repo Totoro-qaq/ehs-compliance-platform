@@ -1418,6 +1418,14 @@ class DetectionDocumentParseService:
             organization_id=organization_id,
             filename=display_name,
             report_name=business_name,
+            client_name=_clean_display_name(payload.client_name),
+            project_name=_clean_display_name(payload.project_name),
+            project_code=_clean_display_name(payload.project_code)[:64]
+            if _clean_display_name(payload.project_code)
+            else None,
+            service_type=_clean_display_name(payload.service_type)[:64]
+            if _clean_display_name(payload.service_type)
+            else None,
             report_type=parsed_type,
             file_path=None,
             created_by_id=actor.account_id,
@@ -1464,6 +1472,10 @@ class DetectionDocumentParseService:
             return DetectionReportCreateResponse(
                 report_id=report.id,
                 report_name=report.report_name,
+                client_name=report.client_name,
+                project_name=report.project_name,
+                project_code=report.project_code,
+                service_type=report.service_type,
                 status=report.status,
                 report_type=report.report_type,
                 sample_count=len(samples),

@@ -38,6 +38,10 @@ class DetectionReportDAO(BaseRepository[DetectionReport]):
         filename: str,
         report_type: str,
         report_name: str | None = None,
+        client_name: str | None = None,
+        project_name: str | None = None,
+        project_code: str | None = None,
+        service_type: str | None = None,
         file_path: str | None = None,
         report_date: date | None = None,
         issuer: str | None = None,
@@ -47,6 +51,10 @@ class DetectionReportDAO(BaseRepository[DetectionReport]):
             organization_id=organization_id,
             filename=filename,
             report_name=report_name,
+            client_name=client_name,
+            project_name=project_name,
+            project_code=project_code,
+            service_type=service_type,
             report_type=report_type,
             status=ReportStatus.UPLOADED,
             file_path=file_path,
@@ -79,6 +87,10 @@ class DetectionReportDAO(BaseRepository[DetectionReport]):
         organization_id: str | None,
         report_type: str | None,
         status: str | None,
+        client_name: str | None,
+        project_name: str | None,
+        project_code: str | None,
+        service_type: str | None,
         page: int,
         page_size: int,
     ) -> tuple[list[DetectionReport], int]:
@@ -89,6 +101,14 @@ class DetectionReportDAO(BaseRepository[DetectionReport]):
             filters.append(DetectionReport.report_type == report_type)
         if status:
             filters.append(DetectionReport.status == status)
+        if client_name:
+            filters.append(DetectionReport.client_name.like(f'%{client_name}%'))
+        if project_name:
+            filters.append(DetectionReport.project_name.like(f'%{project_name}%'))
+        if project_code:
+            filters.append(DetectionReport.project_code.like(f'%{project_code}%'))
+        if service_type:
+            filters.append(DetectionReport.service_type == service_type)
         return self.list_page(
             page=page,
             page_size=page_size,

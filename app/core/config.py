@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     dify_retry_jitter_seconds: float = Field(default=0.5, ge=0.0, le=30.0)
     dify_retry_on_timeout: bool = False
 
+    # Agent MVP：优先调用本地 Ollama，失败时后端返回规则化摘要，避免前端卡死。
+    agent_llm_provider: str = 'ollama'
+    ollama_base_url: str = 'http://127.0.0.1:11434'
+    ollama_chat_model: str = 'qwen2.5:7b'
+    agent_request_timeout_seconds: float = Field(default=120.0, ge=3.0, le=300.0)
+
     # 预置默认公司 ID（init_db 会写入），上传评价未指定公司时使用
     default_organization_id: str = '00000000-0000-4000-8000-000000000001'
 
