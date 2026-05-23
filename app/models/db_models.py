@@ -90,6 +90,10 @@ class AssessmentTask(ModelBase):
         index=True,
     )
     task_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    client_name: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    project_name: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    project_code: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    service_type: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     content_type: Mapped[str] = mapped_column(String(100), nullable=False)
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)
@@ -195,6 +199,24 @@ class ComplianceStatus(str, Enum):
     NEEDS_REVIEW = 'NEEDS_REVIEW'
 
 
+class AgentSessionStatus(str, Enum):
+    OPEN = 'OPEN'
+    ARCHIVED = 'ARCHIVED'
+
+
+class AgentMessageRole(str, Enum):
+    USER = 'USER'
+    ASSISTANT = 'ASSISTANT'
+    SYSTEM = 'SYSTEM'
+    TOOL = 'TOOL'
+
+
+class AgentRunStatus(str, Enum):
+    RUNNING = 'RUNNING'
+    SUCCEEDED = 'SUCCEEDED'
+    FAILED = 'FAILED'
+
+
 class DetectionReport(ModelBase):
     """检测报告主表：一份上传文件 + 报告类型 + 状态机。"""
 
@@ -207,6 +229,10 @@ class DetectionReport(ModelBase):
         index=True,
     )
     report_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    client_name: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    project_name: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    project_code: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    service_type: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     file_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     report_type: Mapped[ReportType] = mapped_column(SAEnum(ReportType), nullable=False, index=True)
@@ -360,3 +386,131 @@ class ComplianceResult(ModelBase):
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     report: Mapped[DetectionReport] = relationship(back_populates='compliance_results')
+
+
+class AgentSession(ModelBase):
+    """Agent 会话：绑定调用账号和可见公司范围。"""
+
+    __tablename__ = 'agent_sessions'
+
+    account_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey('accounts.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    organization_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('organizations.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[AgentSessionStatus] = mapped_column(
+        SAEnum(AgentSessionStatus), nullable=False, default=AgentSessionStatus.OPEN, index=True
+    )
+    last_message_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+    messages: Mapped[list['AgentMessage']] = relationship(
+        back_populates='session',
+        cascade='all, delete-orphan',
+        order_by='AgentMessage.created_at',
+    )
+    runs: Mapped[list['AgentRun']] = relationship(
+        back_populates='session',
+        cascade='all, delete-orphan',
+    )
+
+
+class AgentMessage(ModelBase):
+    """Agent 会话消息。"""
+
+    __tablename__ = 'agent_messages'
+
+    session_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey('agent_sessions.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    role: Mapped[AgentMessageRole] = mapped_column(
+        SAEnum(AgentMessageRole), nullable=False, index=True
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    session: Mapped[AgentSession] = relationship(back_populates='messages')
+
+
+class AgentRun(ModelBase):
+    """一次 Agent 编排运行，记录模型、状态和耗时。"""
+
+    __tablename__ = 'agent_runs'
+
+    session_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey('agent_sessions.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    account_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey('accounts.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    user_message_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('agent_messages.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    assistant_message_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('agent_messages.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[AgentRunStatus] = mapped_column(
+        SAEnum(AgentRunStatus), nullable=False, default=AgentRunStatus.RUNNING, index=True
+    )
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    session: Mapped[AgentSession] = relationship(back_populates='runs')
+    tool_calls: Mapped[list['AgentToolCall']] = relationship(
+        back_populates='run',
+        cascade='all, delete-orphan',
+        order_by='AgentToolCall.created_at',
+    )
+
+
+class AgentToolCall(ModelBase):
+    """Agent 工具调用审计记录。"""
+
+    __tablename__ = 'agent_tool_calls'
+
+    run_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey('agent_runs.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    session_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey('agent_sessions.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    tool_name: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    arguments_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    success: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    elapsed_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    run: Mapped[AgentRun] = relationship(back_populates='tool_calls')

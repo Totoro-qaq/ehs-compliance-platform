@@ -79,6 +79,10 @@ const reportTotal = ref(0);
 const reportPages = ref(0);
 const reportTypeFilter = ref('');
 const reportStatusFilter = ref('');
+const reportClientNameFilter = ref('');
+const reportProjectNameFilter = ref('');
+const reportProjectCodeFilter = ref('');
+const reportServiceTypeFilter = ref('');
 const reportsBusy = ref(false);
 const detectionStats = reactive({
   total: '-',
@@ -94,6 +98,10 @@ const fileLabel = ref('点击选择 CSV / XLSX / PDF / DOCX 文件');
 const uploadBusy = ref(false);
 const uploadReportType = ref('OCCUPATIONAL_HEALTH');
 const uploadReportName = ref('');
+const uploadClientName = ref('');
+const uploadProjectName = ref('');
+const uploadProjectCode = ref('');
+const uploadServiceType = ref('检测');
 
 const showDocumentPreview = ref(false);
 const documentInput = ref(null);
@@ -101,6 +109,10 @@ const selectedDocument = ref(null);
 const documentLabel = ref('点击选择 PDF / DOCX / DOC / TXT / ZIP 文件');
 const documentReportType = ref('OCCUPATIONAL_HEALTH');
 const documentReportName = ref('');
+const documentClientName = ref('');
+const documentProjectName = ref('');
+const documentProjectCode = ref('');
+const documentServiceType = ref('检测');
 const documentPreviewBusy = ref(false);
 const documentImportBusy = ref(false);
 const documentPreview = ref(null);
@@ -349,11 +361,28 @@ function formatPreviewLimit(row) {
   return `${formatNumber(row.report_limit_value)} ${row.report_limit_unit || ''}`.trim();
 }
 
+function contextParts(record) {
+  const parts = [];
+  if (record?.client_name) parts.push(`客户：${record.client_name}`);
+  if (record?.project_name) parts.push(`项目：${record.project_name}`);
+  if (record?.project_code) parts.push(`编号：${record.project_code}`);
+  if (record?.service_type) parts.push(`服务：${record.service_type}`);
+  return parts;
+}
+
+function contextText(record) {
+  return contextParts(record).join(' · ');
+}
+
 function resetUpload() {
   if (fileInput.value) fileInput.value.value = '';
   selectedFile.value = null;
   fileLabel.value = '点击选择 CSV / XLSX / PDF / DOCX 文件';
   uploadReportName.value = '';
+  uploadClientName.value = '';
+  uploadProjectName.value = '';
+  uploadProjectCode.value = '';
+  uploadServiceType.value = '检测';
 }
 
 function resetDocumentPreview() {
@@ -361,6 +390,10 @@ function resetDocumentPreview() {
   selectedDocument.value = null;
   documentLabel.value = '点击选择 PDF / DOCX / DOC / TXT / ZIP 文件';
   documentReportName.value = '';
+  documentClientName.value = '';
+  documentProjectName.value = '';
+  documentProjectCode.value = '';
+  documentServiceType.value = '检测';
   documentPreview.value = null;
   previewReviewOnly.value = false;
   selectedRowIndices.value = new Set();
@@ -390,6 +423,10 @@ function onFileChange(event) {
     documentLabel.value = file.name;
     documentReportType.value = uploadReportType.value;
     documentReportName.value = uploadReportName.value;
+    documentClientName.value = uploadClientName.value;
+    documentProjectName.value = uploadProjectName.value;
+    documentProjectCode.value = uploadProjectCode.value;
+    documentServiceType.value = uploadServiceType.value;
     documentPreview.value = null;
     previewReviewOnly.value = false;
     selectedRowIndices.value = new Set();
@@ -463,6 +500,10 @@ async function importDocumentPreview() {
     const data = await importDetectionDocumentPreview({
       filename: documentPreview.value.filename,
       report_name: documentReportName.value.trim() || null,
+      client_name: documentClientName.value.trim() || null,
+      project_name: documentProjectName.value.trim() || null,
+      project_code: documentProjectCode.value.trim() || null,
+      service_type: documentServiceType.value.trim() || null,
       report_type: documentPreview.value.report_type || documentReportType.value,
       organization_id: organizationId.value || null,
       rows: importRows,
@@ -502,6 +543,10 @@ async function loadReports({ silent = false } = {}) {
       organizationId: organizationId.value,
       reportType: reportTypeFilter.value,
       status: reportStatusFilter.value,
+      clientName: reportClientNameFilter.value.trim(),
+      projectName: reportProjectNameFilter.value.trim(),
+      projectCode: reportProjectCodeFilter.value.trim(),
+      serviceType: reportServiceTypeFilter.value,
     });
     reports.value = page?.items || [];
     reportTotal.value = page?.total || 0;
@@ -550,6 +595,10 @@ async function submitUpload() {
       organizationId: organizationId.value,
       reportType: uploadReportType.value,
       reportName: uploadReportName.value,
+      clientName: uploadClientName.value,
+      projectName: uploadProjectName.value,
+      projectCode: uploadProjectCode.value,
+      serviceType: uploadServiceType.value,
     });
     resetUpload();
     showUpload.value = false;
@@ -600,6 +649,16 @@ function applyReportFilters() {
   loadReports();
 }
 
+function resetReportFilters() {
+  reportTypeFilter.value = '';
+  reportStatusFilter.value = '';
+  reportClientNameFilter.value = '';
+  reportProjectNameFilter.value = '';
+  reportProjectCodeFilter.value = '';
+  reportServiceTypeFilter.value = '';
+  applyReportFilters();
+}
+
 function goReportPage(page) {
   if (page < 1 || page > reportPages.value) return;
   reportPage.value = page;
@@ -643,6 +702,10 @@ function useSampleCsv() {
   fileLabel.value = file.name;
   uploadReportType.value = sample.reportType;
   uploadReportName.value = '';
+  uploadClientName.value = '';
+  uploadProjectName.value = '';
+  uploadProjectCode.value = '';
+  uploadServiceType.value = '检测';
   showUpload.value = true;
 }
 
@@ -821,6 +884,28 @@ watch(
                 :placeholder="defaultReportName"
               />
             </label>
+            <label class="form-field">
+              <span class="label-text">委托单位 / 客户公司</span>
+              <input v-model="uploadClientName" type="text" maxlength="255" placeholder="例如：某某制造有限公司" />
+            </label>
+            <label class="form-field">
+              <span class="label-text">项目名称</span>
+              <input v-model="uploadProjectName" type="text" maxlength="255" placeholder="例如：年度职业卫生检测" />
+            </label>
+            <label class="form-field">
+              <span class="label-text">项目编号</span>
+              <input v-model="uploadProjectCode" type="text" maxlength="64" placeholder="可选" />
+            </label>
+            <label class="form-field">
+              <span class="label-text">服务类型</span>
+              <select v-model="uploadServiceType">
+                <option value="">未指定</option>
+                <option value="评价">评价</option>
+                <option value="检测">检测</option>
+                <option value="整改">整改</option>
+                <option value="综合">综合</option>
+              </select>
+            </label>
             <label class="form-field file-field">
               <span class="label-text">数据/报告文件</span>
               <div :class="['file-drop', { 'has-file': selectedFile }]">
@@ -916,6 +1001,28 @@ watch(
                 maxlength="255"
                 :placeholder="defaultDocumentReportName"
               />
+            </label>
+            <label class="form-field">
+              <span class="label-text">委托单位 / 客户公司</span>
+              <input v-model="documentClientName" type="text" maxlength="255" placeholder="例如：某某制造有限公司" />
+            </label>
+            <label class="form-field">
+              <span class="label-text">项目名称</span>
+              <input v-model="documentProjectName" type="text" maxlength="255" placeholder="例如：年度职业卫生检测" />
+            </label>
+            <label class="form-field">
+              <span class="label-text">项目编号</span>
+              <input v-model="documentProjectCode" type="text" maxlength="64" placeholder="可选" />
+            </label>
+            <label class="form-field">
+              <span class="label-text">服务类型</span>
+              <select v-model="documentServiceType">
+                <option value="">未指定</option>
+                <option value="评价">评价</option>
+                <option value="检测">检测</option>
+                <option value="整改">整改</option>
+                <option value="综合">综合</option>
+              </select>
             </label>
             <label class="form-field file-field">
               <span class="label-text">报告文件</span>
@@ -1168,7 +1275,7 @@ watch(
     </section>
 
     <section v-if="activeTab === 'reports'" class="task-list-section">
-      <div class="task-filters detection-filters">
+      <div class="task-filters detection-filters report-filters">
         <label class="filter-field">
           <span class="label-text">公司</span>
           <select v-if="session.isAdmin" v-model="organizationId">
@@ -1195,7 +1302,30 @@ watch(
             </option>
           </select>
         </label>
+        <label class="filter-field">
+          <span class="label-text">客户</span>
+          <input v-model="reportClientNameFilter" type="search" placeholder="委托单位" @keydown.enter="applyReportFilters" />
+        </label>
+        <label class="filter-field">
+          <span class="label-text">项目</span>
+          <input v-model="reportProjectNameFilter" type="search" placeholder="项目名称" @keydown.enter="applyReportFilters" />
+        </label>
+        <label class="filter-field">
+          <span class="label-text">项目编号</span>
+          <input v-model="reportProjectCodeFilter" type="search" placeholder="编号" @keydown.enter="applyReportFilters" />
+        </label>
+        <label class="filter-field">
+          <span class="label-text">服务类型</span>
+          <select v-model="reportServiceTypeFilter" @change="applyReportFilters">
+            <option value="">全部类型</option>
+            <option value="评价">评价</option>
+            <option value="检测">检测</option>
+            <option value="整改">整改</option>
+            <option value="综合">综合</option>
+          </select>
+        </label>
         <button type="button" class="btn-secondary filter-reset" @click="applyReportFilters">查询</button>
+        <button type="button" class="btn-secondary filter-reset" @click="resetReportFilters">重置</button>
       </div>
       <div class="task-list-header">
         <span class="task-count"
@@ -1222,6 +1352,7 @@ watch(
           <thead>
             <tr>
               <th>报告名称</th>
+              <th>客户 / 项目</th>
               <th>类型</th>
               <th>状态</th>
               <th>报告日期</th>
@@ -1230,7 +1361,7 @@ watch(
           </thead>
           <tbody>
             <tr v-if="!reports.length" class="empty-row">
-              <td colspan="5">{{ reportsBusy ? '加载中...' : '暂无检测报告' }}</td>
+              <td colspan="6">{{ reportsBusy ? '加载中...' : '暂无检测报告' }}</td>
             </tr>
             <tr v-for="report in reports" :key="report.id" @click="openReport(report.id)">
               <td>
@@ -1238,6 +1369,13 @@ watch(
                 <small v-if="report.report_date" class="subtle-line">检测日期 {{ report.report_date }}</small>
                 <small v-else class="subtle-line">上传于 {{ formatTime(report.created_at) }}</small>
                 <small class="subtle-line" style="color: var(--text-tertiary)">来源文件：{{ report.filename }}</small>
+              </td>
+              <td>
+                <span v-if="report.client_name || report.project_name" class="task-filename">
+                  {{ report.client_name || '-' }}
+                </span>
+                <small v-if="contextText(report)" class="subtle-line">{{ contextText(report) }}</small>
+                <span v-else>-</span>
               </td>
               <td>{{ labelOf(REPORT_TYPES, report.report_type) }}</td>
               <td>
@@ -1382,6 +1520,14 @@ watch(
               <dd>{{ activeReport.id }}</dd>
               <dt>来源文件</dt>
               <dd>{{ activeReport.filename || '-' }}</dd>
+              <dt>委托单位</dt>
+              <dd>{{ activeReport.client_name || '-' }}</dd>
+              <dt>项目名称</dt>
+              <dd>{{ activeReport.project_name || '-' }}</dd>
+              <dt>项目编号</dt>
+              <dd>{{ activeReport.project_code || '-' }}</dd>
+              <dt>服务类型</dt>
+              <dd>{{ activeReport.service_type || '-' }}</dd>
               <dt>类型</dt>
               <dd>{{ labelOf(REPORT_TYPES, activeReport.report_type) }}</dd>
               <dt>状态</dt>
@@ -1503,6 +1649,9 @@ watch(
 }
 .detection-filters {
   grid-template-columns: minmax(180px, 1.2fr) 160px 150px auto;
+}
+.detection-filters.report-filters {
+  grid-template-columns: minmax(160px, 1.1fr) 140px 140px minmax(150px, 1fr) minmax(150px, 1fr) 120px 120px auto auto;
 }
 .limit-form-panel {
   padding: 18px 20px 8px;

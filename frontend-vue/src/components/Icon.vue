@@ -69,6 +69,10 @@ const ICONS = {
     paths:
       '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>',
   },
+  message: {
+    paths:
+      '<path d="M21 15a4 4 0 01-4 4H8l-5 3V7a4 4 0 014-4h10a4 4 0 014 4z"/><path d="M8 9h8"/><path d="M8 13h5"/>',
+  },
   play: {
     paths: '<polygon points="5 3 19 12 5 21 5 3"/>',
   },

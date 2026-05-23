@@ -8,6 +8,10 @@ export function listTasks(page = 1, pageSize = 15, filters = {}) {
   if (filters.organizationId) params.set('organization_id', filters.organizationId);
   if (filters.status) params.set('status', filters.status);
   if (filters.q) params.set('q', filters.q);
+  if (filters.clientName) params.set('client_name', filters.clientName);
+  if (filters.projectName) params.set('project_name', filters.projectName);
+  if (filters.projectCode) params.set('project_code', filters.projectCode);
+  if (filters.serviceType) params.set('service_type', filters.serviceType);
   return request(`/api/v1/assessment?${params.toString()}`);
 }
 
@@ -19,11 +23,22 @@ export function getTask(taskId) {
   return request(`/api/v1/assessment/${encodeURIComponent(taskId)}`);
 }
 
-export function createTask(file, organizationId, taskName = '') {
+export function createTask(file, {
+  organizationId,
+  taskName = '',
+  clientName = '',
+  projectName = '',
+  projectCode = '',
+  serviceType = '',
+} = {}) {
   const form = new FormData();
   form.append('file', file);
   if (organizationId) form.append('organization_id', organizationId);
   if (taskName?.trim()) form.append('task_name', taskName.trim());
+  if (clientName?.trim()) form.append('client_name', clientName.trim());
+  if (projectName?.trim()) form.append('project_name', projectName.trim());
+  if (projectCode?.trim()) form.append('project_code', projectCode.trim());
+  if (serviceType?.trim()) form.append('service_type', serviceType.trim());
   return request('/api/v1/assessment', { method: 'POST', body: form });
 }
 

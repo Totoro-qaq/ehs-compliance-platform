@@ -284,6 +284,10 @@ class DetectionComplianceService:
         filename: str | None,
         content: bytes,
         report_name: str | None = None,
+        client_name: str | None = None,
+        project_name: str | None = None,
+        project_code: str | None = None,
+        service_type: str | None = None,
     ) -> DetectionReportCreateResponse:
         ensure_client_org_id_allowed(actor, requested_organization_id=organization_id)
         if not is_uuid(organization_id):
@@ -316,6 +320,10 @@ class DetectionComplianceService:
             organization_id=organization_id,
             filename=display_name,
             report_name=business_name,
+            client_name=_clean_display_name(client_name),
+            project_name=_clean_display_name(project_name),
+            project_code=_clean_display_name(project_code)[:64] if _clean_display_name(project_code) else None,
+            service_type=_clean_display_name(service_type)[:64] if _clean_display_name(service_type) else None,
             report_type=parsed_type,
             file_path=file_path,
             created_by_id=actor.account_id,
@@ -354,6 +362,10 @@ class DetectionComplianceService:
             return DetectionReportCreateResponse(
                 report_id=report.id,
                 report_name=report.report_name,
+                client_name=report.client_name,
+                project_name=report.project_name,
+                project_code=report.project_code,
+                service_type=report.service_type,
                 status=report.status,
                 report_type=report.report_type,
                 sample_count=len(parsed.samples),
@@ -385,6 +397,10 @@ class DetectionComplianceService:
         organization_id: str | None,
         report_type: str | None,
         status: str | None,
+        client_name: str | None = None,
+        project_name: str | None = None,
+        project_code: str | None = None,
+        service_type: str | None = None,
         page: int,
         page_size: int,
     ) -> Page[DetectionReportSummary]:
@@ -412,6 +428,10 @@ class DetectionComplianceService:
             organization_id=oid,
             report_type=parsed_type,
             status=parsed_status,
+            client_name=(client_name or '').strip() or None,
+            project_name=(project_name or '').strip() or None,
+            project_code=(project_code or '').strip() or None,
+            service_type=(service_type or '').strip() or None,
             page=page,
             page_size=page_size,
         )

@@ -41,6 +41,11 @@ class AssessmentService:
         return cleaned[:255] if cleaned else None
 
     @staticmethod
+    def _clean_project_code(value: str | None) -> str | None:
+        cleaned = (value or '').strip()
+        return cleaned[:64] if cleaned else None
+
+    @staticmethod
     def _default_task_name(organization_name: str | None) -> str:
         org_name = (organization_name or '默认公司').strip() or '默认公司'
         return f'{org_name} EHS合规评价 {date.today().isoformat()}'[:255]
@@ -103,6 +108,10 @@ class AssessmentService:
         task_name: str | None,
         content_type: str,
         file_bytes: bytes,
+        client_name: str | None = None,
+        project_name: str | None = None,
+        project_code: str | None = None,
+        service_type: str | None = None,
     ) -> AssessmentCreateResponse:
         ensure_client_org_id_allowed(actor, requested_organization_id=organization_id)
         if not is_uuid(organization_id):
@@ -141,6 +150,10 @@ class AssessmentService:
             organization_id=organization_id,
             filename=display_name,
             task_name=business_name,
+            client_name=AssessmentService._clean_display_name(client_name),
+            project_name=AssessmentService._clean_display_name(project_name),
+            project_code=AssessmentService._clean_project_code(project_code),
+            service_type=AssessmentService._clean_project_code(service_type),
             content_type=content_type,
             file_path=str(file_path),
             created_by_id=actor.account_id,
@@ -148,7 +161,7 @@ class AssessmentService:
 
         AssessmentService._enqueue_assessment_task(task.id)
 
-        return AssessmentCreateResponse(task_id=task.id, task_name=task.task_name, status=task.status)
+        return AssessmentCreateResponse.model_validate(task)
 
     @staticmethod
     def get_assessment_task(*, db: Session, actor: CurrentUser, task_id: str):
@@ -167,6 +180,10 @@ class AssessmentService:
         organization_id: str | None,
         status: str | None,
         q: str | None,
+        client_name: str | None = None,
+        project_name: str | None = None,
+        project_code: str | None = None,
+        service_type: str | None = None,
         page: int,
         page_size: int,
     ) -> Page[AssessmentStatusResponse]:
@@ -211,9 +228,20 @@ class AssessmentService:
                 or_(
                     AssessmentTask.task_name.like(like),
                     AssessmentTask.filename.like(like),
+                    AssessmentTask.client_name.like(like),
+                    AssessmentTask.project_name.like(like),
+                    AssessmentTask.project_code.like(like),
                     AssessmentTask.id == query,
                 )
             )
+        if client_name:
+            filters.append(AssessmentTask.client_name.like(f'%{client_name.strip()}%'))
+        if project_name:
+            filters.append(AssessmentTask.project_name.like(f'%{project_name.strip()}%'))
+        if project_code:
+            filters.append(AssessmentTask.project_code.like(f'%{project_code.strip()}%'))
+        if service_type:
+            filters.append(AssessmentTask.service_type == service_type.strip())
 
         dao = AssessmentDAO(db)
         items, total = dao.list_page(
@@ -270,5 +298,9 @@ class AssessmentService:
         return AssessmentCreateResponse(
             task_id=reset_task.id,
             task_name=reset_task.task_name,
+            client_name=reset_task.client_name,
+            project_name=reset_task.project_name,
+            project_code=reset_task.project_code,
+            service_type=reset_task.service_type,
             status=reset_task.status,
         )

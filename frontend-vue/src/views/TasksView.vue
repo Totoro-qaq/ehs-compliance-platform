@@ -34,6 +34,10 @@ const organizations = ref([]);
 const orgSelected = ref('');
 const statusFilter = ref('');
 const searchText = ref('');
+const clientNameFilter = ref('');
+const projectNameFilter = ref('');
+const projectCodeFilter = ref('');
+const serviceTypeFilter = ref('');
 
 const showUpload = ref(false);
 const fileInput = ref(null);
@@ -41,6 +45,10 @@ const fileLabel = ref('点击或拖拽文件到此处');
 const hasFile = ref(false);
 const selectedFile = ref(null);
 const taskName = ref('');
+const taskClientName = ref('');
+const taskProjectName = ref('');
+const taskProjectCode = ref('');
+const taskServiceType = ref('评价');
 const uploadBusy = ref(false);
 
 const drawerOpen = ref(false);
@@ -124,6 +132,10 @@ async function loadTasks({ silent = false } = {}) {
       organizationId: orgSelected.value,
       status: statusFilter.value,
       q: searchText.value.trim(),
+      clientName: clientNameFilter.value.trim(),
+      projectName: projectNameFilter.value.trim(),
+      projectCode: projectCodeFilter.value.trim(),
+      serviceType: serviceTypeFilter.value,
     });
     tasks.value = page?.items || [];
     totalTasks.value = page?.total || 0;
@@ -209,6 +221,10 @@ function resetUpload() {
   selectedFile.value = null;
   fileLabel.value = '点击或拖拽文件到此处';
   taskName.value = '';
+  taskClientName.value = '';
+  taskProjectName.value = '';
+  taskProjectCode.value = '';
+  taskServiceType.value = '评价';
 }
 
 async function submitUpload() {
@@ -217,7 +233,14 @@ async function submitUpload() {
   try {
     const file = selectedFile.value || fileInput.value?.files?.[0];
     if (!file) throw new Error('请选择文件');
-    const data = await createTask(file, orgSelected.value, taskName.value);
+    const data = await createTask(file, {
+      organizationId: orgSelected.value,
+      taskName: taskName.value,
+      clientName: taskClientName.value,
+      projectName: taskProjectName.value,
+      projectCode: taskProjectCode.value,
+      serviceType: taskServiceType.value,
+    });
     session.setSelectedTaskId(data.task_id);
     resetUpload();
     showUpload.value = false;
@@ -356,6 +379,10 @@ function applyProgressPayload(payload) {
 function taskMatchesCurrentFilters(task) {
   if (!task) return false;
   if (statusFilter.value && task.status !== statusFilter.value) return false;
+  if (clientNameFilter.value && !(task.client_name || '').includes(clientNameFilter.value.trim())) return false;
+  if (projectNameFilter.value && !(task.project_name || '').includes(projectNameFilter.value.trim())) return false;
+  if (projectCodeFilter.value && !(task.project_code || '').includes(projectCodeFilter.value.trim())) return false;
+  if (serviceTypeFilter.value && task.service_type !== serviceTypeFilter.value) return false;
 
   const q = searchText.value.trim().toLowerCase();
   if (!q) return true;
@@ -363,7 +390,17 @@ function taskMatchesCurrentFilters(task) {
   const businessName = (task.task_name || '').toLowerCase();
   const filename = (task.filename || '').toLowerCase();
   const taskId = (task.task_id || '').toLowerCase();
-  return businessName.includes(q) || filename.includes(q) || taskId === q;
+  const clientName = (task.client_name || '').toLowerCase();
+  const projectName = (task.project_name || '').toLowerCase();
+  const projectCode = (task.project_code || '').toLowerCase();
+  return (
+    businessName.includes(q) ||
+    filename.includes(q) ||
+    clientName.includes(q) ||
+    projectName.includes(q) ||
+    projectCode.includes(q) ||
+    taskId === q
+  );
 }
 
 function syncTaskInList(task) {
@@ -412,11 +449,31 @@ function onSearchInput() {
 function resetFilters() {
   statusFilter.value = '';
   searchText.value = '';
+  clientNameFilter.value = '';
+  projectNameFilter.value = '';
+  projectCodeFilter.value = '';
+  serviceTypeFilter.value = '';
   applyFilters();
+}
+
+function contextParts(record) {
+  const parts = [];
+  if (record?.client_name) parts.push(`客户：${record.client_name}`);
+  if (record?.project_name) parts.push(`项目：${record.project_name}`);
+  if (record?.project_code) parts.push(`编号：${record.project_code}`);
+  if (record?.service_type) parts.push(`服务：${record.service_type}`);
+  return parts;
+}
+
+function contextText(record) {
+  return contextParts(record).join(' · ');
 }
 
 const drawerSummary = computed(() => activeTask.value?.result?.summary || '');
 const drawerRisks = computed(() => activeTask.value?.result?.risks || []);
+const drawerCriticalRiskCount = computed(
+  () => drawerRisks.value.filter((risk) => riskSeverity(risk) === 'CRITICAL').length,
+);
 const drawerHighRiskCount = computed(
   () => drawerRisks.value.filter((risk) => riskSeverity(risk) === 'HIGH').length,
 );
@@ -468,7 +525,28 @@ function riskTitle(risk, index) {
 }
 
 function riskSeverity(risk) {
-  return risk.severity || risk.risk_level || 'MEDIUM';
+  const raw = String(risk.severity || risk.risk_level || 'MEDIUM').trim().toUpperCase();
+  const aliases = {
+    SERIOUS: 'CRITICAL',
+    URGENT: 'CRITICAL',
+    MAJOR: 'CRITICAL',
+    重大: 'CRITICAL',
+    严重: 'CRITICAL',
+    紧急: 'CRITICAL',
+    高: 'HIGH',
+    中: 'MEDIUM',
+    低: 'LOW',
+  };
+  return aliases[raw] || (['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].includes(raw) ? raw : 'MEDIUM');
+}
+
+function riskSeverityText(level) {
+  return {
+    CRITICAL: '重大',
+    HIGH: '高',
+    MEDIUM: '中',
+    LOW: '低',
+  }[level] || level;
 }
 
 async function copyRiskAdvice(risk) {
@@ -573,6 +651,28 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
                 :placeholder="taskNamePlaceholder"
               />
             </label>
+            <label class="form-field">
+              <span class="label-text">委托单位 / 客户公司</span>
+              <input v-model="taskClientName" type="text" maxlength="255" placeholder="例如：某某制造有限公司" />
+            </label>
+            <label class="form-field">
+              <span class="label-text">项目名称</span>
+              <input v-model="taskProjectName" type="text" maxlength="255" placeholder="例如：年度职业卫生评价" />
+            </label>
+            <label class="form-field">
+              <span class="label-text">项目编号</span>
+              <input v-model="taskProjectCode" type="text" maxlength="64" placeholder="可选" />
+            </label>
+            <label class="form-field">
+              <span class="label-text">服务类型</span>
+              <select v-model="taskServiceType">
+                <option value="">未指定</option>
+                <option value="评价">评价</option>
+                <option value="检测">检测</option>
+                <option value="整改">整改</option>
+                <option value="综合">综合</option>
+              </select>
+            </label>
             <label class="form-field file-field">
               <span class="label-text">评价文件</span>
               <div :class="['file-drop', { 'has-file': hasFile }]">
@@ -618,7 +718,7 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
           <small>失败</small>
         </button>
       </div>
-      <div class="task-filters">
+      <div class="task-filters project-filters">
         <label class="filter-field">
           <span class="label-text">状态</span>
           <select v-model="statusFilter" @change="applyFilters">
@@ -634,8 +734,31 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
         </label>
         <label class="filter-field filter-search">
           <span class="label-text">搜索</span>
-          <input v-model="searchText" type="search" placeholder="任务名称、文件名或任务 ID" @input="onSearchInput" />
+          <input v-model="searchText" type="search" placeholder="任务、文件、客户、项目或任务 ID" @input="onSearchInput" />
         </label>
+        <label class="filter-field">
+          <span class="label-text">客户</span>
+          <input v-model="clientNameFilter" type="search" placeholder="委托单位" @keydown.enter="applyFilters" />
+        </label>
+        <label class="filter-field">
+          <span class="label-text">项目</span>
+          <input v-model="projectNameFilter" type="search" placeholder="项目名称" @keydown.enter="applyFilters" />
+        </label>
+        <label class="filter-field">
+          <span class="label-text">项目编号</span>
+          <input v-model="projectCodeFilter" type="search" placeholder="编号" @keydown.enter="applyFilters" />
+        </label>
+        <label class="filter-field">
+          <span class="label-text">服务类型</span>
+          <select v-model="serviceTypeFilter" @change="applyFilters">
+            <option value="">全部类型</option>
+            <option value="评价">评价</option>
+            <option value="检测">检测</option>
+            <option value="整改">整改</option>
+            <option value="综合">综合</option>
+          </select>
+        </label>
+        <button type="button" class="btn-secondary filter-reset" @click="applyFilters">查询</button>
         <button type="button" class="btn-secondary filter-reset" @click="resetFilters">重置</button>
       </div>
       <div class="task-list-header">
@@ -657,6 +780,7 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
           <thead>
             <tr>
               <th>任务名称</th>
+              <th>客户 / 项目</th>
               <th>状态</th>
               <th>进度</th>
               <th>风险数</th>
@@ -666,7 +790,7 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
           </thead>
           <tbody>
             <tr v-if="!tasks.length" class="empty-row">
-              <td colspan="6">暂无评价任务</td>
+              <td colspan="7">暂无评价任务</td>
             </tr>
             <tr
               v-for="task in tasks"
@@ -678,6 +802,13 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
               <td>
                 <span class="task-filename">{{ task.task_name || task.filename || task.task_id }}</span>
                 <small v-if="task.filename" class="subtle-line">来源文件：{{ task.filename }}</small>
+              </td>
+              <td>
+                <span v-if="task.client_name || task.project_name" class="task-filename">
+                  {{ task.client_name || '-' }}
+                </span>
+                <small v-if="contextText(task)" class="subtle-line">{{ contextText(task) }}</small>
+                <span v-else>-</span>
               </td>
               <td>
                 <span :class="['status-badge', task.status || '']">{{ statusText(task.status) }}</span>
@@ -756,6 +887,10 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
                 <span>{{ activeRiskCount }}</span>
                 <small>风险项</small>
               </div>
+              <div class="drawer-summary-tile critical">
+                <span>{{ drawerCriticalRiskCount }}</span>
+                <small>重大风险</small>
+              </div>
               <div class="drawer-summary-tile danger">
                 <span>{{ drawerHighRiskCount }}</span>
                 <small>高风险</small>
@@ -764,16 +899,20 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
                 <span>{{ drawerMediumRiskCount }}</span>
                 <small>中风险</small>
               </div>
-              <div class="drawer-summary-tile info">
-                <span>{{ activeTask.progress ?? 0 }}%</span>
-                <small>{{ statusStageText(activeTask.status) }}</small>
-              </div>
             </div>
             <dl class="detail-meta">
               <dt>任务 ID</dt>
               <dd>{{ activeTask.task_id }}</dd>
               <dt>来源文件</dt>
               <dd>{{ activeTask.filename || '-' }}</dd>
+              <dt>委托单位</dt>
+              <dd>{{ activeTask.client_name || '-' }}</dd>
+              <dt>项目名称</dt>
+              <dd>{{ activeTask.project_name || '-' }}</dd>
+              <dt>项目编号</dt>
+              <dd>{{ activeTask.project_code || '-' }}</dd>
+              <dt>服务类型</dt>
+              <dd>{{ activeTask.service_type || '-' }}</dd>
               <dt>状态</dt>
               <dd>
                 <span :class="['status-badge', activeTask.status || '']">{{
@@ -830,6 +969,13 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
                   <button type="button" :class="{ active: riskFilter === 'ALL' }" @click="riskFilter = 'ALL'">
                     全部
                   </button>
+                  <button
+                    type="button"
+                    :class="{ active: riskFilter === 'CRITICAL' }"
+                    @click="riskFilter = 'CRITICAL'"
+                  >
+                    重大 {{ drawerCriticalRiskCount }}
+                  </button>
                   <button type="button" :class="{ active: riskFilter === 'HIGH' }" @click="riskFilter = 'HIGH'">
                     高 {{ drawerHighRiskCount }}
                   </button>
@@ -845,7 +991,9 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
               <div v-for="(risk, idx) in filteredDrawerRisks" :key="idx" class="risk-card">
                 <div class="risk-card-header">
                   <span class="risk-card-title">{{ riskTitle(risk, idx) }}</span>
-                  <span :class="['risk-severity', riskSeverity(risk)]">{{ riskSeverity(risk) }}</span>
+                  <span :class="['risk-severity', riskSeverity(risk)]">
+                    {{ riskSeverityText(riskSeverity(risk)) }}
+                  </span>
                 </div>
                 <div class="risk-card-body">
                   <p v-if="risk.recommendation || risk.rectification_advice">

@@ -10,8 +10,14 @@ from app.models.db_models import TaskStatus
 class AssessmentCreateResponse(BaseModel):
     """创建评价任务后的简要结果。"""
 
-    task_id: str = Field(description='新建任务的唯一 ID')
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    task_id: str = Field(alias='id', serialization_alias='task_id', description='新建任务的唯一 ID')
     task_name: str | None = Field(default=None, description='面向用户展示的评价任务名称')
+    client_name: str | None = Field(default=None, description='委托单位 / 客户公司')
+    project_name: str | None = Field(default=None, description='项目名称')
+    project_code: str | None = Field(default=None, description='项目编号')
+    service_type: str | None = Field(default=None, description='服务类型')
     status: TaskStatus = Field(description='任务当前状态（创建后多为 PENDING）')
 
 
@@ -41,6 +47,10 @@ class AssessmentStatusResponse(BaseModel):
     task_id: str = Field(alias='id', serialization_alias='task_id', description='任务 ID')
     organization_id: str = Field(description='所属公司 ID')
     task_name: str | None = Field(default=None, description='面向用户展示的评价任务名称')
+    client_name: str | None = Field(default=None, description='委托单位 / 客户公司')
+    project_name: str | None = Field(default=None, description='项目名称')
+    project_code: str | None = Field(default=None, description='项目编号')
+    service_type: str | None = Field(default=None, description='服务类型')
     filename: str = Field(description='上传时的展示文件名')
     status: TaskStatus = Field(description='处理状态')
     progress: int = Field(description='进度 0–100')

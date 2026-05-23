@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api.v1.endpoints.admin import router as admin_router
+from app.api.v1.endpoints.agent import router as agent_router
 from app.api.v1.endpoints.assessment import router as assessment_router
 from app.api.v1.endpoints.assessment_sse import router as assessment_sse_router
 from app.api.v1.endpoints.auth import router as auth_router
@@ -29,6 +30,7 @@ business_api_v1.include_router(organizations_router)
 business_api_v1.include_router(assessment_router)
 business_api_v1.include_router(assessment_sse_router)
 business_api_v1.include_router(detection_router)
+business_api_v1.include_router(agent_router)
 
 
 def include_api_v1(app) -> None:

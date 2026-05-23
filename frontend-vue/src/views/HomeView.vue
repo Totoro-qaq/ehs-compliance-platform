@@ -1,11 +1,13 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { chatWithAgent } from '../api/agent';
 import { listTasks, getPublicStats } from '../api/assessment';
 import { formatApiError } from '../api/client';
 import { listDetectionReports } from '../api/detection';
 import { useSessionStore } from '../stores/session';
 import { formatTime, statusText } from '../utils/format';
+import Icon from '../components/Icon.vue';
 
 const router = useRouter();
 const route = useRoute();
@@ -29,9 +31,26 @@ const failedReportItems = ref([]);
 const workbenchBusy = ref(false);
 const todoCategory = ref('all');
 const todoPage = ref(1);
+const agentSessionId = ref('');
+const agentInput = ref('');
+const agentAnswer = ref('');
+const agentError = ref('');
+const agentBusy = ref(false);
+const agentDegraded = ref(false);
+const agentResponseMode = ref('model');
+const supportOpen = ref(false);
+const supportInput = ref('');
+const supportMessages = ref([
+  {
+    role: 'assistant',
+    content: '留下一个问题或选择上方服务路径，我们会按试点验证、部署评估、方案演示三个方向给你建议。',
+    handoff: false,
+  },
+]);
 
 const TODO_PAGE_SIZE = 5;
 const TODO_FETCH_PAGE_SIZE = 20;
+const SUPPORT_EMAIL = 'msy626836554@gmail.com';
 
 const showWorkbench = computed(() => Boolean(session.token) && route.query.view === 'workbench');
 const statsBusy = computed(() => publicStatsBusy.value || workbenchBusy.value);
@@ -91,7 +110,7 @@ const capabilityCards = [
 const proofCards = [
   { title: '更快形成结论', desc: '把资料解析、风险识别、条款匹配合并到一条工作流。' },
   { title: '结果可复核', desc: '输出风险等级、依据条款、整改建议和原始证据来源。' },
-  { title: '适合企业管理', desc: '支持公司归属、管理员视图、任务状态和检测报告管理。' },
+  { title: '适合企业与机构', desc: '支持甲方内部管理，也支持第三方按委托单位和项目归档资料。' },
 ];
 
 const workflowSteps = [
@@ -107,6 +126,26 @@ const intelligenceCards = [
   { title: '审计留痕', value: '全链路', desc: '任务、报告、分析过程和后续 Agent 调用可追溯。' },
   { title: '知识增强', value: '可扩展', desc: '法规、限值、历史报告和整改模板可持续沉淀。' },
 ];
+
+const agentQuickPrompts = [
+  '总结当前工作台',
+  '有哪些待处理事项',
+  '最近失败的任务是什么',
+  '检测报告还有哪些没判定',
+];
+
+const supportQuickPrompts = ['获取试点方案', '上传样例评估', '私有化部署', '项目顾问'];
+const consultationCards = [
+  { title: '解决方案咨询', desc: '按企业甲方或第三方检测评价机构场景梳理模块组合和上线路径。', prompt: '预约演示' },
+  { title: '数据样例评估', desc: '用脱敏报告验证解析、限值判定、风险摘要和权限隔离。', prompt: '上传样例评估' },
+  { title: '私有化部署对接', desc: '确认服务器、模型服务、内网访问、系统对接和审计要求。', prompt: '私有化部署' },
+];
+const consultationStats = [
+  { value: '3 类', label: '试点场景' },
+  { value: '只读', label: '数据评估' },
+  { value: '私有化', label: '部署路径' },
+];
+const consultationSteps = ['需求沟通', '样例验证', '部署方案'];
 
 const workbenchStats = computed(() => [
   { label: '已服务公司', value: publicCompaniesServed.value, tone: 'accent' },
@@ -170,6 +209,7 @@ function buildTodoItem({ kind, type, record, priority }) {
     module: kind === 'assessment' ? '评价' : '检测',
     route: kind === 'assessment' ? 'tasks' : 'detection',
     title: record?.task_name || record?.report_name || record?.filename || fallbackId || '-',
+    context: contextText(record),
     status: record?.status || '',
     statusLabel: kind === 'assessment' ? statusText(record?.status) : reportStatusText(record?.status),
     timeValue,
@@ -180,6 +220,19 @@ function buildTodoItem({ kind, type, record, priority }) {
 
 function reportStatusText(status) {
   return REPORT_STATUS_TEXT[status] || status || '-';
+}
+
+function contextParts(record) {
+  const parts = [];
+  if (record?.client_name) parts.push(`客户：${record.client_name}`);
+  if (record?.project_name) parts.push(`项目：${record.project_name}`);
+  if (record?.project_code) parts.push(`编号：${record.project_code}`);
+  if (record?.service_type) parts.push(`服务：${record.service_type}`);
+  return parts;
+}
+
+function contextText(record) {
+  return contextParts(record).join(' · ');
 }
 
 function numberOrZero(value) {
@@ -311,6 +364,90 @@ function openTodoTarget() {
   nav('tasks');
 }
 
+function openAgent() {
+  nav('agent');
+}
+
+async function askAgent(question = agentInput.value) {
+  const content = (question || '').trim();
+  if (!content || agentBusy.value) return;
+
+  agentBusy.value = true;
+  agentError.value = '';
+  try {
+    const data = await chatWithAgent({
+      content,
+      sessionId: agentSessionId.value,
+    });
+    agentSessionId.value = data?.session?.id || agentSessionId.value;
+    agentAnswer.value = data?.assistant_message?.content || 'Agent 暂无返回内容。';
+    agentDegraded.value = Boolean(data?.degraded);
+    agentResponseMode.value =
+      data?.run?.provider === 'rules' || data?.run?.model_name === 'fast-summary' ? 'rules' : 'model';
+    agentInput.value = '';
+  } catch (err) {
+    agentError.value = formatApiError(err);
+  } finally {
+    agentBusy.value = false;
+  }
+}
+
+function useAgentPrompt(prompt) {
+  agentInput.value = prompt;
+  askAgent(prompt);
+}
+
+function supportReply(content) {
+  const text = content.toLowerCase();
+  if (['人工', '顾问', '联系', '电话', '邮箱', '报价', '价格', '演示', '预约', '项目顾问'].some((key) => text.includes(key))) {
+    return {
+      content: `建议进入顾问对接。你可以发邮件到 ${SUPPORT_EMAIL}，说明公司名称、行业场景、现有资料类型和预计部署方式，我们按试点验证和部署方案跟进。`,
+      handoff: true,
+    };
+  }
+  if (['样例', '评估', '试点', '试用', '体验', '开始', '登录', '注册', '上传'].some((key) => text.includes(key))) {
+    return {
+      content: '建议先用脱敏样例做试点验证：评价材料看风险识别和依据输出，检测报告看解析、限值匹配和判定结果，再评估是否进入私有化部署。',
+      handoff: false,
+    };
+  }
+  if (['方案', '需求', '匹配', '场景', '能做什么', '功能', '适用', '职业卫生', '环保', '安全'].some((key) => text.includes(key))) {
+    return {
+      content: '适合按场景匹配方案：企业甲方可做安全、环保、职业卫生内部合规管理；第三方检测评价机构可按委托单位和项目归档资料、解析报告、复核判定。核心交付是资料解析、风险识别、条款匹配、检测限值判定和整改闭环。',
+      handoff: false,
+    };
+  }
+  if (['部署', '私有化', '内网', '本地', '数据', '权限', '对接', '系统'].some((key) => text.includes(key))) {
+    return {
+      content: '私有化部署需要确认服务器资源、模型服务、内网访问、账号组织隔离、审计留痕和现有系统对接方式。建议先做一轮脱敏样例评估再定部署方案。',
+      handoff: false,
+    };
+  }
+  if (['agent', '助手', '总结', '工作台', '失败任务', '检测报告'].some((key) => text.includes(key))) {
+    return {
+      content: '商务咨询入口只负责产品介绍和试用路径。登录后可以打开工作台里的“AI 合规助手”，它会按账号权限读取工作台、评价任务、检测报告和限值库摘要。',
+      handoff: false,
+    };
+  }
+  return {
+    content: '这个问题需要结合具体业务场景确认，建议预约项目顾问，避免给你不可靠的信息。',
+    handoff: true,
+  };
+}
+
+function askSupport(question = supportInput.value) {
+  const content = (question || '').trim();
+  if (!content) return;
+  supportOpen.value = true;
+  supportMessages.value.push({ role: 'user', content, handoff: false });
+  supportMessages.value.push({ role: 'assistant', ...supportReply(content) });
+  supportInput.value = '';
+}
+
+function contactHuman() {
+  window.location.href = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('EHS 系统咨询')}`;
+}
+
 function scrollToFeatures() {
   document.querySelector('.features')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -400,14 +537,52 @@ watch(todoTotalPages, (pages) => {
             <strong>限值库</strong>
             <span>查询职业卫生和物理因素限值</span>
           </button>
-          <button v-if="session.isAdmin" type="button" class="quick-action" @click="nav('orgs')">
-            <strong>公司管理</strong>
-            <span>维护组织信息和归属关系</span>
-          </button>
-          <button v-else type="button" class="quick-action" @click="nav('settings')">
-            <strong>账户设置</strong>
-            <span>管理个人信息、密码和 API 连接</span>
-          </button>
+        </div>
+      </section>
+
+      <section class="workbench-panel agent-panel">
+        <div class="agent-panel-main">
+          <div class="agent-panel-copy">
+            <span class="workbench-kicker">AI 合规助手</span>
+            <h2>先读业务数据，再给处理建议</h2>
+            <p>当前阶段为只读 Agent，会按账号权限读取工作台、评价任务、检测报告和限值库摘要。</p>
+            <button type="button" class="btn-secondary btn-sm agent-open-btn" @click="openAgent">打开完整会话</button>
+          </div>
+          <div class="agent-prompt-stack">
+            <div class="agent-quick-prompts">
+              <button
+                v-for="prompt in agentQuickPrompts"
+                :key="prompt"
+                type="button"
+                :disabled="agentBusy"
+                @click="useAgentPrompt(prompt)"
+              >
+                {{ prompt }}
+              </button>
+            </div>
+            <form class="agent-input-row" @submit.prevent="askAgent()">
+              <textarea
+                v-model="agentInput"
+                placeholder="问问当前工作台、失败任务、检测判定或限值库..."
+                :disabled="agentBusy"
+                rows="3"
+                @keydown.enter.exact.prevent="askAgent()"
+              ></textarea>
+              <button type="submit" class="btn-primary" :disabled="agentBusy || !agentInput.trim()">
+                {{ agentBusy ? '分析中' : '发送' }}
+              </button>
+            </form>
+          </div>
+        </div>
+        <div v-if="agentBusy" class="agent-response muted">Agent 正在读取业务数据...</div>
+        <div v-else-if="agentError" class="agent-response error">{{ agentError }}</div>
+        <div v-else-if="agentAnswer" class="agent-response">
+          <div class="agent-response-head">
+            <strong>分析结果</strong>
+            <span v-if="agentDegraded || agentResponseMode === 'rules'">规则摘要</span>
+            <span v-else>模型生成</span>
+          </div>
+          <p>{{ agentAnswer }}</p>
         </div>
       </section>
 
@@ -443,6 +618,7 @@ watch(todoTotalPages, (pages) => {
               >
                 <span>
                   <strong>{{ item.title }}</strong>
+                  <small v-if="item.context">{{ item.context }}</small>
                   <small>
                     <span class="todo-module">{{ item.module }}</span>
                     {{ item.type }} · {{ formatTime(item.timeValue) }}
@@ -488,6 +664,7 @@ watch(todoTotalPages, (pages) => {
             >
               <span>
                 <strong>{{ task.task_name || task.filename || task.task_id }}</strong>
+                <small v-if="contextText(task)">{{ contextText(task) }}</small>
                 <small>{{ formatTime(task.created_at) }}</small>
               </span>
               <span :class="['status-badge', task.status || '']">{{ statusText(task.status) }}</span>
@@ -512,6 +689,7 @@ watch(todoTotalPages, (pages) => {
             >
               <span>
                 <strong>{{ report.report_name || report.filename || report.id }}</strong>
+                <small v-if="contextText(report)">{{ contextText(report) }}</small>
                 <small>{{ formatTime(report.created_at) }}</small>
               </span>
               <span :class="['status-badge', report.status || '']">{{ reportStatusText(report.status) }}</span>
@@ -562,14 +740,14 @@ watch(todoTotalPages, (pages) => {
         </div>
 
         <div class="hero-content commercial-hero-content">
-          <div class="hero-badge">企业级 EHS 合规管理平台</div>
-          <h1 class="hero-title">把 EHS 合规检查从人工比对变成结构化管理</h1>
+          <div class="hero-badge">企业甲方与第三方机构的 EHS 合规分析平台</div>
+          <h1 class="hero-title">把 EHS 检查、检测和评价资料变成结构化管理</h1>
           <p class="hero-desc">
-            面向企业安全、环保、职业卫生团队，自动解析资料、识别风险、匹配标准并生成可追溯的整改建议。
+            面向企业安全环保职业卫生团队，以及第三方检测评价机构，自动解析资料、识别风险、匹配标准并沉淀客户/项目上下文。
           </p>
           <div class="hero-actions">
-            <button v-if="session.token" class="btn-primary btn-lg" @click="openWorkbench">进入工作台</button>
-            <button v-else class="btn-primary btn-lg" @click="nav('tasks')">立即体验</button>
+            <button v-if="session.token" class="btn-primary btn-lg hero-cta-shine" @click="openWorkbench">进入工作台</button>
+            <button v-else class="btn-primary btn-lg hero-cta-shine" @click="nav('tasks')">立即体验</button>
             <button class="btn-secondary btn-lg" @click="scrollToReportPreview">查看示例报告</button>
           </div>
           <div class="hero-trust-list">
@@ -732,6 +910,78 @@ watch(todoTotalPages, (pages) => {
           </article>
         </div>
       </section>
+
+      <aside v-if="!showWorkbench" class="support-assistant" aria-label="商务咨询">
+        <div v-if="supportOpen" class="support-panel">
+          <div class="support-head">
+            <div>
+              <span>方案咨询</span>
+              <strong>匹配 EHS 数字化试点路径</strong>
+            </div>
+            <button type="button" class="support-close" aria-label="关闭商务咨询" @click="supportOpen = false">
+              <Icon name="close" :size="16" />
+            </button>
+          </div>
+          <div class="consultation-metrics">
+            <div v-for="item in consultationStats" :key="item.label">
+              <strong>{{ item.value }}</strong>
+              <span>{{ item.label }}</span>
+            </div>
+          </div>
+          <div class="consultation-card-grid">
+            <button
+              v-for="item in consultationCards"
+              :key="item.title"
+              type="button"
+              class="consultation-card"
+              @click="askSupport(item.prompt)"
+            >
+              <strong>{{ item.title }}</strong>
+              <span>{{ item.desc }}</span>
+            </button>
+          </div>
+          <div class="consultation-steps" aria-label="咨询流程">
+            <span v-for="(step, index) in consultationSteps" :key="step">
+              {{ index + 1 }}. {{ step }}
+            </span>
+          </div>
+          <div class="support-messages">
+            <div
+              v-for="(message, index) in supportMessages"
+              :key="index"
+              :class="['support-message', message.role]"
+            >
+              <p>{{ message.content }}</p>
+              <button v-if="message.handoff" type="button" class="support-handoff" @click="contactHuman">
+                预约顾问
+              </button>
+            </div>
+          </div>
+          <div class="support-prompts">
+            <button
+              v-for="prompt in supportQuickPrompts"
+              :key="prompt"
+              type="button"
+              @click="askSupport(prompt)"
+            >
+              {{ prompt }}
+            </button>
+          </div>
+          <form class="support-input" @submit.prevent="askSupport()">
+            <input v-model="supportInput" placeholder="问产品、试用、部署或预约演示..." />
+            <button type="submit" :disabled="!supportInput.trim()">匹配</button>
+          </form>
+        </div>
+        <button type="button" class="support-fab" @click="supportOpen = !supportOpen">
+          <span class="support-fab-icon">
+            <Icon name="message" :size="19" />
+          </span>
+          <span class="support-fab-copy">
+            <strong>方案咨询</strong>
+            <small>试点评估 / 预约演示</small>
+          </span>
+        </button>
+      </aside>
     </template>
   </div>
 </template>
