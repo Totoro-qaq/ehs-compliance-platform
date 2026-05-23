@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from unittest.mock import AsyncMock
 
 from fastapi.testclient import TestClient
@@ -11,10 +12,16 @@ from app.models.db_models import (
     AgentRun,
     AgentToolCall,
     AssessmentTask,
+    ComplianceResult,
+    ComplianceStatus,
+    DetectionMeasurement,
     DetectionReport,
+    DetectionSample,
+    LimitType,
     Organization,
     ReportStatus,
     ReportType,
+    SampleMedium,
     TaskStatus,
 )
 
@@ -492,3 +499,131 @@ def test_agent_filters_detection_by_client_project_context(
     assert '安测 A 评价任务' in answer
     assert '安测 B 待判定报告' not in answer
     assert any(call['tool_name'] == 'get_client_project_context' for call in data['tool_calls'])
+
+
+def test_agent_summarizes_detection_compliance_by_client_project_context(
+    client: TestClient,
+    user_token: str,
+    db,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        'app.services.agent_service.AgentService._call_model',
+        AsyncMock(side_effect=RuntimeError('should not call model')),
+    )
+
+    org = db.get(Organization, settings.default_organization_id)
+    assert org is not None
+    report_a = DetectionReport(
+        organization_id=org.id,
+        report_name='安测 A 已判定报告',
+        client_name='安测委托A',
+        project_name='年度检测项目A',
+        project_code='AC-A-001',
+        service_type='检测',
+        filename='client-a-calculated.csv',
+        report_type=ReportType.OCCUPATIONAL_HEALTH,
+        status=ReportStatus.CALCULATED,
+    )
+    report_b = DetectionReport(
+        organization_id=org.id,
+        report_name='安测 B 已判定报告',
+        client_name='安测委托B',
+        project_name='年度检测项目B',
+        project_code='AC-B-001',
+        service_type='检测',
+        filename='client-b-calculated.csv',
+        report_type=ReportType.OCCUPATIONAL_HEALTH,
+        status=ReportStatus.CALCULATED,
+    )
+    db.add_all([report_a, report_b])
+    db.flush()
+
+    sample_a = DetectionSample(
+        report_id=report_a.id,
+        sample_point='A-01',
+        workplace='涂装车间',
+        post_name='喷漆岗',
+        medium=SampleMedium.WORKPLACE_AIR,
+    )
+    sample_b = DetectionSample(
+        report_id=report_b.id,
+        sample_point='B-01',
+        workplace='空压机房',
+        post_name='巡检岗',
+        medium=SampleMedium.NOISE,
+    )
+    db.add_all([sample_a, sample_b])
+    db.flush()
+
+    measurement_a = DetectionMeasurement(
+        sample_id=sample_a.id,
+        indicator_name='测试因子甲',
+        raw_value=Decimal('8.0'),
+        raw_unit='mg/m3',
+        normalized_value=Decimal('8.0'),
+        normalized_unit='mg/m3',
+    )
+    measurement_b = DetectionMeasurement(
+        sample_id=sample_b.id,
+        indicator_name='噪声',
+        raw_value=Decimal('92'),
+        raw_unit='dB(A)',
+        normalized_value=Decimal('92'),
+        normalized_unit='dB(A)',
+    )
+    db.add_all([measurement_a, measurement_b])
+    db.flush()
+
+    db.add_all(
+        [
+            ComplianceResult(
+                report_id=report_a.id,
+                sample_id=sample_a.id,
+                measurement_id=measurement_a.id,
+                calculated_value=Decimal('8.0'),
+                calculated_unit='mg/m3',
+                limit_value=Decimal('6.0'),
+                limit_unit='mg/m3',
+                limit_type=LimitType.PC_TWA,
+                status=ComplianceStatus.EXCEEDED,
+                exceedance_multiple=Decimal('0.3333'),
+                standard_code='TEST-STD 2.1-2019',
+                clause='第4.1条',
+            ),
+            ComplianceResult(
+                report_id=report_b.id,
+                sample_id=sample_b.id,
+                measurement_id=measurement_b.id,
+                calculated_value=Decimal('92'),
+                calculated_unit='dB(A)',
+                limit_value=Decimal('85'),
+                limit_unit='dB(A)',
+                limit_type=LimitType.INSTANT,
+                status=ComplianceStatus.EXCEEDED,
+                exceedance_multiple=Decimal('0.0824'),
+                standard_code='TEST-STD 2.2-2007',
+                clause='第11条',
+            ),
+        ]
+    )
+    db.commit()
+
+    resp = client.post(
+        '/api/v1/agent/chat',
+        json={'content': '客户安测委托A 项目年度检测项目A 哪些检测结果超标'},
+        headers=_auth(user_token),
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()['data']
+    answer = data['assistant_message']['content']
+    assert data['run']['provider'] == 'rules'
+    assert data['run']['model_name'] == 'fast-summary'
+    assert '检测判定结果' in answer
+    assert '超标 1 条' in answer
+    assert '测试因子甲' in answer
+    assert '安测 A 已判定报告' in answer
+    assert '安测 B 已判定报告' not in answer
+    assert '噪声' not in answer
+    assert any(call['tool_name'] == 'summarize_detection_compliance' for call in data['tool_calls'])
