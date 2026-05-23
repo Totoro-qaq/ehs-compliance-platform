@@ -7,7 +7,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import EHSException
@@ -215,6 +215,9 @@ class AgentTools:
                 status = 'PENDING_CALCULATION'
             tools.append(('list_detection_reports', {'status': status, 'limit': 8, **context_args}))
 
+        if any(key in user_text for key in ('超标', '合规', '判定结果', '需复核', '复核', '临界')):
+            tools.append(('summarize_detection_compliance', {'limit': 8, **context_args}))
+
         if any(key in user_text for key in ('限值', '法规', '标准', '条款', 'cas', 'CAS')):
             tools.append(('search_regulatory_limits', {'query': user_text, 'limit': 8}))
 
@@ -272,6 +275,13 @@ class AgentTools:
                 db=db,
                 actor=actor,
                 report_id=str(arguments.get('report_id') or ''),
+            )
+        elif tool_name == 'summarize_detection_compliance':
+            result = AgentTools.summarize_detection_compliance(
+                db=db,
+                actor=actor,
+                context_query=arguments.get('context_query'),
+                limit=int(arguments.get('limit') or 5),
             )
         elif tool_name == 'search_regulatory_limits':
             result = AgentTools.search_regulatory_limits(
@@ -573,6 +583,104 @@ class AgentTools:
             'error_message': _short(report.error_message),
             'created_at': _dt(report.created_at),
             'updated_at': _dt(report.updated_at),
+        }
+
+    @staticmethod
+    def summarize_detection_compliance(
+        *,
+        db: Session,
+        actor: CurrentUser,
+        context_query: str | None = None,
+        limit: int = 5,
+    ) -> dict[str, Any]:
+        report_filters = _actor_org_filter(actor, DetectionReport)
+        context_clause = _context_filter(DetectionReport, context_query)
+        if context_clause is not None:
+            report_filters.append(context_clause)
+        max_items = _safe_limit(limit)
+
+        status_rows = db.execute(
+            select(ComplianceResult.status, func.count())
+            .join(DetectionReport, DetectionReport.id == ComplianceResult.report_id)
+            .where(*report_filters)
+            .group_by(ComplianceResult.status)
+        ).all()
+        status_counts = {status.value: count for status, count in status_rows}
+        report_count = (
+            db.scalar(
+                select(func.count(func.distinct(DetectionReport.id)))
+                .select_from(ComplianceResult)
+                .join(DetectionReport, DetectionReport.id == ComplianceResult.report_id)
+                .where(*report_filters)
+            )
+            or 0
+        )
+
+        priority = case(
+            (ComplianceResult.status == ComplianceStatus.EXCEEDED, 0),
+            (ComplianceResult.status == ComplianceStatus.NEEDS_REVIEW, 1),
+            (ComplianceResult.status == ComplianceStatus.BORDERLINE, 2),
+            else_=3,
+        )
+        finding_rows = db.execute(
+            select(ComplianceResult, DetectionReport, DetectionSample, DetectionMeasurement)
+            .join(DetectionReport, DetectionReport.id == ComplianceResult.report_id)
+            .join(DetectionSample, DetectionSample.id == ComplianceResult.sample_id)
+            .join(DetectionMeasurement, DetectionMeasurement.id == ComplianceResult.measurement_id)
+            .where(
+                *report_filters,
+                ComplianceResult.status.in_(
+                    [
+                        ComplianceStatus.EXCEEDED,
+                        ComplianceStatus.NEEDS_REVIEW,
+                        ComplianceStatus.BORDERLINE,
+                    ]
+                ),
+            )
+            .order_by(priority.asc(), ComplianceResult.exceedance_multiple.desc(), ComplianceResult.updated_at.desc())
+            .limit(max_items)
+        ).all()
+
+        findings = []
+        for result, report, sample, measurement in finding_rows:
+            findings.append(
+                {
+                    'report_id': report.id,
+                    'report_name': report.report_name,
+                    **_client_project_fields(report),
+                    'filename': report.filename,
+                    'status': result.status.value,
+                    'sample_point': sample.sample_point,
+                    'workplace': sample.workplace,
+                    'post_name': sample.post_name,
+                    'medium': sample.medium.value,
+                    'indicator_name': measurement.indicator_name,
+                    'calculated_value': _decimal(result.calculated_value),
+                    'calculated_unit': result.calculated_unit,
+                    'limit_value': _decimal(result.limit_value),
+                    'limit_unit': result.limit_unit,
+                    'limit_type': _enum(result.limit_type),
+                    'exceedance_multiple': _decimal(result.exceedance_multiple),
+                    'standard_code': result.standard_code,
+                    'standard_name': result.standard_name,
+                    'clause': result.clause,
+                    'message': _short(result.message),
+                }
+            )
+
+        return {
+            'context_terms': _context_terms(context_query),
+            'report_count': report_count,
+            'counts': {
+                'total': sum(status_counts.values()),
+                'compliant': status_counts.get(ComplianceStatus.COMPLIANT.value, 0),
+                'exceeded': status_counts.get(ComplianceStatus.EXCEEDED.value, 0),
+                'borderline': status_counts.get(ComplianceStatus.BORDERLINE.value, 0),
+                'insufficient': status_counts.get(ComplianceStatus.INSUFFICIENT_DATA.value, 0),
+                'needs_review': status_counts.get(ComplianceStatus.NEEDS_REVIEW.value, 0),
+            },
+            'findings': findings,
+            'limit': max_items,
         }
 
     @staticmethod

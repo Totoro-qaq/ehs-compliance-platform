@@ -11,7 +11,13 @@ from app.core.config import settings
 from app.core.exceptions import EHSException
 from app.core.logging_setup import get_logger
 from app.dao.agent_dao import AgentMessageDAO, AgentRunDAO, AgentSessionDAO, AgentToolCallDAO
-from app.models.db_models import AgentMessageRole, AgentRunStatus, ReportStatus, TaskStatus
+from app.models.db_models import (
+    AgentMessageRole,
+    AgentRunStatus,
+    ComplianceStatus,
+    ReportStatus,
+    TaskStatus,
+)
 from app.schemas.agent_schema import AgentChatResponse
 from app.schemas.auth_context import CurrentUser
 from app.schemas.pagination import Page
@@ -30,6 +36,7 @@ _FAST_SUMMARY_TOOLS = {
     'get_client_project_context',
     'list_assessment_tasks',
     'list_detection_reports',
+    'summarize_detection_compliance',
     'search_regulatory_limits',
 }
 
@@ -105,6 +112,11 @@ _STATUS_LABELS = {
     ReportStatus.VALIDATED.value: '已校验',
     ReportStatus.CALCULATED.value: '已判定',
     ReportStatus.FAILED.value: '失败',
+    ComplianceStatus.COMPLIANT.value: '合规',
+    ComplianceStatus.EXCEEDED.value: '超标',
+    ComplianceStatus.BORDERLINE.value: '临界',
+    ComplianceStatus.INSUFFICIENT_DATA.value: '数据不足',
+    ComplianceStatus.NEEDS_REVIEW.value: '需复核',
     'PENDING_CALCULATION': '待判定',
 }
 
@@ -198,6 +210,12 @@ def _format_record(
     context_suffix = f'，{context}' if context else ''
     suffix = f'，错误：{error}' if error else ''
     return f'{title or "-"}（{_status_label(status)}{context_suffix}{suffix}）'
+
+
+def _format_value_unit(value: Any, unit: Any = None) -> str:
+    if value is None or value == '':
+        return '-'
+    return f'{value}{unit or ""}'
 
 
 def _sanitize_failure_error(error: str | None) -> str:
@@ -658,6 +676,55 @@ class AgentService:
             hidden_count = sum(record['count'] for record in failed_records[3:])
             if hidden_count:
                 lines.append(f'- 另有 {hidden_count} 条失败项未展示，可进入对应模块按失败状态筛选。')
+
+        compliance_summary = _first_tool(tool_results, 'summarize_detection_compliance')
+        if compliance_summary:
+            counts = compliance_summary.get('counts') or {}
+            findings = compliance_summary.get('findings') or []
+            total = int(counts.get('total') or 0)
+            if total or findings:
+                lines.append('检测判定结果：')
+                lines.append(
+                    f'- 覆盖已判定报告 {compliance_summary.get("report_count", 0)} 份，'
+                    f'结果 {total} 条；超标 {counts.get("exceeded", 0)} 条，'
+                    f'需复核 {counts.get("needs_review", 0)} 条，'
+                    f'临界 {counts.get("borderline", 0)} 条，'
+                    f'合规 {counts.get("compliant", 0)} 条。'
+                )
+                if findings:
+                    lines.append('重点判定项：')
+                    for item in findings[:5]:
+                        place = ' / '.join(
+                            part
+                            for part in [
+                                _compact_text(item.get('workplace')),
+                                _compact_text(item.get('post_name')),
+                                _compact_text(item.get('sample_point')),
+                            ]
+                            if part
+                        )
+                        basis = ' '.join(
+                            part
+                            for part in [
+                                _compact_text(item.get('standard_code')),
+                                _compact_text(item.get('clause')),
+                            ]
+                            if part
+                        )
+                        multiple = (
+                            f'，超限倍数 {item.get("exceedance_multiple")}'
+                            if item.get('exceedance_multiple')
+                            else ''
+                        )
+                        lines.append(
+                            f'- {item.get("indicator_name") or "-"}（{_status_label(item.get("status"))}）：'
+                            f'{_format_value_unit(item.get("calculated_value"), item.get("calculated_unit"))}，'
+                            f'限值 {_format_value_unit(item.get("limit_value"), item.get("limit_unit"))}'
+                            f'{multiple}；{item.get("report_name") or item.get("filename") or "-"}'
+                            f'{f"；{place}" if place else ""}'
+                            f'{f"；依据 {basis}" if basis else ""}'
+                            f'{f"；{_record_context(item)}" if _record_context(item) else ""}'
+                        )
 
         detection_list = _first_tool(tool_results, 'list_detection_reports')
         if detection_list and not failed_reports:
