@@ -46,6 +46,32 @@ _QUOTE_PAIRS = {
     '「': '」',
     '『': '』',
 }
+_LIMIT_QUERY_STOP_FRAGMENTS = (
+    '帮我查一下',
+    '帮我查询',
+    '查一下',
+    '查询一下',
+    '帮我查',
+    '查询',
+    '查',
+    '职业接触限值',
+    '职业卫生接触限值',
+    '工作场所空气中',
+    '工作场所',
+    '接触限值',
+    '容许浓度',
+    '限值依据',
+    '限值',
+    '依据',
+    '是多少',
+    '是什么',
+    '多少',
+    '请',
+    '一下',
+    '这个',
+    '那个',
+    '的',
+)
 
 
 def _safe_limit(value: int, *, default: int = 5, maximum: int = 20) -> int:
@@ -59,7 +85,9 @@ def _dt(value: datetime | date | None) -> str | None:
 
 
 def _decimal(value: Decimal | None) -> str | None:
-    return str(value) if value is not None else None
+    if value is None:
+        return None
+    return format(value.normalize(), 'f').rstrip('0').rstrip('.') or '0'
 
 
 def _enum(value: Any) -> str | None:
@@ -157,6 +185,39 @@ def _context_terms(user_text: str | None) -> list[str]:
             seen.add(cleaned)
             cleaned_terms.append(cleaned)
     return cleaned_terms[:5]
+
+
+def _limit_query_terms(query: str) -> list[str]:
+    text = ' '.join((query or '').strip().split())
+    if not text:
+        return []
+
+    terms: list[str] = []
+    terms.extend(re.findall(r'\d{2,7}-\d{2}-\d', text))
+
+    cleaned = text
+    for fragment in _LIMIT_QUERY_STOP_FRAGMENTS:
+        cleaned = cleaned.replace(fragment, ' ')
+    cleaned = re.sub(r'[，,。？?！!：:；;（）()\[\]【】"\'“”「」『』]', ' ', cleaned)
+
+    for token in re.findall(r'[A-Za-z][A-Za-z0-9./_-]*|[\u4e00-\u9fff]+', cleaned):
+        token = token.strip()
+        if not token:
+            continue
+        if re.fullmatch(r'[A-Za-z]', token):
+            continue
+        terms.append(token[:80])
+
+    if not terms:
+        terms.append(text[:80])
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for term in terms:
+        if term not in seen:
+            seen.add(term)
+            unique.append(term)
+    return unique[:8]
 
 
 def _context_filter(model, context_query: str | None):
@@ -731,24 +792,33 @@ class AgentTools:
     @staticmethod
     def search_regulatory_limits(*, db: Session, query: str, limit: int = 5) -> dict[str, Any]:
         keyword = query.strip()
+        terms = _limit_query_terms(keyword)
         max_items = _safe_limit(limit)
         filters: list[Any] = []
-        if keyword:
-            like = f'%{keyword}%'
-            filters.append(
-                or_(
-                    RegulatoryLimit.indicator_name.ilike(like),
-                    RegulatoryLimit.cas_no.ilike(like),
-                    RegulatoryLimit.aliases_json.ilike(like),
-                    RegulatoryLimit.standard_code.ilike(like),
-                    RegulatoryLimit.standard_name.ilike(like),
-                    RegulatoryLimit.clause.ilike(like),
+        if terms:
+            term_filters: list[Any] = []
+            for term in terms:
+                like = f'%{term}%'
+                term_filters.extend(
+                    [
+                        RegulatoryLimit.indicator_name.ilike(like),
+                        RegulatoryLimit.cas_no.ilike(like),
+                        RegulatoryLimit.aliases_json.ilike(like),
+                        RegulatoryLimit.standard_code.ilike(like),
+                        RegulatoryLimit.standard_name.ilike(like),
+                        RegulatoryLimit.clause.ilike(like),
+                    ]
                 )
-            )
+            filters.append(or_(*term_filters))
+        exact_rank = case(
+            (RegulatoryLimit.indicator_name.in_(terms), 0),
+            (RegulatoryLimit.cas_no.in_(terms), 0),
+            else_=1,
+        )
         stmt = (
             select(RegulatoryLimit)
             .where(*filters)
-            .order_by(RegulatoryLimit.priority.asc(), RegulatoryLimit.indicator_name.asc())
+            .order_by(exact_rank.asc(), RegulatoryLimit.priority.asc(), RegulatoryLimit.indicator_name.asc())
             .limit(max_items)
         )
         items = [
@@ -769,7 +839,7 @@ class AgentTools:
             }
             for item in db.scalars(stmt).all()
         ]
-        return {'query': keyword, 'items': items, 'limit': max_items}
+        return {'query': keyword, 'terms': terms, 'items': items, 'limit': max_items}
 
     @staticmethod
     def search_standard_chunks(
