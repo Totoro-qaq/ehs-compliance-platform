@@ -15,7 +15,7 @@ from alembic import op
 
 revision: str = '0012_standard_library_metadata'
 down_revision: str | None = '0011_client_company_project_tables'
-branch_labels: str | Sequence[str] | None = None
+_unused_branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
