@@ -18,6 +18,7 @@ depends_on = None
 def upgrade() -> None:
     bind = op.get_bind()
     if bind.dialect.name == 'mysql':
+        op.execute('ALTER TABLE alembic_version MODIFY version_num VARCHAR(128) NOT NULL')
         op.execute(
             "ALTER TABLE detection_samples MODIFY medium "
             "ENUM('WORKPLACE_AIR','WASTEWATER','EXHAUST_GAS','NOISE','HIGH_TEMPERATURE','PHYSICAL_FACTOR') "

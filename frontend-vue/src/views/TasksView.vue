@@ -115,11 +115,18 @@ async function loadOrganizations() {
   try {
     const page = await listOrganizations(1, 200);
     organizations.value = page?.items || [];
-    if (organizations.value.length) {
+    const selectedOrg = organizations.value.find((item) => item.id === orgSelected.value);
+    if (session.isAdmin) {
+      if (!selectedOrg) orgSelected.value = '';
+      session.setOrgName(selectedOrg?.name || '');
+    } else if (selectedOrg) {
+      session.setOrgName(selectedOrg.name || '默认组织');
+    } else if (organizations.value.length) {
       orgSelected.value = organizations.value[0].id;
       session.setOrgName(organizations.value[0].name || '默认组织');
     } else {
       orgSelected.value = '';
+      session.setOrgName('');
     }
   } catch (err) {
     toast.show(formatApiError(err), 'error');
@@ -635,7 +642,7 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
             <label class="form-field">
               <span class="label-text">所属公司</span>
               <select v-if="session.isAdmin" v-model="orgSelected">
-                <option v-if="!organizations.length" value="">默认公司</option>
+                <option value="">默认公司</option>
                 <option v-for="org in organizations" :key="org.id" :value="org.id">
                   {{ org.name || org.id }}
                 </option>
@@ -719,6 +726,16 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
         </button>
       </div>
       <div class="task-filters project-filters">
+        <label class="filter-field">
+          <span class="label-text">公司</span>
+          <select v-if="session.isAdmin" v-model="orgSelected">
+            <option value="">全部公司</option>
+            <option v-for="org in organizations" :key="org.id" :value="org.id">
+              {{ org.name || org.id }}
+            </option>
+          </select>
+          <input v-else :value="selectedOrgName || session.orgName || '默认公司'" disabled />
+        </label>
         <label class="filter-field">
           <span class="label-text">状态</span>
           <select v-model="statusFilter" @change="applyFilters">

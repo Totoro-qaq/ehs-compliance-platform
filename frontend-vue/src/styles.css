@@ -1255,7 +1255,10 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 }
 
 /* ===== Home View ===== */
-.home-view { padding: 0 !important; max-width: none !important; }
+.home-view {
+  padding: 0 0 96px !important;
+  max-width: none !important;
+}
 
 .workbench {
   padding: 20px 32px;
@@ -1499,11 +1502,24 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 .agent-view {
   max-width: 1440px;
 }
+.agent-stat-strip {
+  margin-bottom: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+.agent-stat-strip .task-stat-card {
+  cursor: default;
+}
+.agent-stat-strip .task-stat-card:hover {
+  border-color: var(--border);
+  background: var(--panel);
+}
 .agent-layout {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
   gap: 18px;
-  min-height: calc(100vh - var(--topbar-height) - 120px);
+  min-height: calc(100vh - var(--topbar-height) - 236px);
 }
 .agent-sidebar,
 .agent-chat {
@@ -1516,7 +1532,7 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
   padding: 16px;
   display: flex;
   flex-direction: column;
-  min-height: 640px;
+  min-height: 620px;
 }
 .agent-sidebar-head,
 .agent-chat-head {
@@ -1545,20 +1561,34 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 .agent-session-item {
   width: 100%;
   min-height: 66px;
-  padding: 11px 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  padding: 0;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-subtle);
   color: var(--text);
   text-align: left;
 }
-.agent-session-item strong,
-.agent-session-item span,
+.agent-session-main {
+  min-width: 0;
+  min-height: 64px;
+  padding: 11px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.agent-session-main strong,
+.agent-session-main span,
 .agent-empty-sidebar strong,
 .agent-empty-sidebar span {
   display: block;
 }
-.agent-session-item strong {
+.agent-session-main strong {
   margin-bottom: 6px;
   overflow: hidden;
   color: var(--text);
@@ -1566,16 +1596,39 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.agent-session-item span {
+.agent-session-main span {
   color: var(--text-tertiary);
   font-size: 12px;
+}
+.agent-session-delete {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.agent-session-delete:not(:disabled):hover {
+  border-color: var(--danger);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+.agent-session-delete:disabled,
+.agent-clear-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 .agent-session-item:hover,
 .agent-session-item.active {
   border-color: rgba(217, 119, 6, 0.45);
   background: var(--accent-bg);
 }
-.agent-session-item.active strong {
+.agent-session-item.active .agent-session-main strong {
   color: var(--accent);
 }
 .agent-empty-sidebar {
@@ -1596,15 +1649,13 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 .agent-chat {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
-  min-height: 640px;
+  min-height: 620px;
   overflow: hidden;
 }
 .agent-chat-head {
   padding: 20px 22px;
   border-bottom: 1px solid var(--border);
-  background:
-    linear-gradient(135deg, rgba(239, 246, 255, 0.72), rgba(255, 255, 255, 0.92) 54%, rgba(236, 253, 245, 0.65)),
-    var(--panel);
+  background: var(--bg-subtle);
 }
 .agent-chat-head p {
   max-width: 700px;
@@ -1651,7 +1702,7 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
   min-height: 0;
   padding: 22px;
   overflow: auto;
-  background: #fbfbfc;
+  background: var(--bg);
 }
 .agent-message {
   width: min(780px, 88%);
@@ -1735,6 +1786,7 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 .agent-compose {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
   gap: 10px;
   padding: 16px 22px;
   border-top: 1px solid var(--border);
@@ -1743,6 +1795,10 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 .agent-compose textarea {
   min-height: 78px;
   max-height: 180px;
+}
+.agent-compose .btn-primary {
+  min-height: 42px;
+  justify-content: center;
 }
 .recent-list {
   display: grid;
@@ -2561,7 +2617,8 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 }
 .support-panel {
   width: min(460px, calc(100vw - 32px));
-  overflow: hidden;
+  max-height: min(720px, calc(100vh - 112px));
+  overflow: auto;
   border: 1px solid rgba(203, 213, 225, 0.9);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.96);
@@ -2780,12 +2837,11 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  min-width: 198px;
-  min-height: 58px;
-  padding: 9px 15px 9px 12px;
+  width: 56px;
+  height: 56px;
+  padding: 0;
   border: 0;
-  border-radius: 12px;
+  border-radius: 14px;
   background: #111827;
   color: #fff;
   box-shadow:
@@ -2809,7 +2865,7 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
   flex-shrink: 0;
 }
 .support-fab-copy {
-  display: grid;
+  display: none;
   gap: 2px;
 }
 .support-fab-copy strong {
@@ -2983,16 +3039,25 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
     gap: 6px;
   }
   .support-assistant {
-    right: 16px;
-    bottom: 16px;
+    position: static;
+    align-items: stretch;
+    padding: 0 16px 24px;
+    pointer-events: auto;
   }
   .support-panel {
-    width: calc(100vw - 32px);
+    width: 100%;
+    max-height: none;
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
   }
   .support-fab {
-    min-width: 156px;
+    width: 100%;
     min-height: 54px;
+    height: auto;
+    justify-content: flex-start;
+    gap: 10px;
+    padding: 9px 15px 9px 12px;
   }
+  .support-fab-copy { display: grid; }
   .consultation-card-grid,
   .consultation-metrics,
   .consultation-steps,

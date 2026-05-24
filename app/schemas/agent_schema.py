@@ -79,6 +79,10 @@ class AgentToolCallOut(BaseModel):
     updated_at: datetime
 
 
+class AgentSessionDeleteResponse(BaseModel):
+    deleted: int = Field(ge=0)
+
+
 class AgentChatResponse(BaseModel):
     session: AgentSessionOut
     user_message: AgentMessageOut

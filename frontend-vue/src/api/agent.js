@@ -22,3 +22,15 @@ export function listAgentSessions(page = 1, pageSize = 20) {
 export function listAgentMessages(sessionId) {
   return request(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/messages`);
 }
+
+export function deleteAgentSession(sessionId) {
+  return request(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}`, {
+    method: 'DELETE',
+  });
+}
+
+export function clearAgentSessions() {
+  return request('/api/v1/agent/sessions', {
+    method: 'DELETE',
+  });
+}

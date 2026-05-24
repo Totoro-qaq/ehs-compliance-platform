@@ -310,6 +310,20 @@ class AgentService:
         return AgentMessageDAO(db).list_for_session(session.id, limit=100)
 
     @staticmethod
+    def delete_session(*, db: Session, actor: CurrentUser, session_id: str) -> int:
+        deleted = AgentSessionDAO(db).soft_delete_owned(
+            session_id=session_id,
+            account_id=actor.account_id,
+        )
+        if not deleted:
+            raise EHSException('Agent 会话不存在', code='AGENT_SESSION_NOT_FOUND', status_code=404)
+        return 1
+
+    @staticmethod
+    def clear_sessions(*, db: Session, actor: CurrentUser) -> int:
+        return AgentSessionDAO(db).soft_delete_all_owned(account_id=actor.account_id)
+
+    @staticmethod
     async def chat(
         *,
         db: Session,
