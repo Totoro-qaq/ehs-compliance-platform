@@ -5,6 +5,7 @@ This script only writes demo rows to MySQL through the application models. It do
 upload, parse, or import standard/source documents.
 
 Usage:
+    $env:DEMO_SEED_PASSWORD='<temporary-demo-password>'
     python scripts/seed_demo_companies.py
     python scripts/seed_demo_companies.py --reset-passwords
 """
@@ -12,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,12 +24,11 @@ _root = Path(__file__).resolve().parent.parent
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
-from app.core.config import settings  # noqa: E402
 from app.core.db import SessionLocal  # noqa: E402
 from app.core.security import hash_password  # noqa: E402
 from app.models.db_models import Account, AccountRole, Organization  # noqa: E402
 
-DEMO_PASSWORD = 'DemoPass123'
+DEMO_SEED_PASSWORD_ENV = 'DEMO_SEED_PASSWORD'
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,6 +235,7 @@ def _upsert_account(
     account: DemoAccount,
     organization_id: str,
     reset_passwords: bool,
+    password_hash: str | None,
 ) -> None:
     existing = session.scalars(
         select(Account).where(Account.username == account.username),
@@ -241,10 +243,14 @@ def _upsert_account(
     ).one_or_none()
 
     if existing is None:
-        existing = Account(username=account.username, password_hash=hash_password(DEMO_PASSWORD))
+        if password_hash is None:
+            raise RuntimeError('Demo account creation requires a seed password hash.')
+        existing = Account(username=account.username, password_hash=password_hash)
         session.add(existing)
     elif reset_passwords:
-        existing.password_hash = hash_password(DEMO_PASSWORD)
+        if password_hash is None:
+            raise RuntimeError('Demo account reset requires a seed password hash.')
+        existing.password_hash = password_hash
 
     existing.role = account.role
     existing.organization_id = organization_id
@@ -254,23 +260,40 @@ def _upsert_account(
     session.flush()
 
 
+def _read_demo_seed_password() -> str:
+    value = os.environ.get(DEMO_SEED_PASSWORD_ENV, '')
+    if not value:
+        raise SystemExit(
+            f'Set {DEMO_SEED_PASSWORD_ENV} before creating demo accounts or using --reset-passwords.'
+        )
+    return value
+
+
 def seed(reset_passwords: bool = False) -> None:
     with SessionLocal() as session:
+        password_hash: str | None = None
         for tenant in DEMO_TENANTS:
             org = _upsert_organization(session, tenant)
             for demo_account in tenant.accounts:
+                account_exists = session.scalars(
+                    select(Account).where(Account.username == demo_account.username),
+                    execution_options={'include_deleted': True},
+                ).one_or_none()
+                if (account_exists is None or reset_passwords) and password_hash is None:
+                    password_hash = hash_password(_read_demo_seed_password())
                 _upsert_account(
                     session,
                     account=demo_account,
                     organization_id=org.id,
                     reset_passwords=reset_passwords,
+                    password_hash=password_hash,
                 )
         session.commit()
 
     print('Seeded demo companies and demo accounts.')
     print('No standard documents were scanned, uploaded, parsed, or imported.')
-    print(f'System admin remains role=ADMIN. Bootstrap username: {settings.bootstrap_admin_username}')
-    print('Demo account secrets are not printed. Use the company management page to view IDs.')
+    print('System admin remains role=ADMIN.')
+    print('Demo account credentials are not printed.')
 
 
 def main() -> None:
