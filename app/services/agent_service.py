@@ -25,7 +25,7 @@ from app.services.agent_tools import AgentToolResult, AgentTools
 
 _logger = get_logger(__name__)
 
-_SYSTEM_PROMPT = """你是 EHS 合规管理平台的企业内助手。
+_SYSTEM_PROMPT = """你是 EHS 合规管理平台助手，服务对象包括企业和第三方检测机构。
 你只能基于后端工具提供的数据回答，不允许编造任务、报告、标准或法规条款。
 当前阶段你只能做只读分析，不能声称已经创建、删除、修改或重跑任何业务数据。
 如果数据不足，请说明需要用户进入对应页面复核。
@@ -38,6 +38,7 @@ _FAST_SUMMARY_TOOLS = {
     'list_detection_reports',
     'summarize_detection_compliance',
     'search_regulatory_limits',
+    'search_standard_chunks',
 }
 
 _STATUS_OR_LOOKUP_INTENT_KEYWORDS = (
@@ -68,6 +69,9 @@ _STATUS_OR_LOOKUP_INTENT_KEYWORDS = (
     '法规',
     '标准',
     '条款',
+    '条文',
+    '导则',
+    '依据',
     'cas',
 )
 
@@ -766,6 +770,33 @@ class AgentService:
                     )
             else:
                 lines.append('限值库没有命中明确结果，建议进入检测合规页的限值库标签精确查询。')
+
+        standard_chunks = _first_tool(tool_results, 'search_standard_chunks')
+        if standard_chunks:
+            items = standard_chunks.get('items') or []
+            if items:
+                lines.append('标准条文库命中：')
+                for item in items[:5]:
+                    source = ' '.join(
+                        part
+                        for part in [
+                            _compact_text(item.get('standard_code')),
+                            _compact_text(item.get('clause')),
+                        ]
+                        if part
+                    )
+                    text = _compact_text(item.get('text_chunk'))[:180]
+                    page = (
+                        f"第 {item.get('page_start')} 页"
+                        if item.get('page_start') and item.get('page_start') == item.get('page_end')
+                        else f"第 {item.get('page_start')}-{item.get('page_end')} 页"
+                        if item.get('page_start') and item.get('page_end')
+                        else ''
+                    )
+                    suffix = f'，{page}' if page else ''
+                    lines.append(f'- {source or item.get("standard_name") or "-"}{suffix}：{text}')
+            else:
+                lines.append('标准条文库没有命中结果；如果你已经处理好标准/导则文件，请导入对应 manifest 后再检索。')
 
         if not lines:
             lines.append('我已经收到你的问题，但当前没有查到足够的业务数据。建议先进入评价任务或检测合规页面确认数据是否已上传。')

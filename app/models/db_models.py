@@ -341,6 +341,72 @@ class RegulatoryLimit(ModelBase):
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
 
 
+class StandardDocument(ModelBase):
+    """标准原文元数据：原文件仍在外部资料目录，库内只保存可追溯索引。"""
+
+    __tablename__ = 'standard_documents'
+
+    standard_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    standard_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    domain: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    service_type: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    storage_backend: Mapped[str] = mapped_column(String(32), nullable=False, default='minio', index=True)
+    bucket: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    object_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    object_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    source_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    source_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_format: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    file_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    file_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default='ACTIVE', index=True)
+    is_sensitive: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    chunks: Mapped[list['StandardChunk']] = relationship(
+        back_populates='document',
+        cascade='all, delete-orphan',
+        order_by='StandardChunk.chunk_index',
+    )
+
+
+class StandardChunk(ModelBase):
+    """标准条文切片元数据：向量可在 Milvus，文本与来源链路保留在 MySQL。"""
+
+    __tablename__ = 'standard_chunks'
+
+    document_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey('standard_documents.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    chunk_id: Mapped[str] = mapped_column(String(128), nullable=False, unique=True, index=True)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    standard_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    standard_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    clause: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    domain: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    service_type: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    text_chunk: Mapped[str] = mapped_column(Text, nullable=False)
+    text_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    page_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    page_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_sensitive: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
+    milvus_collection: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    milvus_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    embedding_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    indexed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    document: Mapped[StandardDocument] = relationship(back_populates='chunks')
+
+
 class ComplianceResult(ModelBase):
     """合规判定结果：每条 measurement 对应一条结果，附违反依据。"""
 

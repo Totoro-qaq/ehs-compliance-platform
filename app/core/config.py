@@ -68,6 +68,20 @@ class Settings(BaseSettings):
 
     upload_dir: str = './uploads'
 
+    # 标准原文不进入代码仓库；默认走 MinIO 私有 bucket，只由 manifest 接入元数据/切片。
+    standard_storage_backend: str = 'minio'
+    standard_library_root: str = ''
+    minio_endpoint: str = '127.0.0.1:9000'
+    minio_access_key: str = ''
+    minio_secret_key: str = ''
+    minio_bucket: str = 'ehs-standard-library'
+    minio_secure: bool = False
+    minio_region: str = ''
+    milvus_uri: str = 'http://127.0.0.1:19530'
+    milvus_token: str = ''
+    milvus_collection: str = 'ehs_standard_chunks'
+    standard_embedding_model: str = ''
+
     # B 端：单文件上限（字节），可在 .env 覆盖
     max_upload_bytes: int = 50 * 1024 * 1024
 
