@@ -13,8 +13,9 @@ from alembic import op
 
 revision: str = '0010_client_project_fields'
 down_revision: str | None = '0009_agent_tables'
-_unused_branch_labels: str | Sequence[str] | None = None
-_unused_depends_on: str | Sequence[str] | None = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+__all__ = ['revision', 'down_revision', 'branch_labels', 'depends_on', 'upgrade', 'downgrade']
 
 
 def upgrade() -> None:

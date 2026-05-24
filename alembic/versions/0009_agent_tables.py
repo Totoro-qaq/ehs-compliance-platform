@@ -15,6 +15,7 @@ revision = '0009_agent_tables'
 down_revision = '0008_organization_profile_fields'
 branch_labels = None
 depends_on = None
+__all__ = ['revision', 'down_revision', 'branch_labels', 'depends_on', 'upgrade', 'downgrade']
 
 agent_session_status = sa.Enum('OPEN', 'ARCHIVED', name='agent_session_status')
 agent_message_role = sa.Enum('USER', 'ASSISTANT', 'SYSTEM', 'TOOL', name='agent_message_role')

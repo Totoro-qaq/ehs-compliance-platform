@@ -13,11 +13,11 @@ import sqlalchemy as sa
 
 from alembic import op
 
-_unused_revision: str = '0012_standard_library_metadata'
-revision: str = _unused_revision
+revision: str = '0012_standard_library_metadata'
 down_revision: str | None = '0011_client_company_project_tables'
-_unused_branch_labels: str | Sequence[str] | None = None
+branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
+__all__ = ['revision', 'down_revision', 'branch_labels', 'depends_on', 'upgrade', 'downgrade']
 
 
 def upgrade() -> None:

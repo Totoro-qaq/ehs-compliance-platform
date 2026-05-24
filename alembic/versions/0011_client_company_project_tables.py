@@ -15,11 +15,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 revision: str = '0011_client_company_project_tables'
-_unused_down_revision: str | None = '0010_client_project_fields'
-down_revision: str | None = _unused_down_revision
-_unused_branch_labels: str | Sequence[str] | None = None
-branch_labels: str | Sequence[str] | None = _unused_branch_labels
+down_revision: str | None = '0010_client_project_fields'
+branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
+__all__ = ['revision', 'down_revision', 'branch_labels', 'depends_on', 'upgrade', 'downgrade']
 
 
 def upgrade() -> None:
