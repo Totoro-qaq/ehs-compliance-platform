@@ -275,14 +275,13 @@ def seed(reset_passwords: bool = False) -> None:
     print('Seeded demo companies and accounts.')
     print('No standard documents were scanned, uploaded, parsed, or imported.')
     print(f'System admin remains role=ADMIN. Bootstrap username: {settings.bootstrap_admin_username}')
-    print(f'Demo password for newly created/reset accounts: {DEMO_PASSWORD}\n')
-    for company_name, org_id, account, created, password_reset in rows:
+    print('Demo account credentials were initialized/reset as requested and are not printed.\n')
+    for company_name, org_id, account, created, _credential_changed in rows:
         state = 'created' if created else 'updated'
-        pwd = DEMO_PASSWORD if password_reset else '(existing password kept)'
         print(
             f'{company_name}\n'
             f'  organization_id: {org_id}\n'
-            f'  {account.label}: {account.username} / {pwd} / role={account.role.value} [{state}]\n'
+            f'  {account.label}: {account.username} / role={account.role.value} [{state}]\n'
         )
 
 
