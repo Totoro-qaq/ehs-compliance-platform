@@ -10,6 +10,7 @@ from app.models.db_models import (
     AgentMessage,
     AgentMessageRole,
     AgentRun,
+    AgentSession,
     AgentToolCall,
     AssessmentTask,
     ComplianceResult,
@@ -372,6 +373,111 @@ def test_agent_session_messages_are_account_scoped(
     assert forbidden.status_code == 404
 
 
+def test_agent_delete_session_soft_deletes_owned_records(
+    client: TestClient,
+    user_token: str,
+    admin_token: str,
+    db,
+):
+    created = client.post(
+        '/api/v1/agent/chat',
+        json={'content': '总结当前工作台'},
+        headers=_auth(user_token),
+    )
+    assert created.status_code == 200
+    session_id = created.json()['data']['session']['id']
+
+    forbidden = client.delete(
+        f'/api/v1/agent/sessions/{session_id}',
+        headers=_auth(admin_token),
+    )
+    assert forbidden.status_code == 404
+
+    deleted = client.delete(
+        f'/api/v1/agent/sessions/{session_id}',
+        headers=_auth(user_token),
+    )
+    assert deleted.status_code == 200
+    assert deleted.json()['data']['deleted'] == 1
+
+    listed = client.get('/api/v1/agent/sessions', headers=_auth(user_token))
+    assert listed.status_code == 200
+    assert all(item['id'] != session_id for item in listed.json()['data']['items'])
+
+    messages = client.get(
+        f'/api/v1/agent/sessions/{session_id}/messages',
+        headers=_auth(user_token),
+    )
+    assert messages.status_code == 404
+
+    assert db.query(AgentSession).filter_by(id=session_id, deleted_at=None).count() == 0
+    assert db.query(AgentMessage).filter_by(session_id=session_id, deleted_at=None).count() == 0
+    assert db.query(AgentRun).filter_by(session_id=session_id, deleted_at=None).count() == 0
+    assert db.query(AgentToolCall).filter_by(session_id=session_id, deleted_at=None).count() == 0
+    assert (
+        db.query(AgentSession)
+        .filter_by(id=session_id)
+        .execution_options(include_deleted=True)
+        .count()
+        == 1
+    )
+    assert (
+        db.query(AgentMessage)
+        .filter_by(session_id=session_id)
+        .execution_options(include_deleted=True)
+        .count()
+        == 2
+    )
+    assert (
+        db.query(AgentRun)
+        .filter_by(session_id=session_id)
+        .execution_options(include_deleted=True)
+        .count()
+        == 1
+    )
+    assert (
+        db.query(AgentToolCall)
+        .filter_by(session_id=session_id)
+        .execution_options(include_deleted=True)
+        .count()
+        == 1
+    )
+
+
+def test_agent_clear_sessions_only_deletes_current_account(
+    client: TestClient,
+    user_token: str,
+    admin_token: str,
+):
+    for content in ('总结当前工作台', '有哪些待处理事项'):
+        resp = client.post(
+            '/api/v1/agent/chat',
+            json={'content': content},
+            headers=_auth(user_token),
+        )
+        assert resp.status_code == 200
+
+    admin_created = client.post(
+        '/api/v1/agent/chat',
+        json={'content': '总结当前工作台'},
+        headers=_auth(admin_token),
+    )
+    assert admin_created.status_code == 200
+
+    deleted = client.delete('/api/v1/agent/sessions', headers=_auth(user_token))
+    assert deleted.status_code == 200
+    assert deleted.json()['data']['deleted'] == 2
+
+    user_list = client.get('/api/v1/agent/sessions', headers=_auth(user_token))
+    assert user_list.status_code == 200
+    assert user_list.json()['data']['total'] == 0
+
+    admin_list = client.get('/api/v1/agent/sessions', headers=_auth(admin_token))
+    assert admin_list.status_code == 200
+    assert admin_list.json()['data']['total'] == 1
+    assert admin_list.json()['data']['items'][0]['id'] == admin_created.json()['data']['session']['id']
+
+
 def test_agent_chat_requires_auth(client: TestClient):
     resp = client.post('/api/v1/agent/chat', json={'content': '总结当前工作台'})
     assert resp.status_code == 401
@@ -398,7 +504,7 @@ def test_agent_pending_detection_prompt_uses_pending_statuses(
                 client_name='委托客户 D',
                 project_name='待判定项目',
                 project_code='PENDING-001',
-                service_type='检测',
+                service_type='定期检测',
                 filename='pending.csv',
                 report_type=ReportType.OCCUPATIONAL_HEALTH,
                 status=ReportStatus.PARSED,
@@ -450,7 +556,7 @@ def test_agent_filters_detection_by_client_project_context(
                 client_name='安测委托A',
                 project_name='年度检测项目A',
                 project_code='AC-A-001',
-                service_type='检测',
+                service_type='定期检测',
                 filename='client-a.csv',
                 report_type=ReportType.OCCUPATIONAL_HEALTH,
                 status=ReportStatus.PARSED,
@@ -461,7 +567,7 @@ def test_agent_filters_detection_by_client_project_context(
                 client_name='安测委托B',
                 project_name='年度检测项目B',
                 project_code='AC-B-001',
-                service_type='检测',
+                service_type='定期检测',
                 filename='client-b.csv',
                 report_type=ReportType.OCCUPATIONAL_HEALTH,
                 status=ReportStatus.PARSED,
@@ -520,7 +626,7 @@ def test_agent_summarizes_detection_compliance_by_client_project_context(
         client_name='安测委托A',
         project_name='年度检测项目A',
         project_code='AC-A-001',
-        service_type='检测',
+        service_type='定期检测',
         filename='client-a-calculated.csv',
         report_type=ReportType.OCCUPATIONAL_HEALTH,
         status=ReportStatus.CALCULATED,
@@ -531,7 +637,7 @@ def test_agent_summarizes_detection_compliance_by_client_project_context(
         client_name='安测委托B',
         project_name='年度检测项目B',
         project_code='AC-B-001',
-        service_type='检测',
+        service_type='定期检测',
         filename='client-b-calculated.csv',
         report_type=ReportType.OCCUPATIONAL_HEALTH,
         status=ReportStatus.CALCULATED,

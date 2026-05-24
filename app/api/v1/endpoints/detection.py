@@ -36,12 +36,15 @@ router = APIRouter(prefix='/detection', tags=['检测报告合规'])
 async def create_detection_report(
     actor: Annotated[CurrentUser, Depends(get_current_user)],
     file: UploadFile = File(..., description='CSV / XLSX / XLSM 检测数据文件'),
-    report_type: str = Form(default='OCCUPATIONAL_HEALTH', description='检测报告类型'),
+    report_type: str = Form(default='OCCUPATIONAL_HEALTH', description='内部解析类型，用于介质推断和限值匹配'),
     report_name: str | None = Form(default=None, description='检测报告名称；不传则按公司、类型和日期自动生成'),
     client_name: str | None = Form(default=None, description='委托单位 / 客户公司'),
     project_name: str | None = Form(default=None, description='项目名称'),
     project_code: str | None = Form(default=None, description='项目编号'),
-    service_type: str | None = Form(default=None, description='服务类型，如评价/检测/整改/综合'),
+    service_type: str | None = Form(
+        default=None,
+        description='报告类别：定期检测 / 控制效果评价检测 / 现状评价检测 / 环保 / 安全',
+    ),
     organization_id: str | None = Form(default=None, description='公司 ID；普通用户不传则使用本人所属公司'),
     db: Session = Depends(get_db),
 ):
@@ -69,7 +72,7 @@ async def create_detection_report(
 async def preview_detection_document(
     actor: Annotated[CurrentUser, Depends(get_current_user)],
     file: UploadFile = File(..., description='PDF / DOCX / DOC / TXT 检测报告文件'),
-    report_type: str = Form(default='OCCUPATIONAL_HEALTH', description='检测报告类型'),
+    report_type: str = Form(default='OCCUPATIONAL_HEALTH', description='内部解析类型，用于介质推断和限值匹配'),
 ):
     _ = actor
     content = await file.read()
@@ -103,12 +106,12 @@ def list_detection_reports(
     actor: Annotated[CurrentUser, Depends(get_current_user)],
     db: Session = Depends(get_db),
     organization_id: str | None = Query(default=None, description='按公司 ID 筛选'),
-    report_type: str | None = Query(default=None, description='按报告类型筛选'),
+    report_type: str | None = Query(default=None, description='按内部解析类型筛选'),
     status: str | None = Query(default=None, description='按报告状态筛选'),
     client_name: str | None = Query(default=None, description='按委托单位 / 客户公司筛选'),
     project_name: str | None = Query(default=None, description='按项目名称筛选'),
     project_code: str | None = Query(default=None, description='按项目编号筛选'),
-    service_type: str | None = Query(default=None, description='按服务类型筛选'),
+    service_type: str | None = Query(default=None, description='按报告类别筛选'),
     page: int = Query(default=1, ge=1, description='页码'),
     page_size: int = Query(default=20, ge=1, le=200, description='每页条数'),
 ):

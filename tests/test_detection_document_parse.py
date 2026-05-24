@@ -233,7 +233,7 @@ def test_import_detection_document_preserves_client_project_context(
             'client_name': '委托客户 C',
             'project_name': '文档解析项目',
             'project_code': 'DOC-001',
-            'service_type': '检测',
+            'service_type': '定期检测',
             'report_type': 'OCCUPATIONAL_HEALTH',
             'rows': [
                 {
@@ -255,7 +255,7 @@ def test_import_detection_document_preserves_client_project_context(
     assert body['client_name'] == '委托客户 C'
     assert body['project_name'] == '文档解析项目'
     assert body['project_code'] == 'DOC-001'
-    assert body['service_type'] == '检测'
+    assert body['service_type'] == '定期检测'
 
     detail = client.get(
         f'/api/v1/detection/reports/{body["report_id"]}',

@@ -1,8 +1,15 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { chatWithAgent, listAgentMessages, listAgentSessions } from '../api/agent';
+import {
+  chatWithAgent,
+  clearAgentSessions,
+  deleteAgentSession,
+  listAgentMessages,
+  listAgentSessions,
+} from '../api/agent';
 import { formatApiError } from '../api/client';
+import Icon from '../components/Icon.vue';
 import { formatTime } from '../utils/format';
 
 const router = useRouter();
@@ -14,6 +21,8 @@ const input = ref('');
 const loadingSessions = ref(false);
 const loadingMessages = ref(false);
 const sending = ref(false);
+const deletingSessionId = ref('');
+const clearingSessions = ref(false);
 const error = ref('');
 const degraded = ref(false);
 const responseMode = ref('model');
@@ -27,12 +36,19 @@ const quickPrompts = [
 ];
 
 const activeSession = computed(() => sessions.value.find((item) => item.id === activeSessionId.value) || null);
+const modeLabel = computed(() => (degraded.value || responseMode.value === 'rules' ? '规则摘要' : '模型生成'));
 
 const sortedMessages = computed(() => [...messages.value].sort((a, b) => {
   const left = new Date(a.created_at).getTime() || 0;
   const right = new Date(b.created_at).getTime() || 0;
   return left - right;
 }));
+const agentStatItems = computed(() => [
+  { label: '历史会话', value: sessions.value.length, tone: 'accent' },
+  { label: '当前模式', value: modeLabel.value, tone: responseMode.value === 'model' && !degraded.value ? 'success' : 'info' },
+  { label: '当前消息', value: sortedMessages.value.length, tone: 'info' },
+  { label: '工具权限', value: '只读', tone: 'active-work' },
+]);
 
 function messageRoleText(role) {
   if (role === 'USER') return '你';
@@ -81,6 +97,44 @@ function startNewSession() {
   responseMode.value = 'model';
   input.value = '';
   error.value = '';
+}
+
+async function removeSession(sessionId) {
+  if (!sessionId || deletingSessionId.value || sending.value) return;
+  const confirmed = window.confirm('删除这条 AI 会话历史？删除后不可在列表中恢复。');
+  if (!confirmed) return;
+
+  deletingSessionId.value = sessionId;
+  error.value = '';
+  try {
+    await deleteAgentSession(sessionId);
+    if (activeSessionId.value === sessionId) {
+      startNewSession();
+    }
+    await loadSessions();
+  } catch (err) {
+    error.value = formatApiError(err);
+  } finally {
+    deletingSessionId.value = '';
+  }
+}
+
+async function clearHistory() {
+  if (!sessions.value.length || clearingSessions.value || sending.value) return;
+  const confirmed = window.confirm('清空当前账号的全部 AI 会话历史？清空后不可在列表中恢复。');
+  if (!confirmed) return;
+
+  clearingSessions.value = true;
+  error.value = '';
+  try {
+    await clearAgentSessions();
+    startNewSession();
+    await loadSessions();
+  } catch (err) {
+    error.value = formatApiError(err);
+  } finally {
+    clearingSessions.value = false;
+  }
 }
 
 async function sendMessage(content = input.value) {
@@ -135,6 +189,34 @@ onMounted(() => loadSessions({ selectFirst: true }));
 
 <template>
   <div class="view-container agent-view">
+    <header class="view-header">
+      <div>
+        <h1>AI 助手</h1>
+        <p class="view-desc">按当前账号权限读取工作台、评价任务、检测报告和限值库摘要</p>
+      </div>
+      <div class="header-actions">
+        <button type="button" class="btn-secondary" @click="goWorkbench">
+          <Icon name="home" :size="16" />
+          工作台
+        </button>
+        <button type="button" class="btn-primary" @click="startNewSession">
+          <Icon name="plus" :size="16" />
+          新会话
+        </button>
+      </div>
+    </header>
+
+    <div class="task-stat-strip agent-stat-strip">
+      <div
+        v-for="item in agentStatItems"
+        :key="item.label"
+        :class="['task-stat-card', item.tone]"
+      >
+        <span>{{ item.value }}</span>
+        <small>{{ item.label }}</small>
+      </div>
+    </div>
+
     <div class="agent-layout">
       <aside class="agent-sidebar">
         <div class="agent-sidebar-head">
@@ -142,7 +224,15 @@ onMounted(() => loadSessions({ selectFirst: true }));
             <span class="section-kicker">AI 合规助手</span>
             <h1>会话</h1>
           </div>
-          <button type="button" class="btn-primary btn-sm" @click="startNewSession">新会话</button>
+          <button
+            type="button"
+            class="btn-secondary btn-sm agent-clear-btn"
+            :disabled="!sessions.length || clearingSessions || sending"
+            @click="clearHistory"
+          >
+            <Icon name="trash" :size="14" />
+            {{ clearingSessions ? '清空中' : '清空' }}
+          </button>
         </div>
 
         <div v-if="loadingSessions" class="empty-state compact">加载会话...</div>
@@ -151,16 +241,25 @@ onMounted(() => loadSessions({ selectFirst: true }));
           <span>从右侧快捷问题开始。</span>
         </div>
         <div v-else class="agent-session-list">
-          <button
+          <div
             v-for="item in sessions"
             :key="item.id"
-            type="button"
             :class="['agent-session-item', { active: item.id === activeSessionId }]"
-            @click="selectSession(item.id)"
           >
-            <strong>{{ item.title }}</strong>
-            <span>{{ formatTime(item.last_message_at || item.updated_at) }}</span>
-          </button>
+            <button type="button" class="agent-session-main" @click="selectSession(item.id)">
+              <strong>{{ item.title }}</strong>
+              <span>{{ formatTime(item.last_message_at || item.updated_at) }}</span>
+            </button>
+            <button
+              type="button"
+              class="agent-session-delete"
+              title="删除会话"
+              :disabled="deletingSessionId === item.id || sending"
+              @click="removeSession(item.id)"
+            >
+              <Icon name="trash" :size="14" />
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -174,7 +273,6 @@ onMounted(() => loadSessions({ selectFirst: true }));
           <div class="agent-chat-actions">
             <span v-if="degraded || responseMode === 'rules'" class="agent-mode-badge">规则摘要</span>
             <span v-else class="agent-mode-badge model">模型生成</span>
-            <button type="button" class="btn-secondary btn-sm" @click="goWorkbench">工作台</button>
           </div>
         </header>
 
@@ -228,6 +326,7 @@ onMounted(() => loadSessions({ selectFirst: true }));
             @keydown.enter.exact.prevent="sendMessage()"
           ></textarea>
           <button type="submit" class="btn-primary" :disabled="sending || !input.trim()">
+            <Icon name="message" :size="16" />
             {{ sending ? '分析中' : '发送' }}
           </button>
         </form>

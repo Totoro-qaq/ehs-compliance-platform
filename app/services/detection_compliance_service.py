@@ -66,6 +66,7 @@ from app.services.detection_calculation_service import (
 )
 from app.services.detection_import_service import DetectionImportService
 from app.services.detection_limit_service import DetectionLimitService
+from app.services.detection_service_types import clean_detection_service_type
 
 _ALLOWED_UPLOAD_EXTENSIONS = frozenset({'.csv', '.xlsx', '.xlsm'})
 _BORDERLINE_RATIO = Decimal('0.9')
@@ -143,9 +144,14 @@ def _report_type_label(report_type: ReportType) -> str:
     }.get(report_type, report_type.value)
 
 
-def _default_report_name(organization_name: str | None, report_type: ReportType) -> str:
+def _default_report_name(
+    organization_name: str | None,
+    report_type: ReportType,
+    service_type: str | None = None,
+) -> str:
     org_name = (organization_name or '默认公司').strip() or '默认公司'
-    return f'{org_name} {_report_type_label(report_type)}检测报告 {date.today().isoformat()}'[:255]
+    business_type = service_type or f'{_report_type_label(report_type)}检测'
+    return f'{org_name} {business_type}报告 {date.today().isoformat()}'[:255]
 
 
 def _validate_filename(filename: str | None) -> str:
@@ -308,9 +314,11 @@ class DetectionComplianceService:
             )
 
         parsed_type = _parse_report_type(report_type)
+        cleaned_service_type = clean_detection_service_type(service_type)
         business_name = _clean_display_name(report_name) or _default_report_name(
             organization.name,
             parsed_type,
+            cleaned_service_type,
         )
         display_name = _validate_filename(filename)
         file_path = _store_upload(display_name, content)
@@ -323,7 +331,7 @@ class DetectionComplianceService:
             client_name=_clean_display_name(client_name),
             project_name=_clean_display_name(project_name),
             project_code=_clean_display_name(project_code)[:64] if _clean_display_name(project_code) else None,
-            service_type=_clean_display_name(service_type)[:64] if _clean_display_name(service_type) else None,
+            service_type=cleaned_service_type,
             report_type=parsed_type,
             file_path=file_path,
             created_by_id=actor.account_id,

@@ -56,7 +56,7 @@ def test_upload_csv_calculate_and_list_results(client: TestClient, admin_token: 
             'client_name': '委托客户 B',
             'project_name': '职业卫生检测项目',
             'project_code': 'JC-001',
-            'service_type': '检测',
+            'service_type': '定期检测',
         },
         files={'file': ('benzene.csv', csv, 'text/csv')},
         headers=_auth(admin_token),
@@ -68,12 +68,12 @@ def test_upload_csv_calculate_and_list_results(client: TestClient, admin_token: 
     assert body['client_name'] == '委托客户 B'
     assert body['project_name'] == '职业卫生检测项目'
     assert body['project_code'] == 'JC-001'
-    assert body['service_type'] == '检测'
+    assert body['service_type'] == '定期检测'
     report_id = body['report_id']
 
     listed = client.get(
         '/api/v1/detection/reports',
-        params={'client_name': '客户 B', 'project_name': '职业卫生', 'service_type': '检测'},
+        params={'client_name': '客户 B', 'project_name': '职业卫生', 'service_type': '定期检测'},
         headers=_auth(admin_token),
     )
     assert listed.status_code == 200
@@ -86,7 +86,7 @@ def test_upload_csv_calculate_and_list_results(client: TestClient, admin_token: 
     assert detail_data['client_name'] == '委托客户 B'
     assert detail_data['project_name'] == '职业卫生检测项目'
     assert detail_data['project_code'] == 'JC-001'
-    assert detail_data['service_type'] == '检测'
+    assert detail_data['service_type'] == '定期检测'
     assert detail_data['samples'][0]['measurements'][0]['indicator_name'] == '苯'
 
     calculated = client.post(
@@ -132,6 +132,20 @@ def test_missing_limit_returns_insufficient_data(client: TestClient, admin_token
     assert result['insufficient'] == 1
     assert result['results'][0]['status'] == 'INSUFFICIENT_DATA'
     assert result['results'][0]['limit_id'] is None
+
+
+def test_upload_rejects_legacy_detection_service_type(client: TestClient, admin_token: str):
+    csv = 'sample_point,indicator_name,raw_value,raw_unit\nP1,苯,1,mg/m3\n'.encode()
+
+    resp = client.post(
+        '/api/v1/detection/reports',
+        data={'report_type': 'OCCUPATIONAL_HEALTH', 'service_type': '检测'},
+        files={'file': ('legacy-service-type.csv', csv, 'text/csv')},
+        headers=_auth(admin_token),
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()['code'] == 'DETECTION_INVALID_SERVICE_TYPE'
 
 
 def test_range_limit_uses_min_and_max(client: TestClient, admin_token: str, db):

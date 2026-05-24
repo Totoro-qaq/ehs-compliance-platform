@@ -16,7 +16,7 @@ from app.core import db as db_module
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.logging_setup import get_logger
-from app.models.db_models import AssessmentTask, DetectionReport
+from app.models.db_models import AssessmentTask, DetectionReport, Organization
 
 router = APIRouter(tags=['运维与探测'])
 _log = get_logger(__name__)
@@ -26,7 +26,7 @@ class PlatformStatsOut(BaseModel):
     total_tasks: int = Field(ge=0, description='累计任务数（评价任务 + 检测任务）')
     assessment_tasks: int = Field(ge=0, description='累计评价任务数')
     detection_tasks: int = Field(ge=0, description='累计检测任务数')
-    companies_served: int = Field(ge=0, description='已服务公司数量（去重）')
+    companies_served: int = Field(ge=0, description='已注册公司数量（不含已删除公司）')
     completed_tasks: int = Field(ge=0, description='已完成任务总数（评价 SUCCESS + 检测 CALCULATED）')
 
 
@@ -46,11 +46,11 @@ def public_platform_stats(db: Session = Depends(get_db)):
     assessment_total = db.scalar(select(func.count()).select_from(AssessmentTask)) or 0
     detection_total = db.scalar(select(func.count()).select_from(DetectionReport)) or 0
 
-    # 已服务公司数量：跨评价和检测两张表去重统计 organization_id
-    assessment_orgs = select(AssessmentTask.organization_id).distinct()
-    detection_orgs = select(DetectionReport.organization_id).distinct()
-    union_orgs = assessment_orgs.union(detection_orgs).alias()
-    companies_served = db.scalar(select(func.count()).select_from(union_orgs)) or 0
+    # 首页展示口径按平台注册公司数统计；纯 count 显式排除软删除公司。
+    companies_served = (
+        db.scalar(select(func.count()).select_from(Organization).where(Organization.deleted_at.is_(None)))
+        or 0
+    )
 
     # 已完成任务总量：评价 SUCCESS + 检测 CALCULATED
     completed_assessment = (

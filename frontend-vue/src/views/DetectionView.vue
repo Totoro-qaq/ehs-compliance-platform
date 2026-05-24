@@ -22,13 +22,6 @@ const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const ALLOWED_EXTENSIONS = new Set(['csv', 'xlsx', 'xlsm']);
 const DOCUMENT_EXTENSIONS = new Set(['pdf', 'docx', 'doc', 'txt', 'zip']);
 
-const REPORT_TYPES = [
-  { value: 'OCCUPATIONAL_HEALTH', label: '职业卫生' },
-  { value: 'WASTEWATER', label: '废水' },
-  { value: 'EXHAUST_GAS', label: '废气' },
-  { value: 'NOISE', label: '噪声' },
-  { value: 'HIGH_TEMPERATURE', label: '高温 WBGT' },
-];
 const REPORT_STATUSES = [
   { value: 'UPLOADED', label: '已上传' },
   { value: 'PARSED', label: '已解析' },
@@ -44,12 +37,26 @@ const MEDIUMS = [
   { value: 'HIGH_TEMPERATURE', label: '高温 WBGT' },
 ];
 const LIMIT_TYPES = ['MAC', 'PC_TWA', 'PC_STEL', 'DAILY_AVG', 'INSTANT', 'RANGE'];
+const DETECTION_SERVICE_TYPES = [
+  { value: '定期检测', label: '定期检测' },
+  { value: '控制效果评价检测', label: '控制效果评价检测' },
+  { value: '现状评价检测', label: '现状评价检测' },
+  { value: '环保', label: '环保' },
+  { value: '安全', label: '安全' },
+];
+const DEFAULT_DETECTION_SERVICE_TYPE = DETECTION_SERVICE_TYPES[0].value;
+const SERVICE_TYPE_REPORT_TYPES = {
+  定期检测: 'OCCUPATIONAL_HEALTH',
+  控制效果评价检测: 'OCCUPATIONAL_HEALTH',
+  现状评价检测: 'OCCUPATIONAL_HEALTH',
+  环保: 'WASTEWATER',
+  安全: 'OCCUPATIONAL_HEALTH',
+};
 const SAMPLE_FILES = [
   {
     key: 'occupational',
     label: '职业卫生样例',
     filename: '职业卫生检测样例.csv',
-    reportType: 'OCCUPATIONAL_HEALTH',
     // 职业病危害因素含化学因素和物理因素，列名均支持中英文，非必填列可留空
     content:
       '检测点,车间,岗位,检测因子,检测值,单位,介质,采样时长(分钟),班次时长\n' +
@@ -77,7 +84,6 @@ const reportPage = ref(1);
 const reportPageSize = 15;
 const reportTotal = ref(0);
 const reportPages = ref(0);
-const reportTypeFilter = ref('');
 const reportStatusFilter = ref('');
 const reportClientNameFilter = ref('');
 const reportProjectNameFilter = ref('');
@@ -96,23 +102,21 @@ const fileInput = ref(null);
 const selectedFile = ref(null);
 const fileLabel = ref('点击选择 CSV / XLSX / PDF / DOCX 文件');
 const uploadBusy = ref(false);
-const uploadReportType = ref('OCCUPATIONAL_HEALTH');
 const uploadReportName = ref('');
 const uploadClientName = ref('');
 const uploadProjectName = ref('');
 const uploadProjectCode = ref('');
-const uploadServiceType = ref('检测');
+const uploadServiceType = ref(DEFAULT_DETECTION_SERVICE_TYPE);
 
 const showDocumentPreview = ref(false);
 const documentInput = ref(null);
 const selectedDocument = ref(null);
 const documentLabel = ref('点击选择 PDF / DOCX / DOC / TXT / ZIP 文件');
-const documentReportType = ref('OCCUPATIONAL_HEALTH');
 const documentReportName = ref('');
 const documentClientName = ref('');
 const documentProjectName = ref('');
 const documentProjectCode = ref('');
-const documentServiceType = ref('检测');
+const documentServiceType = ref(DEFAULT_DETECTION_SERVICE_TYPE);
 const documentPreviewBusy = ref(false);
 const documentImportBusy = ref(false);
 const documentPreview = ref(null);
@@ -122,6 +126,17 @@ const drawerOpen = ref(false);
 const activeReport = ref(null);
 const activeResults = ref([]);
 const calculateBusy = ref(false);
+const RESULT_PREVIEW_LIMIT = 20;
+const RESULT_STATUS_FILTERS = [
+  { value: 'abnormal', label: '只看异常' },
+  { value: 'all', label: '全部' },
+  { value: 'EXCEEDED', label: '超标' },
+  { value: 'BORDERLINE', label: '临界' },
+  { value: 'review', label: '待复核/数据不足' },
+  { value: 'COMPLIANT', label: '合规' },
+];
+const resultStatusFilter = ref('abnormal');
+const resultShowAll = ref(false);
 
 const limits = ref([]);
 const limitPage = ref(1);
@@ -145,13 +160,17 @@ const detectionStatItems = computed(() => [
 const selectedOrgName = computed(
   () => organizations.value.find((item) => item.id === organizationId.value)?.name || '',
 );
+const uploadReportType = computed(() => reportTypeForServiceType(uploadServiceType.value));
+const documentReportType = computed(() => reportTypeForServiceType(documentServiceType.value));
 const defaultReportName = computed(() => {
   const orgName = selectedOrgName.value || '公司';
-  return `${orgName} ${labelOf(REPORT_TYPES, uploadReportType.value)}检测报告 ${new Date().toISOString().slice(0, 10)}`;
+  const businessType = uploadServiceType.value || DEFAULT_DETECTION_SERVICE_TYPE;
+  return `${orgName} ${businessType}报告 ${new Date().toISOString().slice(0, 10)}`;
 });
 const defaultDocumentReportName = computed(() => {
   const orgName = selectedOrgName.value || '公司';
-  return `${orgName} ${labelOf(REPORT_TYPES, documentReportType.value)}检测报告 ${new Date().toISOString().slice(0, 10)}`;
+  const businessType = documentServiceType.value || DEFAULT_DETECTION_SERVICE_TYPE;
+  return `${orgName} ${businessType}报告 ${new Date().toISOString().slice(0, 10)}`;
 });
 const activeSampleCount = computed(() => activeReport.value?.samples?.length || 0);
 const activeMeasurementCount = computed(() =>
@@ -165,11 +184,43 @@ const resultSummary = computed(() => {
     borderline: rows.filter((item) => item.status === 'BORDERLINE').length,
     insufficient: rows.filter((item) => item.status === 'INSUFFICIENT_DATA').length,
     needsReview: rows.filter((item) => item.status === 'NEEDS_REVIEW').length,
+    compliant: rows.filter((item) => item.status === 'COMPLIANT').length,
   };
 });
 const sortedActiveResults = computed(() => {
   const rank = { EXCEEDED: 0, BORDERLINE: 1, NEEDS_REVIEW: 2, INSUFFICIENT_DATA: 3, COMPLIANT: 4 };
   return [...(activeResults.value || [])].sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9));
+});
+const filteredActiveResults = computed(() => {
+  const rows = sortedActiveResults.value;
+  const filter = resultStatusFilter.value;
+  if (filter === 'all') return rows;
+  if (filter === 'abnormal') {
+    return rows.filter((item) => ['EXCEEDED', 'BORDERLINE', 'NEEDS_REVIEW', 'INSUFFICIENT_DATA'].includes(item.status));
+  }
+  if (filter === 'review') {
+    return rows.filter((item) => ['NEEDS_REVIEW', 'INSUFFICIENT_DATA'].includes(item.status));
+  }
+  return rows.filter((item) => item.status === filter);
+});
+const visibleActiveResults = computed(() =>
+  resultShowAll.value ? filteredActiveResults.value : filteredActiveResults.value.slice(0, RESULT_PREVIEW_LIMIT),
+);
+const hiddenResultCount = computed(() =>
+  Math.max(filteredActiveResults.value.length - visibleActiveResults.value.length, 0),
+);
+const resultDisplayCountText = computed(() => {
+  const visible = visibleActiveResults.value.length;
+  const filtered = filteredActiveResults.value.length;
+  const total = sortedActiveResults.value.length;
+  if (filtered === total) return `显示 ${visible} / ${total} 条`;
+  return `显示 ${visible} / ${filtered} 条，全部 ${total} 条`;
+});
+const resultToggleText = computed(() =>
+  resultShowAll.value ? `收起到 ${RESULT_PREVIEW_LIMIT} 条` : `显示全部剩余 ${hiddenResultCount.value} 条`,
+);
+watch(resultStatusFilter, () => {
+  resultShowAll.value = false;
 });
 
 // ---- 人工确认：行选择 + 行内编辑 ----
@@ -334,6 +385,10 @@ function labelOf(options, value) {
   return options.find((item) => item.value === value)?.label || value || '-';
 }
 
+function reportTypeForServiceType(serviceType) {
+  return SERVICE_TYPE_REPORT_TYPES[serviceType] || 'OCCUPATIONAL_HEALTH';
+}
+
 function statusText(status) {
   return REPORT_STATUSES.find((item) => item.value === status)?.label || status || '-';
 }
@@ -347,6 +402,11 @@ function complianceText(status) {
     NEEDS_REVIEW: '需复核',
   };
   return map[status] || status || '-';
+}
+
+function setResultFilter(filter) {
+  resultStatusFilter.value = filter;
+  resultShowAll.value = false;
 }
 
 function formatNumber(value) {
@@ -366,7 +426,7 @@ function contextParts(record) {
   if (record?.client_name) parts.push(`客户：${record.client_name}`);
   if (record?.project_name) parts.push(`项目：${record.project_name}`);
   if (record?.project_code) parts.push(`编号：${record.project_code}`);
-  if (record?.service_type) parts.push(`服务：${record.service_type}`);
+  if (record?.service_type) parts.push(`报告类别：${record.service_type}`);
   return parts;
 }
 
@@ -382,7 +442,7 @@ function resetUpload() {
   uploadClientName.value = '';
   uploadProjectName.value = '';
   uploadProjectCode.value = '';
-  uploadServiceType.value = '检测';
+  uploadServiceType.value = DEFAULT_DETECTION_SERVICE_TYPE;
 }
 
 function resetDocumentPreview() {
@@ -393,7 +453,7 @@ function resetDocumentPreview() {
   documentClientName.value = '';
   documentProjectName.value = '';
   documentProjectCode.value = '';
-  documentServiceType.value = '检测';
+  documentServiceType.value = DEFAULT_DETECTION_SERVICE_TYPE;
   documentPreview.value = null;
   previewReviewOnly.value = false;
   selectedRowIndices.value = new Set();
@@ -421,7 +481,6 @@ function onFileChange(event) {
   if (DOCUMENT_EXTENSIONS.has(ext)) {
     selectedDocument.value = file;
     documentLabel.value = file.name;
-    documentReportType.value = uploadReportType.value;
     documentReportName.value = uploadReportName.value;
     documentClientName.value = uploadClientName.value;
     documentProjectName.value = uploadProjectName.value;
@@ -527,9 +586,18 @@ async function loadOrganizations() {
   try {
     const page = await listOrganizations(1, 200);
     organizations.value = page?.items || [];
-    if (!organizationId.value && organizations.value.length) {
+    const selectedOrg = organizations.value.find((item) => item.id === organizationId.value);
+    if (session.isAdmin) {
+      if (!selectedOrg) organizationId.value = '';
+      session.setOrgName(selectedOrg?.name || '');
+    } else if (selectedOrg) {
+      session.setOrgName(selectedOrg.name || '');
+    } else if (organizations.value.length) {
       organizationId.value = organizations.value[0].id;
       session.setOrgName(organizations.value[0].name || '');
+    } else {
+      organizationId.value = '';
+      session.setOrgName('');
     }
   } catch (err) {
     toast.show(formatApiError(err), 'error');
@@ -541,7 +609,6 @@ async function loadReports({ silent = false } = {}) {
   try {
     const page = await listDetectionReports(reportPage.value, reportPageSize, {
       organizationId: organizationId.value,
-      reportType: reportTypeFilter.value,
       status: reportStatusFilter.value,
       clientName: reportClientNameFilter.value.trim(),
       projectName: reportProjectNameFilter.value.trim(),
@@ -618,6 +685,7 @@ async function openReport(reportId) {
   try {
     activeReport.value = await getDetectionReport(reportId);
     activeResults.value = await listDetectionResults(reportId);
+    setResultFilter('abnormal');
     drawerOpen.value = true;
   } catch (err) {
     toast.show(formatApiError(err), 'error');
@@ -635,6 +703,7 @@ async function calculateActiveReport() {
     const run = await calculateDetectionReport(activeReport.value.id);
     activeResults.value = run?.results || [];
     activeReport.value = await getDetectionReport(activeReport.value.id);
+    setResultFilter('abnormal');
     await Promise.all([loadReports({ silent: true }), loadDetectionStats({ silent: true })]);
     toast.show('合规判定已完成', 'success');
   } catch (err) {
@@ -650,7 +719,6 @@ function applyReportFilters() {
 }
 
 function resetReportFilters() {
-  reportTypeFilter.value = '';
   reportStatusFilter.value = '';
   reportClientNameFilter.value = '';
   reportProjectNameFilter.value = '';
@@ -700,12 +768,11 @@ function useSampleCsv() {
   const file = new File([blob], sample.filename, { type: 'text/csv' });
   selectedFile.value = file;
   fileLabel.value = file.name;
-  uploadReportType.value = sample.reportType;
   uploadReportName.value = '';
   uploadClientName.value = '';
   uploadProjectName.value = '';
   uploadProjectCode.value = '';
-  uploadServiceType.value = '检测';
+  uploadServiceType.value = DEFAULT_DETECTION_SERVICE_TYPE;
   showUpload.value = true;
 }
 
@@ -815,7 +882,7 @@ watch(
             </ul>
             <h4>建议补充字段</h4>
             <ul>
-              <li><strong>介质</strong>：工作场所空气、噪声、高温、废水、废气；不填时按报告类型推断</li>
+              <li><strong>介质</strong>：工作场所空气、噪声、高温、废水、废气；不填时按报告类别推断</li>
               <li><strong>车间/岗位</strong>：用于定位问题和后续整改</li>
               <li><strong>采样时长</strong>：职业卫生化学因素 TWA/STEL、噪声 8h 等效计算会用到</li>
               <li><strong>班次时长</strong>：噪声和接触时间换算需要</li>
@@ -862,15 +929,15 @@ watch(
             <label class="form-field">
               <span class="label-text">所属公司</span>
               <select v-if="session.isAdmin" v-model="organizationId">
-                <option v-if="!organizations.length" value="">默认公司</option>
+                <option value="">默认公司</option>
                 <option v-for="org in organizations" :key="org.id" :value="org.id">{{ org.name }}</option>
               </select>
               <input v-else :value="selectedOrgName || session.orgName || '默认公司'" disabled />
             </label>
             <label class="form-field">
-              <span class="label-text">报告类型</span>
-              <select v-model="uploadReportType">
-                <option v-for="item in REPORT_TYPES" :key="item.value" :value="item.value">
+              <span class="label-text">报告类别</span>
+              <select v-model="uploadServiceType">
+                <option v-for="item in DETECTION_SERVICE_TYPES" :key="item.value" :value="item.value">
                   {{ item.label }}
                 </option>
               </select>
@@ -895,16 +962,6 @@ watch(
             <label class="form-field">
               <span class="label-text">项目编号</span>
               <input v-model="uploadProjectCode" type="text" maxlength="64" placeholder="可选" />
-            </label>
-            <label class="form-field">
-              <span class="label-text">服务类型</span>
-              <select v-model="uploadServiceType">
-                <option value="">未指定</option>
-                <option value="评价">评价</option>
-                <option value="检测">检测</option>
-                <option value="整改">整改</option>
-                <option value="综合">综合</option>
-              </select>
             </label>
             <label class="form-field file-field">
               <span class="label-text">数据/报告文件</span>
@@ -986,9 +1043,9 @@ watch(
         <form class="upload-form" @submit.prevent="submitDocumentPreview">
           <div class="form-row">
             <label class="form-field">
-              <span class="label-text">报告类型</span>
-              <select v-model="documentReportType">
-                <option v-for="item in REPORT_TYPES" :key="item.value" :value="item.value">
+              <span class="label-text">报告类别</span>
+              <select v-model="documentServiceType">
+                <option v-for="item in DETECTION_SERVICE_TYPES" :key="item.value" :value="item.value">
                   {{ item.label }}
                 </option>
               </select>
@@ -1013,16 +1070,6 @@ watch(
             <label class="form-field">
               <span class="label-text">项目编号</span>
               <input v-model="documentProjectCode" type="text" maxlength="64" placeholder="可选" />
-            </label>
-            <label class="form-field">
-              <span class="label-text">服务类型</span>
-              <select v-model="documentServiceType">
-                <option value="">未指定</option>
-                <option value="评价">评价</option>
-                <option value="检测">检测</option>
-                <option value="整改">整改</option>
-                <option value="综合">综合</option>
-              </select>
             </label>
             <label class="form-field file-field">
               <span class="label-text">报告文件</span>
@@ -1285,15 +1332,6 @@ watch(
           <input v-else :value="selectedOrgName || session.orgName || '默认公司'" disabled />
         </label>
         <label class="filter-field">
-          <span class="label-text">类型</span>
-          <select v-model="reportTypeFilter" @change="applyReportFilters">
-            <option value="">全部类型</option>
-            <option v-for="item in REPORT_TYPES" :key="item.value" :value="item.value">
-              {{ item.label }}
-            </option>
-          </select>
-        </label>
-        <label class="filter-field">
           <span class="label-text">状态</span>
           <select v-model="reportStatusFilter" @change="applyReportFilters">
             <option value="">全部状态</option>
@@ -1315,13 +1353,12 @@ watch(
           <input v-model="reportProjectCodeFilter" type="search" placeholder="编号" @keydown.enter="applyReportFilters" />
         </label>
         <label class="filter-field">
-          <span class="label-text">服务类型</span>
+          <span class="label-text">报告类别</span>
           <select v-model="reportServiceTypeFilter" @change="applyReportFilters">
-            <option value="">全部类型</option>
-            <option value="评价">评价</option>
-            <option value="检测">检测</option>
-            <option value="整改">整改</option>
-            <option value="综合">综合</option>
+            <option value="">全部类别</option>
+            <option v-for="item in DETECTION_SERVICE_TYPES" :key="item.value" :value="item.value">
+              {{ item.label }}
+            </option>
           </select>
         </label>
         <button type="button" class="btn-secondary filter-reset" @click="applyReportFilters">查询</button>
@@ -1353,7 +1390,7 @@ watch(
             <tr>
               <th>报告名称</th>
               <th>客户 / 项目</th>
-              <th>类型</th>
+              <th>报告类别</th>
               <th>状态</th>
               <th>报告日期</th>
               <th>创建时间</th>
@@ -1365,7 +1402,7 @@ watch(
             </tr>
             <tr v-for="report in reports" :key="report.id" @click="openReport(report.id)">
               <td>
-                <span class="task-filename">{{ report.report_name || labelOf(REPORT_TYPES, report.report_type) }}</span>
+                <span class="task-filename">{{ report.report_name || report.service_type || '检测报告' }}</span>
                 <small v-if="report.report_date" class="subtle-line">检测日期 {{ report.report_date }}</small>
                 <small v-else class="subtle-line">上传于 {{ formatTime(report.created_at) }}</small>
                 <small class="subtle-line" style="color: var(--text-tertiary)">来源文件：{{ report.filename }}</small>
@@ -1377,7 +1414,7 @@ watch(
                 <small v-if="contextText(report)" class="subtle-line">{{ contextText(report) }}</small>
                 <span v-else>-</span>
               </td>
-              <td>{{ labelOf(REPORT_TYPES, report.report_type) }}</td>
+              <td>{{ report.service_type || '-' }}</td>
               <td>
                 <span :class="['status-badge', report.status]">{{ statusText(report.status) }}</span>
               </td>
@@ -1526,10 +1563,8 @@ watch(
               <dd>{{ activeReport.project_name || '-' }}</dd>
               <dt>项目编号</dt>
               <dd>{{ activeReport.project_code || '-' }}</dd>
-              <dt>服务类型</dt>
+              <dt>报告类别</dt>
               <dd>{{ activeReport.service_type || '-' }}</dd>
-              <dt>类型</dt>
-              <dd>{{ labelOf(REPORT_TYPES, activeReport.report_type) }}</dd>
               <dt>状态</dt>
               <dd>
                 <span :class="['status-badge', activeReport.status]">{{
@@ -1543,44 +1578,89 @@ watch(
             </dl>
 
             <div class="metric-grid">
-              <div class="metric-tile">
+              <button
+                type="button"
+                :class="['metric-tile', { active: resultStatusFilter === 'all' }]"
+                @click="setResultFilter('all')"
+              >
                 <span>{{ resultSummary.total }}</span>
                 <small>结果</small>
-              </div>
-              <div class="metric-tile danger">
+              </button>
+              <button
+                type="button"
+                :class="['metric-tile', 'danger', { active: resultStatusFilter === 'EXCEEDED' }]"
+                @click="setResultFilter('EXCEEDED')"
+              >
                 <span>{{ resultSummary.exceeded }}</span>
                 <small>超标</small>
-              </div>
-              <div class="metric-tile warn">
+              </button>
+              <button
+                type="button"
+                :class="['metric-tile', 'warn', { active: resultStatusFilter === 'BORDERLINE' }]"
+                @click="setResultFilter('BORDERLINE')"
+              >
                 <span>{{ resultSummary.borderline }}</span>
                 <small>临界</small>
-              </div>
-              <div class="metric-tile info">
+              </button>
+              <button
+                type="button"
+                :class="['metric-tile', 'info', { active: resultStatusFilter === 'review' }]"
+                @click="setResultFilter('review')"
+              >
                 <span>{{ resultSummary.insufficient + resultSummary.needsReview }}</span>
                 <small>待复核</small>
-              </div>
+              </button>
+              <button
+                type="button"
+                :class="['metric-tile', 'success', { active: resultStatusFilter === 'COMPLIANT' }]"
+                @click="setResultFilter('COMPLIANT')"
+              >
+                <span>{{ resultSummary.compliant }}</span>
+                <small>合规</small>
+              </button>
             </div>
 
             <div class="detail-section">
-              <h3>判定结果</h3>
+              <div class="section-title-row">
+                <h3>判定结果</h3>
+                <span v-if="activeResults.length" class="result-count">{{ resultDisplayCountText }}</span>
+              </div>
               <p v-if="!activeResults.length" class="empty-state compact">尚未运行合规判定</p>
-              <div v-else class="result-list">
-                <div v-for="result in sortedActiveResults" :key="result.id" class="result-row">
-                  <div>
-                    <span :class="['compliance-badge', result.status]">{{
-                      complianceText(result.status)
-                    }}</span>
-                    <strong>{{ result.standard_code || '未匹配限值' }}</strong>
-                    <small>{{ result.message }}</small>
-                  </div>
-                  <div class="result-values">
-                    <span
-                      >{{ formatNumber(result.calculated_value) }} {{ result.calculated_unit || '' }}</span
-                    >
-                    <span>限值 {{ formatNumber(result.limit_value) }} {{ result.limit_unit || '' }}</span>
+              <template v-else>
+                <div class="result-toolbar">
+                  <select v-model="resultStatusFilter" class="result-filter">
+                    <option v-for="item in RESULT_STATUS_FILTERS" :key="item.value" :value="item.value">
+                      {{ item.label }}
+                    </option>
+                  </select>
+                  <button
+                    type="button"
+                    class="btn-link-sm"
+                    :disabled="!hiddenResultCount && !resultShowAll"
+                    @click="resultShowAll = !resultShowAll"
+                  >
+                    {{ resultToggleText }}
+                  </button>
+                </div>
+                <p v-if="!visibleActiveResults.length" class="empty-state compact">当前筛选下没有判定结果</p>
+                <div v-else class="result-list">
+                  <div v-for="result in visibleActiveResults" :key="result.id" class="result-row">
+                    <div>
+                      <span :class="['compliance-badge', result.status]">{{
+                        complianceText(result.status)
+                      }}</span>
+                      <strong>{{ result.standard_code || '未匹配限值' }}</strong>
+                      <small>{{ result.message }}</small>
+                    </div>
+                    <div class="result-values">
+                      <span
+                        >{{ formatNumber(result.calculated_value) }} {{ result.calculated_unit || '' }}</span
+                      >
+                      <span>限值 {{ formatNumber(result.limit_value) }} {{ result.limit_unit || '' }}</span>
+                    </div>
                   </div>
                 </div>
-              </div>
+              </template>
             </div>
 
             <div class="detail-section">
@@ -1590,21 +1670,30 @@ watch(
                   <strong>{{ sample.sample_point }}</strong>
                   <span>{{ labelOf(MEDIUMS, sample.medium) }}</span>
                 </div>
-                <table class="mini-table">
+                <table class="mini-table measurement-table">
                   <thead>
                     <tr>
                       <th>因子</th>
-                      <th>原始值</th>
-                      <th>归一值</th>
+                      <th>检测结果</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr v-for="measurement in sample.measurements" :key="measurement.id">
                       <td>{{ measurement.indicator_name }}</td>
-                      <td>{{ formatNumber(measurement.raw_value) }} {{ measurement.raw_unit || '' }}</td>
                       <td>
-                        {{ formatNumber(measurement.normalized_value) }}
-                        {{ measurement.normalized_unit || '' }}
+                        <div class="measurement-values">
+                          <span class="measurement-value-chip">
+                            <strong>原始</strong>
+                            <span>{{ formatNumber(measurement.raw_value) }} {{ measurement.raw_unit || '' }}</span>
+                          </span>
+                          <span class="measurement-value-chip normalized">
+                            <strong>归一</strong>
+                            <span>
+                              {{ formatNumber(measurement.normalized_value) }}
+                              {{ measurement.normalized_unit || '' }}
+                            </span>
+                          </span>
+                        </div>
                       </td>
                     </tr>
                   </tbody>
@@ -1856,21 +1945,35 @@ watch(
 }
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
   margin-bottom: 22px;
 }
 .metric-tile {
-  min-height: 74px;
-  padding: 12px;
+  appearance: none;
+  text-align: left;
+  font: inherit;
+  min-width: 0;
+  min-height: 72px;
+  padding: 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--panel);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.metric-tile:hover {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+.metric-tile.active {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 .metric-tile span {
   display: block;
   color: var(--text);
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 700;
   line-height: 1;
 }
@@ -1878,7 +1981,8 @@ watch(
   display: block;
   margin-top: 8px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.2;
 }
 .metric-tile.danger span {
   color: var(--danger);
@@ -1888,6 +1992,39 @@ watch(
 }
 .metric-tile.info span {
   color: var(--info);
+}
+.metric-tile.success span {
+  color: var(--success);
+}
+.section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.section-title-row h3 {
+  margin-bottom: 0;
+}
+.result-count {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.result-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+}
+.result-filter {
+  min-width: 160px;
 }
 .result-list {
   display: grid;
@@ -1978,6 +2115,42 @@ watch(
   color: var(--text-tertiary);
   font-weight: 700;
 }
+.measurement-table {
+  table-layout: fixed;
+}
+.measurement-table th:first-child,
+.measurement-table td:first-child {
+  width: 38%;
+  font-weight: 600;
+  color: var(--text);
+  word-break: break-word;
+}
+.measurement-values {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.measurement-value-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  line-height: 1.3;
+}
+.measurement-value-chip.normalized {
+  background: var(--bg-subtle);
+}
+.measurement-value-chip strong {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 700;
+}
 .preview-edit-table thead th {
   position: sticky;
   top: 0;
@@ -2036,6 +2209,10 @@ watch(
   background: var(--accent-bg);
   border-color: var(--accent);
 }
+.btn-link-sm:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .preview-toolbar-count {
   color: var(--text-secondary);
   font-size: 12px;
@@ -2048,7 +2225,7 @@ watch(
 
 /* ---- 预览编辑表格 ---- */
 .preview-edit-table {
-  min-width: 1060px;
+  min-width: 1100px;
 }
 .preview-edit-table th,
 .preview-edit-table td {
@@ -2068,19 +2245,23 @@ watch(
   color: var(--text-tertiary);
 }
 .col-point {
-  min-width: 110px;
+  width: 116px;
+  min-width: 116px;
 }
 .col-medium {
-  width: 90px;
+  width: 128px;
+  min-width: 128px;
 }
 .col-indicator {
-  min-width: 100px;
+  width: 72px;
+  min-width: 72px;
 }
 .col-value {
   width: 80px;
 }
 .col-unit {
-  width: 64px;
+  width: 92px;
+  min-width: 92px;
 }
 .preview-edit-table .col-check,
 .preview-edit-table .col-idx,
@@ -2104,11 +2285,13 @@ watch(
 }
 .preview-edit-table .col-point {
   left: 72px;
-  min-width: 130px;
+  width: 116px;
+  min-width: 116px;
 }
 .preview-edit-table .col-indicator {
-  left: 202px;
-  min-width: 120px;
+  left: 188px;
+  width: 72px;
+  min-width: 72px;
 }
 .col-limit-type {
   width: 100px;
@@ -2118,7 +2301,8 @@ watch(
   text-align: center;
 }
 .col-status {
-  min-width: 96px;
+  width: 124px;
+  min-width: 124px;
 }
 .col-conf {
   width: 86px;
@@ -2225,7 +2409,6 @@ watch(
 @media (max-width: 768px) {
   .detection-filters,
   .limit-form-grid,
-  .metric-grid,
   .result-row,
   .preview-flow,
   .preview-stat-grid {
@@ -2238,9 +2421,20 @@ watch(
     text-align: left;
   }
   .preview-toolbar,
+  .result-toolbar,
   .preview-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+  .section-title-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .result-count {
+    white-space: normal;
+  }
+  .result-filter {
+    width: 100%;
   }
   .preview-toolbar-count,
   .preview-actions-hint {
