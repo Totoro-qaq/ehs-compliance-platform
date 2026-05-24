@@ -26,6 +26,7 @@ from app.models.db_models import (
 )
 from app.schemas.auth_context import CurrentUser
 from app.services.access_control import ensure_organization_scope, ensure_user_has_organization
+from app.services.standard_library_service import StandardLibraryService
 
 
 @dataclass(frozen=True)
@@ -221,6 +222,9 @@ class AgentTools:
         if any(key in user_text for key in ('限值', '法规', '标准', '条款', 'cas', 'CAS')):
             tools.append(('search_regulatory_limits', {'query': user_text, 'limit': 8}))
 
+        if any(key in user_text for key in ('标准', '条文', '条款', '导则', '依据', '规范', '规程')):
+            tools.append(('search_standard_chunks', {'query': user_text, 'limit': 8}))
+
         if not tools:
             tools.append(('get_workbench_summary', {}))
 
@@ -287,6 +291,17 @@ class AgentTools:
             result = AgentTools.search_regulatory_limits(
                 db=db,
                 query=str(arguments.get('query') or ''),
+                limit=int(arguments.get('limit') or 5),
+            )
+        elif tool_name == 'search_standard_chunks':
+            result = AgentTools.search_standard_chunks(
+                db=db,
+                actor=actor,
+                query=str(arguments.get('query') or ''),
+                standard_code=arguments.get('standard_code'),
+                domain=arguments.get('domain'),
+                service_type=arguments.get('service_type'),
+                include_sensitive=bool(arguments.get('include_sensitive') or False),
                 limit=int(arguments.get('limit') or 5),
             )
         else:
@@ -725,3 +740,27 @@ class AgentTools:
             for item in db.scalars(stmt).all()
         ]
         return {'query': keyword, 'items': items, 'limit': max_items}
+
+    @staticmethod
+    def search_standard_chunks(
+        *,
+        db: Session,
+        actor: CurrentUser,
+        query: str,
+        standard_code: str | None = None,
+        domain: str | None = None,
+        service_type: str | None = None,
+        include_sensitive: bool = False,
+        limit: int = 5,
+    ) -> dict[str, Any]:
+        response = StandardLibraryService.search_chunks(
+            db=db,
+            actor=actor,
+            query=query,
+            standard_code=str(standard_code) if standard_code else None,
+            domain=str(domain) if domain else None,
+            service_type=str(service_type) if service_type else None,
+            include_sensitive=include_sensitive,
+            limit=_safe_limit(limit),
+        )
+        return response.model_dump(mode='json')

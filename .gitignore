@@ -55,6 +55,15 @@ dmypy.json
 logs/
 uploads/
 
+# 标准原文资料目录不进 Git（实际路径建议放在仓库外）
+standard_library/
+ehs_data/
+standard_manifests/
+rag_cache/
+milvus_data/
+minio_data/
+*.manifest.local.json
+
 # 本地分析结果暂存
 .analysis_docx/
 .analysis_pdf/
