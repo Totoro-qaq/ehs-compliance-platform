@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import EHSException
 from app.models.db_models import (
-    AccountRole,
     AssessmentTask,
     ComplianceResult,
     ComplianceStatus,
@@ -25,7 +24,11 @@ from app.models.db_models import (
     TaskStatus,
 )
 from app.schemas.auth_context import CurrentUser
-from app.services.access_control import ensure_organization_scope, ensure_user_has_organization
+from app.services.access_control import (
+    ensure_organization_scope,
+    ensure_user_has_organization,
+    is_system_admin,
+)
 from app.services.standard_library_service import StandardLibraryService
 
 
@@ -123,7 +126,7 @@ def _client_project_fields(item: AssessmentTask | DetectionReport) -> dict[str, 
 
 
 def _actor_org_filter(actor: CurrentUser, model) -> list[Any]:
-    if actor.role == AccountRole.ADMIN:
+    if is_system_admin(actor):
         return []
     return [model.organization_id == ensure_user_has_organization(actor)]
 
@@ -433,7 +436,7 @@ class AgentTools:
         return {
             'scope': {
                 'role': actor.role.value,
-                'organization_id': None if actor.role == AccountRole.ADMIN else actor.organization_id,
+                'organization_id': None if is_system_admin(actor) else actor.organization_id,
             },
             'assessment': {
                 'total': count_tasks(),

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.dao.standard_library_dao import StandardChunkDAO, StandardDocumentDAO
 from app.models.base import audit_now_naive
-from app.models.db_models import AccountRole, StandardChunk
+from app.models.db_models import StandardChunk
 from app.schemas.auth_context import CurrentUser
 from app.schemas.standard_schema import (
     StandardChunkOut,
@@ -20,7 +20,7 @@ from app.schemas.standard_schema import (
     StandardManifestImportRequest,
     StandardManifestImportResponse,
 )
-from app.services.access_control import ensure_admin
+from app.services.access_control import ensure_admin, is_system_admin
 
 
 class StandardLibraryService:
@@ -129,7 +129,7 @@ class StandardLibraryService:
         include_sensitive: bool = False,
         limit: int = 10,
     ) -> StandardChunkSearchResponse:
-        effective_include_sensitive = include_sensitive and actor.role == AccountRole.ADMIN
+        effective_include_sensitive = include_sensitive and is_system_admin(actor)
         max_items = max(1, min(limit, 50))
         chunks = StandardChunkDAO(db).search(
             query=query,

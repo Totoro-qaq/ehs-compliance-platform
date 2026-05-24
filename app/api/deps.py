@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.exceptions import EHSException
 from app.models.db_models import AccountRole
 from app.schemas.auth_context import CurrentUser
+from app.services.access_control import is_system_admin
 
 security = HTTPBearer(
     auto_error=False,
@@ -105,7 +106,7 @@ async def require_admin(
             status_code=401,
         )
     user = current_user_from_token(creds.credentials)
-    if user.role != AccountRole.ADMIN:
+    if not is_system_admin(user):
         raise EHSException(
             '禁止访问：需要管理员角色',
             code='FORBIDDEN',

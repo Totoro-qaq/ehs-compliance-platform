@@ -74,7 +74,7 @@ function logout() {
   router.replace({ name: 'home', query: { view: 'home' } });
 }
 
-const isAdminVisible = computed(() => session.token && session.isAdmin);
+const isOrgManagementVisible = computed(() => session.token && session.canManageOrganizations);
 
 onMounted(() => document.addEventListener('click', closeMenuOnOutside));
 onUnmounted(() => document.removeEventListener('click', closeMenuOnOutside));
@@ -176,7 +176,7 @@ onUnmounted(() => document.removeEventListener('click', closeMenuOnOutside));
                     <Icon name="message" :size="14" />
                     <span>AI 助手</span>
                   </button>
-                  <button v-if="isAdminVisible" type="button" class="user-menu-item" @click="goto('orgs')">
+                  <button v-if="isOrgManagementVisible" type="button" class="user-menu-item" @click="goto('orgs')">
                     <Icon name="building" :size="14" />
                     <span>公司管理</span>
                   </button>
