@@ -15,7 +15,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 revision: str = '0011_client_company_project_tables'
-down_revision: str | None = '0010_client_project_fields'
+_unused_down_revision: str | None = '0010_client_project_fields'
+down_revision: str | None = _unused_down_revision
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
