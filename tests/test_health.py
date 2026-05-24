@@ -63,6 +63,10 @@ class TestHealthCheck:
     def test_platform_stats_counts_registered_companies(self, client: TestClient, db):
         from app.models.db_models import Organization
 
+        before_resp = client.get('/api/v1/platform/stats')
+        assert before_resp.status_code == 200
+        before = before_resp.json().get('data') or before_resp.json()
+
         db.add_all(
             [
                 Organization(name='注册展示公司 A'),
@@ -76,9 +80,9 @@ class TestHealthCheck:
         assert resp.status_code == 200
         body = resp.json()
         data = body.get('data') or body
-        assert data['companies_served'] == 2
-        assert data['assessment_tasks'] == 0
-        assert data['detection_tasks'] == 0
+        assert data['companies_served'] == before['companies_served'] + 2
+        assert data['assessment_tasks'] == before['assessment_tasks']
+        assert data['detection_tasks'] == before['detection_tasks']
 
     def test_openapi_schema(self, client: TestClient):
         resp = client.get('/openapi.json')
