@@ -11,6 +11,7 @@ from app.schemas.agent_schema import (
     AgentMessageCreate,
     AgentMessageOut,
     AgentSessionCreate,
+    AgentSessionDeleteResponse,
     AgentSessionOut,
 )
 from app.schemas.auth_context import CurrentUser
@@ -45,6 +46,33 @@ def list_agent_sessions(
     page_size: int = Query(default=20, ge=1, le=100),
 ):
     return AgentService.list_sessions(db=db, actor=actor, page=page, page_size=page_size)
+
+
+@router.delete(
+    '/sessions',
+    response_model=AgentSessionDeleteResponse,
+    summary='清空当前账号的 Agent 会话历史',
+)
+def clear_agent_sessions(
+    actor: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Session = Depends(get_db),
+):
+    deleted = AgentService.clear_sessions(db=db, actor=actor)
+    return AgentSessionDeleteResponse(deleted=deleted)
+
+
+@router.delete(
+    '/sessions/{session_id}',
+    response_model=AgentSessionDeleteResponse,
+    summary='删除当前账号的 Agent 会话',
+)
+def delete_agent_session(
+    session_id: str,
+    actor: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Session = Depends(get_db),
+):
+    deleted = AgentService.delete_session(db=db, actor=actor, session_id=session_id)
+    return AgentSessionDeleteResponse(deleted=deleted)
 
 
 @router.get(

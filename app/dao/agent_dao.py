@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.dao.base_repository import BaseRepository
@@ -50,6 +50,7 @@ class AgentSessionDAO(BaseRepository[AgentSession]):
         stmt = select(AgentSession).where(
             AgentSession.id == session_id,
             AgentSession.account_id == account_id,
+            AgentSession.deleted_at.is_(None),
         )
         return self.session.scalars(stmt).one_or_none()
 
@@ -63,7 +64,10 @@ class AgentSessionDAO(BaseRepository[AgentSession]):
         return self.list_page(
             page=page,
             page_size=page_size,
-            filters=[AgentSession.account_id == account_id],
+            filters=[
+                AgentSession.account_id == account_id,
+                AgentSession.deleted_at.is_(None),
+            ],
             order_by=[AgentSession.last_message_at.desc(), AgentSession.created_at.desc()],
         )
 
@@ -76,6 +80,39 @@ class AgentSessionDAO(BaseRepository[AgentSession]):
         self.session.commit()
         self.session.refresh(entity)
         return entity
+
+    def soft_delete_owned(self, *, session_id: str, account_id: str) -> bool:
+        entity = self.get_owned(session_id=session_id, account_id=account_id)
+        if entity is None:
+            return False
+        self._soft_delete_tree([entity.id])
+        return True
+
+    def soft_delete_all_owned(self, *, account_id: str) -> int:
+        stmt = select(AgentSession.id).where(
+            AgentSession.account_id == account_id,
+            AgentSession.deleted_at.is_(None),
+        )
+        session_ids = list(self.session.scalars(stmt).all())
+        if not session_ids:
+            return 0
+        self._soft_delete_tree(session_ids)
+        return len(session_ids)
+
+    def _soft_delete_tree(self, session_ids: list[str]) -> None:
+        now = audit_now_naive()
+        for model, session_column in (
+            (AgentToolCall, AgentToolCall.session_id),
+            (AgentRun, AgentRun.session_id),
+            (AgentMessage, AgentMessage.session_id),
+            (AgentSession, AgentSession.id),
+        ):
+            self.session.execute(
+                update(model)
+                .where(session_column.in_(session_ids), model.deleted_at.is_(None))
+                .values(deleted_at=now, updated_at=now)
+            )
+        self.session.commit()
 
 
 class AgentMessageDAO(BaseRepository[AgentMessage]):
@@ -101,7 +138,7 @@ class AgentMessageDAO(BaseRepository[AgentMessage]):
     def list_for_session(self, session_id: str, *, limit: int = 50) -> list[AgentMessage]:
         stmt = (
             select(AgentMessage)
-            .where(AgentMessage.session_id == session_id)
+            .where(AgentMessage.session_id == session_id, AgentMessage.deleted_at.is_(None))
             .order_by(AgentMessage.created_at.asc(), AgentMessage.id.asc())
             .limit(limit)
         )

@@ -37,6 +37,7 @@ from app.schemas.detection_schema import (
 )
 from app.services.access_control import ensure_client_org_id_allowed
 from app.services.detection_calculation_service import normalize_unit
+from app.services.detection_service_types import clean_detection_service_type
 from app.services.pdf_text_service import DocumentTextExtractError, extract_text_from_document_file
 
 _ALLOWED_DOCUMENT_EXTENSIONS = frozenset({'.pdf', '.docx', '.doc', '.txt', '.zip'})
@@ -90,9 +91,14 @@ def _report_type_label(report_type: ReportType) -> str:
     }.get(report_type, report_type.value)
 
 
-def _default_report_name(organization_name: str | None, report_type: ReportType) -> str:
+def _default_report_name(
+    organization_name: str | None,
+    report_type: ReportType,
+    service_type: str | None = None,
+) -> str:
     org_name = (organization_name or '默认公司').strip() or '默认公司'
-    return f'{org_name} {_report_type_label(report_type)}检测报告 {date.today().isoformat()}'[:255]
+    business_type = service_type or f'{_report_type_label(report_type)}检测'
+    return f'{org_name} {business_type}报告 {date.today().isoformat()}'[:255]
 
 
 @dataclass(slots=True)
@@ -1409,9 +1415,11 @@ class DetectionDocumentParseService:
 
         display_name = _validate_filename(payload.filename)
         parsed_type = _validate_report_type(payload.report_type)
+        cleaned_service_type = clean_detection_service_type(payload.service_type)
         business_name = _clean_display_name(payload.report_name) or _default_report_name(
             organization.name,
             parsed_type,
+            cleaned_service_type,
         )
         report_dao = DetectionReportDAO(db)
         report = report_dao.create_report(
@@ -1423,9 +1431,7 @@ class DetectionDocumentParseService:
             project_code=_clean_display_name(payload.project_code)[:64]
             if _clean_display_name(payload.project_code)
             else None,
-            service_type=_clean_display_name(payload.service_type)[:64]
-            if _clean_display_name(payload.service_type)
-            else None,
+            service_type=cleaned_service_type,
             report_type=parsed_type,
             file_path=None,
             created_by_id=actor.account_id,

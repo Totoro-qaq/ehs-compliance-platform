@@ -110,7 +110,7 @@ const capabilityCards = [
 const proofCards = [
   { title: '更快形成结论', desc: '把资料解析、风险识别、条款匹配合并到一条工作流。' },
   { title: '结果可复核', desc: '输出风险等级、依据条款、整改建议和原始证据来源。' },
-  { title: '适合企业与机构', desc: '支持甲方内部管理，也支持第三方按委托单位和项目归档资料。' },
+  { title: '适合企业与检测机构', desc: '支持企业内部管理，也支持第三方检测机构按委托单位和项目归档资料。' },
 ];
 
 const workflowSteps = [
@@ -136,7 +136,7 @@ const agentQuickPrompts = [
 
 const supportQuickPrompts = ['获取试点方案', '上传样例评估', '私有化部署', '项目顾问'];
 const consultationCards = [
-  { title: '解决方案咨询', desc: '按企业甲方或第三方检测评价机构场景梳理模块组合和上线路径。', prompt: '预约演示' },
+  { title: '解决方案咨询', desc: '按企业或第三方检测机构场景梳理模块组合和上线路径。', prompt: '预约演示' },
   { title: '数据样例评估', desc: '用脱敏报告验证解析、限值判定、风险摘要和权限隔离。', prompt: '上传样例评估' },
   { title: '私有化部署对接', desc: '确认服务器、模型服务、内网访问、系统对接和审计要求。', prompt: '私有化部署' },
 ];
@@ -413,7 +413,7 @@ function supportReply(content) {
   }
   if (['方案', '需求', '匹配', '场景', '能做什么', '功能', '适用', '职业卫生', '环保', '安全'].some((key) => text.includes(key))) {
     return {
-      content: '适合按场景匹配方案：企业甲方可做安全、环保、职业卫生内部合规管理；第三方检测评价机构可按委托单位和项目归档资料、解析报告、复核判定。核心交付是资料解析、风险识别、条款匹配、检测限值判定和整改闭环。',
+      content: '适合按场景匹配方案：企业可做安全、环保、职业卫生内部合规管理；第三方检测机构可按委托单位和项目归档资料、解析报告、复核判定。核心交付是资料解析、风险识别、条款匹配、检测限值判定和整改闭环。',
       handoff: false,
     };
   }
@@ -740,10 +740,10 @@ watch(todoTotalPages, (pages) => {
         </div>
 
         <div class="hero-content commercial-hero-content">
-          <div class="hero-badge">企业甲方与第三方机构的 EHS 合规分析平台</div>
+          <div class="hero-badge">企业和第三方检测机构的 EHS 合规分析平台</div>
           <h1 class="hero-title">把 EHS 检查、检测和评价资料变成结构化管理</h1>
           <p class="hero-desc">
-            面向企业安全环保职业卫生团队，以及第三方检测评价机构，自动解析资料、识别风险、匹配标准并沉淀客户/项目上下文。
+            面向企业安全环保职业卫生团队，以及第三方检测机构，自动解析资料、识别风险、匹配标准并沉淀客户/项目上下文。
           </p>
           <div class="hero-actions">
             <button v-if="session.token" class="btn-primary btn-lg hero-cta-shine" @click="openWorkbench">进入工作台</button>
@@ -972,7 +972,14 @@ watch(todoTotalPages, (pages) => {
             <button type="submit" :disabled="!supportInput.trim()">匹配</button>
           </form>
         </div>
-        <button type="button" class="support-fab" @click="supportOpen = !supportOpen">
+        <button
+          type="button"
+          class="support-fab"
+          :aria-expanded="supportOpen"
+          aria-label="打开或关闭方案咨询"
+          title="方案咨询"
+          @click="supportOpen = !supportOpen"
+        >
           <span class="support-fab-icon">
             <Icon name="message" :size="19" />
           </span>

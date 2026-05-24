@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi.testclient import TestClient
 
 
@@ -57,6 +59,26 @@ class TestHealthCheck:
         body = resp.json()
         assert body['status'] == 'degraded'
         assert body['checks']['redis']['ok'] is False
+
+    def test_platform_stats_counts_registered_companies(self, client: TestClient, db):
+        from app.models.db_models import Organization
+
+        db.add_all(
+            [
+                Organization(name='注册展示公司 A'),
+                Organization(name='注册展示公司 B'),
+                Organization(name='已删除展示公司', deleted_at=datetime(2026, 1, 1)),
+            ]
+        )
+        db.flush()
+
+        resp = client.get('/api/v1/platform/stats')
+        assert resp.status_code == 200
+        body = resp.json()
+        data = body.get('data') or body
+        assert data['companies_served'] == 2
+        assert data['assessment_tasks'] == 0
+        assert data['detection_tasks'] == 0
 
     def test_openapi_schema(self, client: TestClient):
         resp = client.get('/openapi.json')
