@@ -17,14 +17,37 @@ from app.models.db_models import AccountRole, AssessmentTask
 from app.schemas.auth_context import CurrentUser
 
 
+def is_system_admin(actor: CurrentUser) -> bool:
+    return actor.role == AccountRole.ADMIN
+
+
+def is_org_admin(actor: CurrentUser) -> bool:
+    return actor.role == AccountRole.ORG_ADMIN
+
+
 def ensure_admin(actor: CurrentUser) -> None:
-    if actor.role != AccountRole.ADMIN:
+    """Require the system-level administrator role."""
+    if not is_system_admin(actor):
         raise EHSException(
             '需要管理员权限',
             code='FORBIDDEN',
             status_code=403,
             details={'reason': 'ADMIN_ROLE_REQUIRED'},
         )
+
+
+def ensure_org_admin_or_system_admin(actor: CurrentUser, organization_id: str) -> None:
+    if is_system_admin(actor):
+        return
+    if is_org_admin(actor):
+        ensure_organization_scope(actor, organization_id)
+        return
+    raise EHSException(
+        '需要公司管理员权限',
+        code='FORBIDDEN',
+        status_code=403,
+        details={'reason': 'ORG_ADMIN_ROLE_REQUIRED'},
+    )
 
 
 def ensure_user_has_organization(actor: CurrentUser) -> str:
@@ -44,7 +67,7 @@ def ensure_organization_scope(actor: CurrentUser, resource_organization_id: str)
     公司级水平隔离：非管理员仅能访问本公司数据。
     违反时 403，与统一 Envelope + EHSException 一致。
     """
-    if actor.role == AccountRole.ADMIN:
+    if is_system_admin(actor):
         return
     uid_org = ensure_user_has_organization(actor)
     if resource_organization_id != uid_org:
@@ -66,7 +89,7 @@ def ensure_client_org_id_allowed(
     """
     防止客户端伪造 organization_id：普通用户仅允许操作本人所属公司。
     """
-    if actor.role == AccountRole.ADMIN:
+    if is_system_admin(actor):
         return
     uid_org = ensure_user_has_organization(actor)
     if requested_organization_id != uid_org:
@@ -83,7 +106,7 @@ def ensure_task_author_for_mutation(actor: CurrentUser, task: AssessmentTask) ->
     在同公司内，普通用户仅能删除/变更自己创建的评价任务；管理员不受限。
     """
     ensure_organization_scope(actor, task.organization_id)
-    if actor.role == AccountRole.ADMIN:
+    if is_system_admin(actor) or is_org_admin(actor):
         return
     if task.created_by_id is None:
         raise EHSException(

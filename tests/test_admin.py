@@ -59,6 +59,13 @@ class TestAdminEndpoints:
         )
         assert resp.status_code == 403
 
+    def test_org_admin_cannot_access_system_admin(self, client: TestClient, org_admin_token: str):
+        resp = client.get(
+            '/api/v1/admin/organizations',
+            headers={'Authorization': f'Bearer {org_admin_token}'},
+        )
+        assert resp.status_code == 403
+
     def test_admin_list_assessment_tasks(self, client: TestClient, admin_token: str):
         resp = client.get(
             '/api/v1/admin/assessment-tasks',

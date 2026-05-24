@@ -81,6 +81,24 @@ docker compose up -d redis
 alembic upgrade head
 ```
 
+### 权限模型与演示租户
+
+账户角色分三层：
+
+| 角色 | 权限边界 |
+|------|----------|
+| `ADMIN` | 系统最高管理员；可查看和管理所有公司、系统管理接口、限值库和标准清单导入 |
+| `ORG_ADMIN` | 公司管理员；只能查看本公司数据，可维护本公司资料，并可处理本公司评价任务 |
+| `USER` | 公司员工；只能查看本公司数据，任务变更默认限制在本人创建的数据 |
+
+演示公司与账号可用脚本初始化：
+
+```bash
+python scripts/init_demo_companies.py
+```
+
+该脚本只写入演示公司和演示账号，不会扫描、上传、解析或导入标准/导则原文。`.env`、上传目录、标准原文目录、RAG 缓存和本地 MinIO/Milvus 数据目录均已在 `.gitignore` 中排除。
+
 初始化检测合规限值库：
 
 ```bash
@@ -377,6 +395,24 @@ Run migrations:
 ```bash
 alembic upgrade head
 ```
+
+### Roles and Demo Tenants
+
+The account model has three levels:
+
+| Role | Scope |
+|------|-------|
+| `ADMIN` | System owner; can view and manage all companies, system admin APIs, regulatory limits, and standard manifest imports |
+| `ORG_ADMIN` | Company admin; scoped to one company, can maintain that company profile and manage that company's assessment tasks |
+| `USER` | Company employee; scoped to one company, with task mutations limited to data they created by default |
+
+Seed demo companies and accounts with:
+
+```bash
+python scripts/init_demo_companies.py
+```
+
+The script only writes demo companies and demo accounts. It does not scan, upload, parse, or import standard/source documents. `.env`, uploads, local standard document folders, RAG caches, and local MinIO/Milvus data folders are excluded by `.gitignore`.
 
 Seed detection compliance regulatory limits:
 

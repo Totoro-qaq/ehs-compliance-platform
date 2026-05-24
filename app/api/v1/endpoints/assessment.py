@@ -22,14 +22,14 @@ router = APIRouter(prefix='/assessment', tags=['评价任务'])
         '上传 PDF/TXT/Word/CSV 格式的评价材料，系统异步调用 AI 工作流进行 EHS 合规分析。\n\n'
         '- 文件大小上限 50 MB，支持扩展名：.pdf .txt .doc .docx .csv\n'
         '- 成功后返回 `task_id`，可通过 SSE 或轮询接口跟踪进度\n'
-        '- 普通用户不传公司 ID 时使用本人所属公司；管理员不传时使用系统默认公司'
+        '- 公司用户不传公司 ID 时使用本人所属公司；系统管理员不传时使用系统默认公司'
     ),
 )
 async def create_assessment(
     actor: Annotated[CurrentUser, Depends(get_current_user)],
     file: UploadFile = File(..., description='评价相关材料（如 PDF）'),
     organization_id: str | None = Form(
-        default=None, description='公司 ID；普通用户不传则使用本人所属公司，管理员不传则使用系统默认公司'
+        default=None, description='公司 ID；公司用户不传则使用本人所属公司，系统管理员不传则使用系统默认公司'
     ),
     task_name: str | None = Form(default=None, description='评价任务名称；不传则按公司和日期自动生成'),
     client_name: str | None = Form(default=None, description='委托单位 / 客户公司'),
@@ -66,8 +66,8 @@ async def create_assessment(
     summary='分页查询评价任务列表',
     description=(
         '按公司维度分页查询评价任务。\n\n'
-        '- 普通用户仅能查询本公司任务\n'
-        '- 管理员可通过 `organization_id` 参数筛选任意公司'
+        '- 公司用户仅能查询本公司任务\n'
+        '- 系统管理员可通过 `organization_id` 参数筛选任意公司'
     ),
 )
 def list_assessments(
@@ -117,7 +117,7 @@ def get_assessment(
     '/{task_id}/requeue',
     response_model=AssessmentCreateResponse,
     summary='重新分析失败任务',
-    description='仅失败状态的评价任务可以重新投递。普通用户只能重新投递自己创建的任务，管理员不受此限制。',
+    description='仅失败状态的评价任务可以重新投递。公司员工只能重新投递自己创建的任务；公司管理员可处理本公司任务；系统管理员不受公司限制。',
 )
 def requeue_assessment(
     task_id: str,
@@ -131,7 +131,7 @@ def requeue_assessment(
     '/{task_id}',
     status_code=204,
     summary='删除评价任务',
-    description='软删除评价任务（可由管理员恢复）。普通用户仅能删除自己创建的任务，管理员不受限。关联文件将在保留期后自动清理。',
+    description='软删除评价任务（可由系统管理员恢复）。公司员工仅能删除自己创建的任务；公司管理员可处理本公司任务；系统管理员不受公司限制。关联文件将在保留期后自动清理。',
 )
 def delete_assessment(
     task_id: str,

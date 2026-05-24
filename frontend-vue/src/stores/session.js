@@ -106,7 +106,13 @@ export const useSessionStore = defineStore('session', {
 
   getters: {
     isAdmin: (state) => state.role === 'ADMIN',
-    roleText: (state) => (state.role === 'ADMIN' ? '管理员' : '普通用户'),
+    isOrgAdmin: (state) => state.role === 'ORG_ADMIN',
+    canManageOrganizations: (state) => state.role === 'ADMIN' || state.role === 'ORG_ADMIN',
+    roleText: (state) => {
+      if (state.role === 'ADMIN') return '系统管理员';
+      if (state.role === 'ORG_ADMIN') return '公司管理员';
+      return '公司员工';
+    },
     avatarInitial: (state) => (state.username || '?')[0].toUpperCase(),
   },
 
