@@ -93,7 +93,8 @@ alembic upgrade head
 
 演示公司与账号可用脚本初始化：
 
-```bash
+```powershell
+$env:DEMO_ACCOUNT_PASSWORD = 'change-me-locally'
 python scripts/init_demo_companies.py
 ```
 
@@ -408,11 +409,12 @@ The account model has three levels:
 
 Seed demo companies and accounts with:
 
-```bash
+```powershell
+$env:DEMO_ACCOUNT_PASSWORD = 'change-me-locally'
 python scripts/init_demo_companies.py
 ```
 
-The script only writes demo companies and demo accounts. It does not scan, upload, parse, or import standard/source documents. `.env`, uploads, local standard document folders, RAG caches, and local MinIO/Milvus data folders are excluded by `.gitignore`.
+The script only writes demo companies and demo accounts. It reads `DEMO_ACCOUNT_PASSWORD` only to hash demo account passwords and does not print credentials. It does not scan, upload, parse, or import standard/source documents. `.env`, uploads, local standard document folders, RAG caches, and local MinIO/Milvus data folders are excluded by `.gitignore`.
 
 Seed detection compliance regulatory limits:
 
