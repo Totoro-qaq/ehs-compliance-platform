@@ -222,15 +222,61 @@ def test_preview_detection_document_rejects_structured_csv(
     assert resp.json()['code'] == 'DETECTION_UNSUPPORTED_DOCUMENT_FORMAT'
 
 
+def test_import_detection_document_preserves_client_project_context(
+    client: TestClient, admin_token: str
+):
+    resp = client.post(
+        '/api/v1/detection/documents/import',
+        json={
+            'filename': 'preview.txt',
+            'report_name': '文档解析报告',
+            'client_name': '委托客户 C',
+            'project_name': '文档解析项目',
+            'project_code': 'DOC-001',
+            'service_type': '检测',
+            'report_type': 'OCCUPATIONAL_HEALTH',
+            'rows': [
+                {
+                    'row_index': 1,
+                    'sample_point': '喷漆岗',
+                    'indicator_name': '测试因子甲',
+                    'raw_value': '1.2',
+                    'raw_unit': 'mg/m3',
+                    'raw_text': '喷漆岗 测试因子甲 1.2 mg/m3',
+                    'confidence': '0.90',
+                }
+            ],
+        },
+        headers=_auth(admin_token),
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()['data']
+    assert body['client_name'] == '委托客户 C'
+    assert body['project_name'] == '文档解析项目'
+    assert body['project_code'] == 'DOC-001'
+    assert body['service_type'] == '检测'
+
+    detail = client.get(
+        f'/api/v1/detection/reports/{body["report_id"]}',
+        headers=_auth(admin_token),
+    )
+    assert detail.status_code == 200
+    detail_body = detail.json()['data']
+    assert detail_body['client_name'] == '委托客户 C'
+    assert detail_body['project_name'] == '文档解析项目'
+
+
 def test_parse_detection_docx_tables_for_anonymized_sample_if_present():
     sample_dir = Path('Anonymized Sample Report')
     if not sample_dir.exists():
         return
-    files = list(sample_dir.glob('*.docx'))
+    files = sorted(sample_dir.glob('*.docx'))
     if not files:
         return
 
-    rows = parse_detection_docx_tables(files[0])
+    parsed_by_file = {path.name: parse_detection_docx_tables(path) for path in files}
+    rows = parsed_by_file.get('脱敏数据1.docx') or max(parsed_by_file.values(), key=len)
 
     assert len(rows) >= 190
     assert any(row.medium == SampleMedium.WORKPLACE_AIR for row in rows)
@@ -243,3 +289,7 @@ def test_parse_detection_docx_tables_for_anonymized_sample_if_present():
     assert any(row.indicator_name.startswith('测试热指数-C') for row in rows)
     assert any(row.is_below_detection_limit for row in rows)
     assert any(row.is_background for row in rows)
+
+    raw_record_rows = parsed_by_file.get('GS-TR071-01测试颗粒物分散度原始记录(1).docx')
+    if raw_record_rows is not None:
+        assert raw_record_rows == []

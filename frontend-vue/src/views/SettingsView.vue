@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { changePassword } from '../api/auth';
 import { formatApiError, normalizeBase } from '../api/client';
-import { getOrganization, listOrganizations } from '../api/organizations';
+import { getOrganization } from '../api/organizations';
 import Icon from '../components/Icon.vue';
 import { inferDefaultApiBase, useSessionStore } from '../stores/session';
 import { useToastStore } from '../stores/toast';
@@ -21,7 +21,7 @@ const apiBaseInput = ref('');
 const apiTesting = ref(false);
 const apiStatus = ref('');
 
-const companyName = computed(() => company.value?.name || session.orgName || '默认公司');
+const companyName = computed(() => company.value?.name || session.orgName || '未绑定公司');
 const currentApiText = computed(() => session.apiBase || '同源 / Vite 代理');
 const companyRows = computed(() => [
   { label: '公司名称', value: companyName.value },
@@ -101,9 +101,8 @@ async function loadCompany() {
   try {
     if (session.orgId) {
       company.value = await getOrganization(session.orgId);
-    } else {
-      const page = await listOrganizations(1, 1);
-      company.value = page?.items?.[0] || null;
+    } else if (session.isAdmin) {
+      company.value = null;
     }
     if (company.value?.name) session.setOrgName(company.value.name);
   } catch (err) {
@@ -162,7 +161,7 @@ onMounted(() => {
       </button>
       <div>
         <h1>账户设置</h1>
-        <p class="view-desc">管理账号、公司资料、安全状态和后端连接。</p>
+        <p class="view-desc">查看本人账号和所属公司信息，管理安全状态和后端连接。</p>
       </div>
     </header>
 

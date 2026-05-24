@@ -64,6 +64,10 @@ class DetectionReportCreateResponse(BaseModel):
 
     report_id: str
     report_name: str | None = None
+    client_name: str | None = None
+    project_name: str | None = None
+    project_code: str | None = None
+    service_type: str | None = None
     status: ReportStatus
     report_type: ReportType
     sample_count: int = Field(description='已落库的检测点数量')
@@ -79,6 +83,10 @@ class DetectionReportSummary(BaseModel):
     id: str
     organization_id: str
     report_name: str | None = None
+    client_name: str | None = None
+    project_name: str | None = None
+    project_code: str | None = None
+    service_type: str | None = None
     filename: str
     report_type: ReportType
     status: ReportStatus
@@ -135,6 +143,10 @@ class DetectionDocumentPreviewResponse(BaseModel):
 class DetectionDocumentImportRequest(BaseModel):
     filename: str
     report_name: str | None = None
+    client_name: str | None = None
+    project_name: str | None = None
+    project_code: str | None = None
+    service_type: str | None = None
     report_type: ReportType = ReportType.OCCUPATIONAL_HEALTH
     organization_id: str | None = None
     rows: list[DetectionParsedRowPreview] = Field(default_factory=list)

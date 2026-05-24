@@ -9,7 +9,7 @@
 #   4) 在新窗口启动 Uvicorn (--reload)
 #   5) 在新窗口启动 Celery Worker (--pool=solo)
 #   6) -WithBeat   附加启动 Celery Beat
-#   7) -WithFront  附加启动前端静态服务（端口 5173）
+#   7) -WithFront  附加启动 Vite 前端开发服务（端口 5173）
 #
 # 用法：
 #   pwsh -File scripts/dev_up.ps1
@@ -106,7 +106,7 @@ if ($WithBeat) {
 
 # ---------- 7) 前端（可选） ----------
 if ($WithFront) {
-    $frontCmd = "Set-Location '$RepoRoot\frontend'; python -m http.server $FrontPort"
+    $frontCmd = "Set-Location '$RepoRoot\frontend-vue'; npm run dev -- --host 0.0.0.0 --port $FrontPort"
     Start-Process -FilePath 'powershell.exe' `
         -ArgumentList @('-NoExit', '-NoProfile', '-Command',
             "`$Host.UI.RawUI.WindowTitle = 'EHS Frontend'; $frontCmd") | Out-Null

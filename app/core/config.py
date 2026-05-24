@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     dify_retry_jitter_seconds: float = Field(default=0.5, ge=0.0, le=30.0)
     dify_retry_on_timeout: bool = False
 
+    # Agent MVP：优先调用本地 Ollama，失败时后端返回规则化摘要，避免前端卡死。
+    agent_llm_provider: str = 'ollama'
+    ollama_base_url: str = 'http://127.0.0.1:11434'
+    ollama_chat_model: str = 'qwen2.5:7b'
+    agent_request_timeout_seconds: float = Field(default=120.0, ge=3.0, le=300.0)
+
     # 预置默认公司 ID（init_db 会写入），上传评价未指定公司时使用
     default_organization_id: str = '00000000-0000-4000-8000-000000000001'
 
@@ -61,6 +67,20 @@ class Settings(BaseSettings):
     celery_result_backend: str = 'redis://127.0.0.1:6379/1'
 
     upload_dir: str = './uploads'
+
+    # 标准原文不进入代码仓库；默认走 MinIO 私有 bucket，只由 manifest 接入元数据/切片。
+    standard_storage_backend: str = 'minio'
+    standard_library_root: str = ''
+    minio_endpoint: str = '127.0.0.1:9000'
+    minio_access_key: str = ''
+    minio_secret_key: str = ''
+    minio_bucket: str = 'ehs-standard-library'
+    minio_secure: bool = False
+    minio_region: str = ''
+    milvus_uri: str = 'http://127.0.0.1:19530'
+    milvus_token: str = ''
+    milvus_collection: str = 'ehs_standard_chunks'
+    standard_embedding_model: str = ''
 
     # B 端：单文件上限（字节），可在 .env 覆盖
     max_upload_bytes: int = 50 * 1024 * 1024
