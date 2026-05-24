@@ -17,7 +17,7 @@ const routes = [
     path: '/orgs',
     name: 'orgs',
     component: () => import('../views/OrgsView.vue'),
-    meta: { adminOnly: true },
+    meta: { orgManagement: true },
   },
   { path: '/settings', name: 'settings', component: () => import('../views/SettingsView.vue') },
   { path: '/:pathMatch(.*)*', redirect: '/home' },
@@ -33,7 +33,7 @@ router.beforeEach((to) => {
   if (!session.token && !to.meta?.public) {
     return { name: 'login', query: to.fullPath !== '/' ? { redirect: to.fullPath } : undefined };
   }
-  if (to.meta?.adminOnly && !session.isAdmin) {
+  if (to.meta?.orgManagement && !session.canManageOrganizations) {
     return { name: 'home', query: { view: 'workbench' } };
   }
   if (session.token && to.name === 'login') {

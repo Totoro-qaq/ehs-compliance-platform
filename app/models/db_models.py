@@ -13,6 +13,7 @@ from app.models.base import ModelBase
 
 class AccountRole(str, Enum):
     ADMIN = 'ADMIN'
+    ORG_ADMIN = 'ORG_ADMIN'
     USER = 'USER'
 
 

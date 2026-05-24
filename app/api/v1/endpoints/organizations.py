@@ -32,7 +32,7 @@ def create_organization(
     '',
     response_model=Page[OrganizationOut],
     summary='查询公司列表',
-    description='普通用户仅能看到自己所属的公司；管理员可浏览全部公司列表。',
+    description='公司用户仅能看到自己所属的公司；系统管理员可浏览全部公司列表。',
 )
 def list_organizations(
     actor: Annotated[CurrentUser, Depends(get_current_user)],
@@ -48,7 +48,7 @@ def list_organizations(
     '/{org_id}',
     response_model=OrganizationOut,
     summary='查询公司详情',
-    description='普通用户仅能查看本公司信息；管理员可查看任意公司。',
+    description='公司用户仅能查看本公司信息；系统管理员可查看任意公司。',
 )
 def get_organization(
     org_id: str,
@@ -62,7 +62,7 @@ def get_organization(
     '/{org_id}',
     response_model=OrganizationOut,
     summary='更新公司信息',
-    description='仅管理员可修改公司信息。支持部分更新（仅传需要修改的字段）。',
+    description='系统管理员可修改任意公司；公司管理员仅可修改本公司信息。支持部分更新（仅传需要修改的字段）。',
 )
 def update_organization(
     org_id: str,

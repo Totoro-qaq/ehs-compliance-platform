@@ -261,6 +261,88 @@ class TestAssessmentPermissions:
         )
         assert resp.status_code == 403
 
+    def test_org_admin_can_mutate_tasks_in_own_org(
+        self,
+        client: TestClient,
+        org_admin_token: str,
+        db,
+    ):
+        from app.core.config import settings
+        from app.models.db_models import AssessmentTask, Organization, TaskStatus
+
+        org = db.get(Organization, settings.default_organization_id)
+        assert org is not None
+        failed_task = AssessmentTask(
+            organization_id=org.id,
+            filename='org-admin-failed.txt',
+            content_type='text/plain',
+            file_path='uploads/org-admin-failed.txt',
+            status=TaskStatus.FAILED,
+            progress=100,
+            error_message='failed',
+        )
+        deletable_task = AssessmentTask(
+            organization_id=org.id,
+            filename='org-admin-delete.txt',
+            content_type='text/plain',
+            file_path='uploads/org-admin-delete.txt',
+            status=TaskStatus.PENDING,
+            progress=0,
+        )
+        db.add_all([failed_task, deletable_task])
+        db.flush()
+
+        delay = MagicMock()
+        with patch('app.tasks.worker.run_assessment_task.delay', new=delay):
+            requeue_resp = client.post(
+                f'/api/v1/assessment/{failed_task.id}/requeue',
+                headers={'Authorization': f'Bearer {org_admin_token}'},
+            )
+        assert requeue_resp.status_code == 200
+        delay.assert_called_once()
+
+        delete_resp = client.delete(
+            f'/api/v1/assessment/{deletable_task.id}',
+            headers={'Authorization': f'Bearer {org_admin_token}'},
+        )
+        assert delete_resp.status_code == 200
+
+    def test_org_admin_cannot_see_or_mutate_other_org_tasks(
+        self,
+        client: TestClient,
+        org_admin_token: str,
+        db,
+    ):
+        from app.models.db_models import AssessmentTask, Organization, TaskStatus
+
+        other_org = Organization(name='其他公司任务租户')
+        db.add(other_org)
+        db.flush()
+        other_task = AssessmentTask(
+            organization_id=other_org.id,
+            filename='other-org-failed.txt',
+            content_type='text/plain',
+            file_path='uploads/other-org-failed.txt',
+            status=TaskStatus.FAILED,
+            progress=100,
+            error_message='failed',
+        )
+        db.add(other_task)
+        db.flush()
+
+        list_resp = client.get(
+            '/api/v1/assessment',
+            params={'organization_id': other_org.id},
+            headers={'Authorization': f'Bearer {org_admin_token}'},
+        )
+        assert list_resp.status_code == 403
+
+        requeue_resp = client.post(
+            f'/api/v1/assessment/{other_task.id}/requeue',
+            headers={'Authorization': f'Bearer {org_admin_token}'},
+        )
+        assert requeue_resp.status_code == 403
+
 
 def test_worker_extracts_docx_text_and_persists_parsed_text(monkeypatch, tmp_path: Path):
     from app.core.db import SessionLocal

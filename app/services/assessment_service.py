@@ -17,7 +17,7 @@ from app.core.upload_policy import (
 )
 from app.dao.assessment_dao import AssessmentDAO
 from app.dao.organization_dao import OrganizationDAO
-from app.models.db_models import AccountRole, AssessmentTask, TaskStatus
+from app.models.db_models import AssessmentTask, TaskStatus
 from app.schemas.auth_context import CurrentUser
 from app.schemas.ehs_schema import (
     AssessmentCreateResponse,
@@ -31,6 +31,7 @@ from app.services.access_control import (
     ensure_organization_scope,
     ensure_task_author_for_mutation,
     ensure_user_has_organization,
+    is_system_admin,
 )
 
 
@@ -193,7 +194,7 @@ class AssessmentService:
                 code='INVALID_ORGANIZATION_ID',
                 status_code=400,
             )
-        if actor.role == AccountRole.ADMIN:
+        if is_system_admin(actor):
             oid = organization_id
         else:
             uid_org = ensure_user_has_organization(actor)

@@ -159,3 +159,37 @@ def user_token(db: Session) -> str:
         organization_id=user.organization_id,
     )
     return token.access_token
+
+
+@pytest.fixture()
+def org_admin_token(db: Session) -> str:
+    """创建测试公司管理员并返回 JWT token。"""
+    from app.core.security import hash_password
+    from app.models.db_models import Account, AccountRole, Organization
+
+    org = db.get(Organization, settings.default_organization_id)
+    if org is None:
+        org = Organization(id=settings.default_organization_id, name='默认测试公司')
+        db.add(org)
+        db.flush()
+
+    org_admin = Account(
+        username='testorgadmin',
+        password_hash=hash_password('OrgAdmin123x'),
+        role=AccountRole.ORG_ADMIN,
+        organization_id=org.id,
+        email='orgadmin@test.com',
+        phone='13800000003',
+    )
+    db.add(org_admin)
+    db.flush()
+
+    from app.services.auth_service import create_access_token
+
+    token = create_access_token(
+        username=org_admin.username,
+        role=org_admin.role.value,
+        account_id=org_admin.id,
+        organization_id=org_admin.organization_id,
+    )
+    return token.access_token

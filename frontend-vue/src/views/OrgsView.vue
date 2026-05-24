@@ -69,11 +69,15 @@ async function refresh() {
 
 function openCreate() {
   if (!session.isAdmin) {
-    toast.show('仅管理员可创建公司', 'error');
+    toast.show('仅系统管理员可创建公司', 'error');
     return;
   }
   resetForm();
   showForm.value = true;
+}
+
+function canEditOrg(org) {
+  return session.isAdmin || (session.isOrgAdmin && org.id === session.orgId);
 }
 
 function openEdit(org) {
@@ -186,14 +190,14 @@ onMounted(loadPage);
     <header class="view-header">
       <div>
         <h1>公司管理</h1>
-        <p class="view-desc">管理企业组织信息（仅管理员可创建/修改）</p>
+        <p class="view-desc">系统管理员管理全部公司；公司管理员可维护本公司资料</p>
       </div>
       <div class="header-actions">
         <button type="button" class="btn-secondary" @click="refresh">
           <Icon name="refresh" :size="14" />
           刷新
         </button>
-        <button type="button" class="btn-primary" @click="openCreate">
+        <button v-if="session.isAdmin" type="button" class="btn-primary" @click="openCreate">
           <Icon name="plus" :size="14" />
           新建公司
         </button>
@@ -299,10 +303,12 @@ onMounted(loadPage);
                 <button class="btn-icon-sm" title="概览" @click="openOverview(org)">
                   <Icon name="database" :size="14" />
                 </button>
-                <template v-if="session.isAdmin">
+                <template v-if="canEditOrg(org)">
                   <button class="btn-icon-sm" title="编辑" @click="openEdit(org)">
                     <Icon name="edit" :size="14" />
                   </button>
+                </template>
+                <template v-if="session.isAdmin">
                   <button
                     class="btn-icon-sm"
                     title="删除"
@@ -312,7 +318,12 @@ onMounted(loadPage);
                     <Icon name="trash" :size="14" />
                   </button>
                 </template>
-                <span v-else style="color: var(--text-tertiary); font-size: 12px">无权限</span>
+                <span
+                  v-if="!canEditOrg(org) && !session.isAdmin"
+                  style="color: var(--text-tertiary); font-size: 12px"
+                >
+                  无权限
+                </span>
               </td>
             </tr>
           </tbody>

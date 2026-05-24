@@ -3,14 +3,15 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.exceptions import EHSException
 from app.dao.organization_dao import OrganizationDAO
-from app.models.db_models import AccountRole
 from app.schemas.auth_context import CurrentUser
 from app.schemas.organization_schema import OrganizationCreate, OrganizationOut, OrganizationUpdate
 from app.schemas.pagination import Page
 from app.services.access_control import (
     ensure_admin,
+    ensure_org_admin_or_system_admin,
     ensure_organization_scope,
     ensure_user_has_organization,
+    is_system_admin,
 )
 
 
@@ -44,7 +45,7 @@ class OrganizationService:
         *, db: Session, actor: CurrentUser, page: int, page_size: int
     ) -> Page[OrganizationOut]:
         dao = OrganizationDAO(db)
-        if actor.role == AccountRole.ADMIN:
+        if is_system_admin(actor):
             items, total = dao.list_page(page=page, page_size=page_size)
         else:
             org_id = ensure_user_has_organization(actor)
@@ -64,7 +65,7 @@ class OrganizationService:
     def update(
         *, db: Session, actor: CurrentUser, org_id: str, payload: OrganizationUpdate
     ) -> OrganizationOut:
-        ensure_admin(actor)
+        ensure_org_admin_or_system_admin(actor, org_id)
         dao = OrganizationDAO(db)
         fields = payload.model_dump(exclude_unset=True)
         if 'name' in fields and fields['name'] is not None:
