@@ -40,6 +40,12 @@ _CONTEXT_CLEANUP_PATTERN = re.compile(
     r'(的|还有|有哪些|哪些|有什么|什么|检测报告|评价任务|报告|任务|失败|异常|报错|待判定|未判定|没判定|'
     r'情况|状态|进度|怎么|如何|吗|呢|请|帮我|看一下|看看|总结|概览|,|，|。|？|\?)'
 )
+_QUOTE_PAIRS = {
+    '"': '"',
+    '“': '”',
+    '「': '」',
+    '『': '』',
+}
 
 
 def _safe_limit(value: int, *, default: int = 5, maximum: int = 20) -> int:
@@ -101,14 +107,38 @@ def _clean_context_term(value: str) -> str | None:
     return cleaned[:80]
 
 
+def _quoted_context_terms(text: str) -> list[str]:
+    terms: list[str] = []
+    expected_close: str | None = None
+    start = 0
+
+    for index, char in enumerate(text):
+        if expected_close is None:
+            expected_close = _QUOTE_PAIRS.get(char)
+            if expected_close is not None:
+                start = index + 1
+            continue
+
+        if char != expected_close:
+            continue
+
+        term = text[start:index].strip()
+        if term:
+            terms.append(term)
+            if len(terms) >= 5:
+                break
+        expected_close = None
+
+    return terms
+
+
 def _context_terms(user_text: str | None) -> list[str]:
     text = ' '.join((user_text or '').strip().split())
     if not text:
         return []
 
     terms: list[str] = []
-    quoted = re.findall(r'[“"「『](.+?)[”"」』]', text)
-    terms.extend(item for item in quoted if item.strip())
+    terms.extend(_quoted_context_terms(text))
 
     patterns = [
         r'(?:委托单位|委托客户|客户|公司)[:：\s]*([\w\-\u4e00-\u9fff（）()·]+)',
