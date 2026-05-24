@@ -234,13 +234,11 @@ def _upsert_account(
     account: DemoAccount,
     organization_id: str,
     reset_passwords: bool,
-) -> tuple[Account, bool, bool]:
+) -> None:
     existing = session.scalars(
         select(Account).where(Account.username == account.username),
         execution_options={'include_deleted': True},
     ).one_or_none()
-    created = existing is None
-    password_reset = created or reset_passwords
 
     if existing is None:
         existing = Account(username=account.username, password_hash=hash_password(DEMO_PASSWORD))
@@ -254,35 +252,25 @@ def _upsert_account(
     existing.phone = account.phone
     existing.deleted_at = None
     session.flush()
-    return existing, created, password_reset
 
 
 def seed(reset_passwords: bool = False) -> None:
-    rows: list[tuple[str, str, DemoAccount, bool, bool]] = []
     with SessionLocal() as session:
         for tenant in DEMO_TENANTS:
             org = _upsert_organization(session, tenant)
             for demo_account in tenant.accounts:
-                _, created, password_reset = _upsert_account(
+                _upsert_account(
                     session,
                     account=demo_account,
                     organization_id=org.id,
                     reset_passwords=reset_passwords,
                 )
-                rows.append((tenant.name, org.id, demo_account, created, password_reset))
         session.commit()
 
-    print('Seeded demo companies and accounts.')
+    print('Seeded demo companies and demo accounts.')
     print('No standard documents were scanned, uploaded, parsed, or imported.')
     print(f'System admin remains role=ADMIN. Bootstrap username: {settings.bootstrap_admin_username}')
-    print('Demo account credentials were initialized/reset as requested and are not printed.\n')
-    for company_name, org_id, account, created, _credential_changed in rows:
-        state = 'created' if created else 'updated'
-        print(
-            f'{company_name}\n'
-            f'  organization_id: {org_id}\n'
-            f'  {account.label}: {account.username} / role={account.role.value} [{state}]\n'
-        )
+    print('Demo account secrets are not printed. Use the company management page to view IDs.')
 
 
 def main() -> None:
