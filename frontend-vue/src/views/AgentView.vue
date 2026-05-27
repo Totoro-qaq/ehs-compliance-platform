@@ -32,7 +32,7 @@ const quickPrompts = [
   '有哪些待处理事项',
   '最近失败的任务是什么',
   '检测报告还有哪些没判定',
-  '帮我查一下测试因子甲的测试限值',
+  '查询 测试因子甲 限值',
 ];
 
 const activeSession = computed(() => sessions.value.find((item) => item.id === activeSessionId.value) || null);

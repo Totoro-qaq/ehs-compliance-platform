@@ -264,7 +264,7 @@ class RegulatoryLimitDAO(BaseRepository[RegulatoryLimit]):
         unit: str,
         **fields,
     ) -> RegulatoryLimit:
-        """seed 用：按 (standard_code, indicator_name, medium, limit_type) 去重写入。"""
+        """测试夹具用：按 (standard_code, indicator_name, medium, limit_type) 去重写入。"""
         stmt = select(RegulatoryLimit).where(
             RegulatoryLimit.standard_code == standard_code,
             RegulatoryLimit.indicator_name == indicator_name,

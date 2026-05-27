@@ -1,4 +1,4 @@
 sample_point,workplace,post_name,indicator_name,raw_value,raw_unit,duration_minutes
-喷漆岗,涂装车间,喷漆工,测试因子甲,50000,μg/m3,60
-喷漆岗,涂装车间,喷漆工,测试因子乙,20,mg/m3,60
-打磨岗,机加工车间,打磨工,其他测试颗粒物,6,mg/m3,240
+测试点A,测试车间A,测试岗位A,测试因子甲,100000,μg/m3,60
+测试点B,测试车间B,测试岗位B,测试因子乙,22,mg/m3,60
+测试点C,测试车间C,测试岗位C,测试颗粒物因子,14,mg/m3,240

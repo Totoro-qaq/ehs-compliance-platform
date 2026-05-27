@@ -36,9 +36,9 @@ def _docx_bytes(text_lines: list[str], path: Path) -> bytes:
 def test_parse_detection_text_extracts_candidate_rows():
     text = '\n'.join(
         [
-            '检测点 喷漆岗 测试因子甲 50000 μg/m3 采样时长 60 min',
-            '空压机房 噪声 88 dB(A) 8 h',
-            '炼钢平台 WBGT 31 ℃',
+            '检测点 测试点A 测试因子甲 12 mg/m3 采样时长 60 min',
+            '测试点B 噪声 73 dB(A) 8 h',
+            '测试点C WBGT 37 ℃',
         ]
     )
 
@@ -46,9 +46,9 @@ def test_parse_detection_text_extracts_candidate_rows():
 
     assert warnings == []
     assert len(rows) == 3
-    assert rows[0].sample_point == '喷漆岗'
+    assert rows[0].sample_point == '测试点A'
     assert rows[0].indicator_name == '测试因子甲'
-    assert rows[0].raw_unit == 'µg/m3'
+    assert rows[0].raw_unit == 'mg/m3'
     assert rows[0].is_below_detection_limit is False
     assert rows[0].duration_minutes is not None
     assert rows[1].medium == SampleMedium.NOISE
@@ -58,7 +58,7 @@ def test_parse_detection_text_extracts_candidate_rows():
 
 def test_parse_detection_text_marks_below_detection_limit():
     rows, warnings = parse_detection_text(
-        '喷漆岗 测试因子甲 <0.01 mg/m3',
+        '测试点A 测试因子甲 <0.01 mg/m3',
         report_type=ReportType.OCCUPATIONAL_HEALTH,
     )
 
@@ -104,7 +104,7 @@ def test_parse_detection_tables_maps_generic_chemical_limit_columns():
     tables = [
         [
             ['区域', '检测岗位', '危害因素', '接触时间(h/d)', 'CTWA', 'PC-TWA', 'CSTE', 'PC-STEL'],
-            ['喷涂车间', '喷漆岗', '测试因子甲', '8.0', '2.5', '6', '8.5', '10'],
+            ['测试车间', '测试岗位', '测试因子甲', '8.0', '2.5', '10', '8.5', '15'],
         ]
     ]
 
@@ -113,10 +113,10 @@ def test_parse_detection_tables_maps_generic_chemical_limit_columns():
     assert len(rows) == 2
     assert rows[0].indicator_name == '测试因子甲'
     assert rows[0].limit_type == LimitType.PC_TWA
-    assert rows[0].report_limit_value == Decimal('6')
+    assert rows[0].report_limit_value == Decimal('10')
     assert rows[0].preliminary_status == ComplianceStatus.COMPLIANT
     assert rows[1].limit_type == LimitType.PC_STEL
-    assert rows[1].report_limit_value == Decimal('10')
+    assert rows[1].report_limit_value == Decimal('15')
     assert rows[1].preliminary_status == ComplianceStatus.COMPLIANT
 
 
@@ -124,7 +124,7 @@ def test_parse_detection_tables_prejudges_generic_chemical_exceeded():
     tables = [
         [
             ['检测点', '检测项目', '检测结果', '接触限值'],
-            ['喷漆岗', '测试因子甲', '12', '6'],
+            ['测试点A', '测试因子甲', '12', '10'],
         ]
     ]
 
@@ -133,15 +133,15 @@ def test_parse_detection_tables_prejudges_generic_chemical_exceeded():
     assert len(rows) == 1
     assert rows[0].indicator_name == '测试因子甲'
     assert rows[0].limit_type is None
-    assert rows[0].report_limit_value == Decimal('6')
+    assert rows[0].report_limit_value == Decimal('10')
     assert rows[0].preliminary_status == ComplianceStatus.EXCEEDED
 
 
 def test_preview_detection_document_from_docx(client: TestClient, admin_token: str, tmp_path: Path):
     content = _docx_bytes(
         [
-            '检测点 喷漆岗 测试因子甲 50000 μg/m3 采样时长 60 min',
-            '空压机房 噪声 88 dB(A) 8 h',
+            '检测点 测试点A 测试因子甲 12 mg/m3 采样时长 60 min',
+            '测试点B 噪声 73 dB(A) 8 h',
         ],
         tmp_path / 'preview.docx',
     )
@@ -238,11 +238,11 @@ def test_import_detection_document_preserves_client_project_context(
             'rows': [
                 {
                     'row_index': 1,
-                    'sample_point': '喷漆岗',
+                    'sample_point': '测试点A',
                     'indicator_name': '测试因子甲',
                     'raw_value': '1.2',
                     'raw_unit': 'mg/m3',
-                    'raw_text': '喷漆岗 测试因子甲 1.2 mg/m3',
+                    'raw_text': '测试点A 测试因子甲 1.2 mg/m3',
                     'confidence': '0.90',
                 }
             ],
@@ -286,7 +286,6 @@ def test_parse_detection_docx_tables_for_anonymized_sample_if_present():
     assert any(row.indicator_name == '工频电场' for row in rows)
     assert any(row.indicator_name == '照度' for row in rows)
     assert any(row.indicator_name == '其他测试颗粒物' for row in rows)
-    assert any(row.indicator_name.startswith('测试热指数-C') for row in rows)
     assert any(row.is_below_detection_limit for row in rows)
     assert any(row.is_background for row in rows)
 

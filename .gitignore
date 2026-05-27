@@ -64,6 +64,25 @@ milvus_data/
 minio_data/
 *.manifest.local.json
 
+# Regulatory/legal source data must stay outside the public repository.
+local_standards/
+standard_sources/
+limit_library/
+regulatory_data/
+private_regulatory_data/
+regulatory_limits.*
+*regulatory_limits*
+*regulatory_source_data*
+*limit_standards*
+*_limits.csv
+*_limits.json
+*.sql
+*.dump
+*.db
+*.sqlite
+*.sqlite3
+Anonymized Sample Report/
+
 # 本地分析结果暂存
 .analysis_docx/
 .analysis_pdf/

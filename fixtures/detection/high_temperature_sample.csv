@@ -1,3 +1,3 @@
 sample_point,workplace,post_name,medium,indicator_name,raw_value,raw_unit
-炼钢平台,炼钢车间,炉前工,高温,测试热指数-A,31,WBGT(℃)
-巡检通道,公辅车间,巡检工,高温,测试热指数-B,29,WBGT(℃)
+测试点F,测试车间F,测试岗位F,高温,测试热指数-A,42,℃
+测试点G,测试车间G,测试岗位G,高温,测试热指数-B,39,℃

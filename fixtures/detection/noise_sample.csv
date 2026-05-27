@@ -1,3 +1,3 @@
 sample_point,workplace,post_name,medium,indicator_name,raw_value,raw_unit,shift_hours
-空压机房,动力车间,巡检工,噪声,噪声,88,dB(A),8
-包装线,成品车间,包装工,噪声,噪声,84,dB(A),8
+测试点D,测试车间D,测试岗位D,噪声,测试声级因子,73,dB(A),8
+测试点E,测试车间E,测试岗位E,噪声,测试声级因子,68,dB(A),8

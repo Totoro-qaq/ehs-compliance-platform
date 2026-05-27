@@ -36,18 +36,18 @@ class EHSState(TypedDict):
 
 # ===== 模拟知识库（检索节点用） =====
 MOCK_STANDARDS = [
-    "TEST-STD 测试颗粒物防爆安全规程：产生可燃测试颗粒物的工艺设备应设置有效的除尘系统。",
-    "TEST-STD 2.1-2019 测试因素测试限值：金属测试颗粒物 TWA 10 test-unit。",
-    "TEST-STD 测试物料废料与测试物料熔炼安全技术规范：测试物料废料应存放在专用防火容器中。",
-    "TEST-STD 呼吸防护用品选用规范：接触测试颗粒物作业应配备 TEST-PPE 及以上防护口罩。",
+    "TEST-EHS-001 测试作业控制要求：产生测试颗粒物的工艺设备应设置有效控制系统。",
+    "TEST-EHS-002 测试接触限值要求：测试颗粒物 TWA 为 10 test-unit。",
+    "TEST-EHS-003 测试物料暂存要求：测试物料应存放在专用容器中。",
+    "TEST-EHS-004 测试防护用品要求：接触测试颗粒物作业应配备适用防护用品。",
 ]
 
 
 # ===== 节点函数 =====
 def retrieve_node(state: EHSState) -> dict:
-    """检索节点：根据文档文本模拟 RAG 召回相关国标条款。"""
+    """检索节点：根据文档文本模拟 RAG 召回相关测试条款。"""
     print("\n" + "=" * 60)
-    print("📚 [检索节点] 正在召回相关国标条款...")
+    print("📚 [检索节点] 正在召回相关测试条款...")
     print(f"   输入文本片段: {state['document_text'][:80]}...")
 
     # 模拟检索：随机选取 2-3 条标准
@@ -78,25 +78,25 @@ def generate_node(state: EHSState) -> dict:
         result = json.dumps({
             "risks": [
                 {
-                    "violated_standard": "TEST-STD 测试颗粒物防爆安全规程",
+                    "violated_standard": "TEST-EHS-001 测试作业控制要求",
                     "severity": "HIGH",
-                    "evidence": "砂轮机未见局部吸尘罩，地面有金属测试颗粒物积聚",
-                    "recommendation": "立即加装局部排风罩并接入除尘系统",
+                    "evidence": "测试设备未见局部控制装置，现场有测试颗粒物积聚",
+                    "recommendation": "立即加装局部控制装置并接入处理系统",
                 },
                 {
-                    "violated_standard": "TEST-STD 呼吸防护用品选用规范",
+                    "violated_standard": "TEST-EHS-004 测试防护用品要求",
                     "severity": "HIGH",
-                    "evidence": "岗位配发一次性纱布口罩，未见 TEST-PPE 防护器",
-                    "recommendation": "停用纱布口罩，配发 TEST-PPE 防颗粒物呼吸防护器",
+                    "evidence": "岗位配发一次性测试用品，未见适用防护器",
+                    "recommendation": "停用不适用防护用品，配发测试颗粒物防护器",
                 },
                 {
-                    "violated_standard": "TEST-STD 测试物料废料安全规范",
+                    "violated_standard": "TEST-EHS-003 测试物料暂存要求",
                     "severity": "MEDIUM",
-                    "evidence": "打磨工位 2m 内有敞口存放的测试物料边角料",
+                    "evidence": "测试工位 2m 内有敞口存放的测试边角料",
                     "recommendation": "移至专用防火防潮容器，远离火源",
                 },
             ],
-            "summary": "该工段存在三项风险隐患：测试颗粒物积聚无有效除尘、呼吸防护不达标、测试物料废料存放不规范。需立即整改。",
+            "summary": "该工段存在三项测试风险：颗粒物积聚无有效控制、防护用品不适用、测试物料存放不规范。需立即整改。",
             "metadata": {"model": "mock-llm", "attempt": retry + 1},
         }, ensure_ascii=False)
         print(f"   ✅ 生成完整结果（包含 {3} 条风险项）")
@@ -188,9 +188,9 @@ def main():
     initial_state: EHSState = {
         "document_text": (
             "铸件打磨车间现场检查记录：砂轮机侧墙设有轴流风机排风，"
-            "未见明显局部吸尘罩连接至除尘系统。地面有少量金属测试颗粒物积聚，"
+            "未见明显局部控制装置连接至处理系统。地面有少量测试颗粒物积聚，"
             "清扫频次记录为每周一次。岗位配发一次性纱布口罩。"
-            "打磨工位 2m 内有敞口存放的测试物料边角料约 5kg。"
+            "测试工位 2m 内有敞口存放的测试边角料约 5kg。"
         ),
         "retrieved_context": "",
         "generated_json": "",
