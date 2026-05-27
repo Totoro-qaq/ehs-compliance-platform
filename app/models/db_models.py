@@ -218,6 +218,30 @@ class AgentRunStatus(str, Enum):
     FAILED = 'FAILED'
 
 
+class AgentMemoryScopeType(str, Enum):
+    SESSION = 'SESSION'
+    PROJECT = 'PROJECT'
+    ORGANIZATION = 'ORGANIZATION'
+    STANDARD = 'STANDARD'
+
+
+class AgentMemoryType(str, Enum):
+    PREFERENCE = 'PREFERENCE'
+    FACT = 'FACT'
+    DECISION = 'DECISION'
+    WARNING = 'WARNING'
+    CITATION = 'CITATION'
+
+
+class AgentMemorySourceType(str, Enum):
+    MESSAGE = 'MESSAGE'
+    TASK = 'TASK'
+    REPORT = 'REPORT'
+    STANDARD_CHUNK = 'STANDARD_CHUNK'
+    HUMAN = 'HUMAN'
+    TOOL_CALL = 'TOOL_CALL'
+
+
 class DetectionReport(ModelBase):
     """检测报告主表：一份上传文件 + 报告类型 + 状态机。"""
 
@@ -581,3 +605,71 @@ class AgentToolCall(ModelBase):
     elapsed_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     run: Mapped[AgentRun] = relationship(back_populates='tool_calls')
+
+
+class AgentMemory(ModelBase):
+    """可审计 Agent 业务记忆：默认按组织/账号/会话或项目范围隔离。"""
+
+    __tablename__ = 'agent_memories'
+
+    organization_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('organizations.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    account_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('accounts.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    scope_type: Mapped[AgentMemoryScopeType] = mapped_column(
+        SAEnum(AgentMemoryScopeType), nullable=False, index=True
+    )
+    scope_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    memory_type: Mapped[AgentMemoryType] = mapped_column(
+        SAEnum(AgentMemoryType), nullable=False, index=True
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    source_type: Mapped[AgentMemorySourceType] = mapped_column(
+        SAEnum(AgentMemorySourceType), nullable=False, index=True
+    )
+    source_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
+    is_verified: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    events: Mapped[list['AgentMemoryEvent']] = relationship(
+        back_populates='memory',
+        cascade='all, delete-orphan',
+        order_by='AgentMemoryEvent.created_at',
+    )
+
+
+class AgentMemoryEvent(ModelBase):
+    """Agent 记忆变更事件：记录创建、刷新、人工确认、删除等审计轨迹。"""
+
+    __tablename__ = 'agent_memory_events'
+
+    memory_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey('agent_memories.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    actor_account_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('accounts.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    source_type: Mapped[AgentMemorySourceType | None] = mapped_column(
+        SAEnum(AgentMemorySourceType), nullable=True, index=True
+    )
+    source_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    memory: Mapped[AgentMemory] = relationship(back_populates='events')

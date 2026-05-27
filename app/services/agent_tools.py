@@ -29,6 +29,7 @@ from app.services.access_control import (
     ensure_user_has_organization,
     is_system_admin,
 )
+from app.services.agent_tool_registry import AgentToolPolicy
 from app.services.standard_library_service import StandardLibraryService
 
 
@@ -336,6 +337,12 @@ class AgentTools:
         tool_name: str,
         arguments: dict[str, Any],
     ) -> AgentToolResult:
+        arguments = AgentToolPolicy.prepare_call(
+            actor=actor,
+            tool_name=tool_name,
+            arguments=arguments,
+        )
+
         if tool_name == 'get_workbench_summary':
             result = AgentTools.get_workbench_summary(db=db, actor=actor)
         elif tool_name == 'get_client_project_context':
@@ -405,6 +412,7 @@ class AgentTools:
                 status_code=400,
                 details={'tool_name': tool_name},
             )
+        result = AgentToolPolicy.validate_result(tool_name=tool_name, result=result)
         return AgentToolResult(tool_name=tool_name, arguments=arguments, result=result)
 
     @staticmethod

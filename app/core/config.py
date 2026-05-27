@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     ollama_base_url: str = 'http://127.0.0.1:11434'
     ollama_chat_model: str = 'qwen2.5:7b'
     agent_request_timeout_seconds: float = Field(default=120.0, ge=3.0, le=300.0)
+    agent_runtime_max_tool_calls: int = Field(default=12, ge=1, le=50)
+    agent_runtime_timeout_seconds: float = Field(default=30.0, ge=1.0, le=300.0)
 
     # 预置默认公司 ID（init_db 会写入），上传评价未指定公司时使用
     default_organization_id: str = '00000000-0000-4000-8000-000000000001'
