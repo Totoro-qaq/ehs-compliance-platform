@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
@@ -20,7 +21,12 @@ from app.models.db_models import (
     ReportSectionReviewStatus,
 )
 from app.schemas.auth_context import CurrentUser
-from app.schemas.report_pipeline_schema import ReportSectionOut
+from app.schemas.report_pipeline_schema import (
+    ReportReadinessIssueOut,
+    ReportReadinessOut,
+    ReportSectionOut,
+    ReportSectionTemplateOut,
+)
 from app.services.access_control import (
     ensure_org_admin_or_system_admin,
     ensure_organization_scope,
@@ -31,7 +37,103 @@ _SECTION_KEY_RE = re.compile(r'^[A-Za-z0-9_.-]+$')
 _MAX_CITATION_IDS = 50
 
 
+@dataclass(frozen=True)
+class _ReportSectionTemplate:
+    section_key: str
+    title: str
+    description: str
+    draft_content: str
+    required: bool
+    sort_order: int
+
+
+_REPORT_SECTION_TEMPLATES: tuple[_ReportSectionTemplate, ...] = (
+    _ReportSectionTemplate(
+        section_key='summary',
+        title='报告摘要',
+        description='项目、样品和主要风险的概览，不替代人工结论。',
+        draft_content='本章节为结构化草稿，请结合检测数据、引用依据和人工复核意见补充。',
+        required=True,
+        sort_order=10,
+    ),
+    _ReportSectionTemplate(
+        section_key='basis',
+        title='依据说明',
+        description='记录已核验的评价依据和引用来源，不内置真实法规或标准原文。',
+        draft_content='本章节仅保留依据说明占位，正式内容必须来自已校验引用并经人工复核。',
+        required=True,
+        sort_order=20,
+    ),
+    _ReportSectionTemplate(
+        section_key='findings',
+        title='检测结果分析',
+        description='汇总检测结果、异常项和需要关注的风险点。',
+        draft_content='本章节为检测结果分析草稿，请按报告数据补充事实描述和风险判断。',
+        required=True,
+        sort_order=30,
+    ),
+    _ReportSectionTemplate(
+        section_key='conclusion',
+        title='评价结论',
+        description='形成可复核的结论草稿，批准前不得作为正式结论。',
+        draft_content='本章节为评价结论草稿，引用和人工复核通过前不得用于正式导出。',
+        required=True,
+        sort_order=40,
+    ),
+    _ReportSectionTemplate(
+        section_key='actions',
+        title='整改建议',
+        description='记录建议措施、责任跟进和复查要求。',
+        draft_content='本章节为整改建议草稿，请结合实际风险、现场情况和复核意见补充。',
+        required=True,
+        sort_order=50,
+    ),
+)
+_TEMPLATE_BY_KEY = {template.section_key: template for template in _REPORT_SECTION_TEMPLATES}
+
+
 class ReportPipelineService:
+    @staticmethod
+    def list_templates() -> list[ReportSectionTemplateOut]:
+        return [_template_out(template) for template in _REPORT_SECTION_TEMPLATES]
+
+    @staticmethod
+    def bootstrap_sections(
+        *,
+        db: Session,
+        actor: CurrentUser,
+        report_id: str,
+        section_keys: list[str] | None = None,
+    ) -> list[ReportSectionOut]:
+        report = _get_scoped_report(db=db, actor=actor, report_id=report_id)
+        selected_templates = _select_templates(section_keys)
+        dao = ReportSectionDAO(db)
+        existing_sections = dao.list_by_report(report.id)
+        existing_keys = {section.section_key for section in existing_sections}
+        created = False
+
+        for template in selected_templates:
+            if template.section_key in existing_keys:
+                continue
+            dao.upsert_section(
+                organization_id=report.organization_id,
+                report_id=report.id,
+                section_key=template.section_key,
+                title=template.title,
+                draft_content=template.draft_content,
+                citation_memory_ids_json=None,
+                citation_check_status=ReportSectionCitationCheckStatus.PENDING,
+                citation_check_message='No citation memory ids supplied',
+                created_by_id=actor.account_id,
+            )
+            created = True
+
+        if created:
+            db.commit()
+
+        sections = dao.list_by_report(report.id)
+        return [_section_out(section) for section in _sort_sections(sections)]
+
     @staticmethod
     def upsert_section(
         *,
@@ -74,7 +176,7 @@ class ReportPipelineService:
     def list_sections(*, db: Session, actor: CurrentUser, report_id: str) -> list[ReportSectionOut]:
         report = _get_scoped_report(db=db, actor=actor, report_id=report_id)
         sections = ReportSectionDAO(db).list_by_report(report.id)
-        return [_section_out(section) for section in sections]
+        return [_section_out(section) for section in _sort_sections(sections)]
 
     @staticmethod
     def update_review_status(
@@ -111,6 +213,99 @@ class ReportPipelineService:
         db.commit()
         db.refresh(section)
         return _section_out(section)
+
+    @staticmethod
+    def get_readiness(*, db: Session, actor: CurrentUser, report_id: str) -> ReportReadinessOut:
+        report = _get_scoped_report(db=db, actor=actor, report_id=report_id)
+        sections = ReportSectionDAO(db).list_by_report(report.id)
+        sections_by_key = {section.section_key: section for section in sections}
+        required_keys = [
+            template.section_key for template in _REPORT_SECTION_TEMPLATES if template.required
+        ]
+        issues: list[ReportReadinessIssueOut] = []
+
+        for template in _REPORT_SECTION_TEMPLATES:
+            if template.required and template.section_key not in sections_by_key:
+                issues.append(
+                    ReportReadinessIssueOut(
+                        code='REPORT_SECTION_MISSING',
+                        section_key=template.section_key,
+                        title=template.title,
+                        message='Required report section is missing',
+                    )
+                )
+
+        for section in _sort_sections(sections):
+            if section.citation_check_status != ReportSectionCitationCheckStatus.PASSED:
+                issues.append(
+                    ReportReadinessIssueOut(
+                        code='REPORT_SECTION_CITATIONS_NOT_PASSED',
+                        section_key=section.section_key,
+                        title=section.title,
+                        message='Report section citations must pass before export',
+                    )
+                )
+            if section.review_status != ReportSectionReviewStatus.APPROVED:
+                issues.append(
+                    ReportReadinessIssueOut(
+                        code='REPORT_SECTION_REVIEW_NOT_APPROVED',
+                        section_key=section.section_key,
+                        title=section.title,
+                        message='Report section must be approved before export',
+                    )
+                )
+
+        return ReportReadinessOut(
+            report_id=report.id,
+            ready=not issues,
+            required_section_keys=required_keys,
+            issues=issues,
+        )
+
+
+def _template_out(template: _ReportSectionTemplate) -> ReportSectionTemplateOut:
+    return ReportSectionTemplateOut(
+        section_key=template.section_key,
+        title=template.title,
+        description=template.description,
+        required=template.required,
+        sort_order=template.sort_order,
+    )
+
+
+def _select_templates(section_keys: list[str] | None) -> list[_ReportSectionTemplate]:
+    if not section_keys:
+        return list(_REPORT_SECTION_TEMPLATES)
+
+    selected: list[_ReportSectionTemplate] = []
+    seen: set[str] = set()
+    for raw_key in section_keys:
+        section_key = _normalize_section_key(raw_key)
+        template = _TEMPLATE_BY_KEY.get(section_key)
+        if template is None:
+            raise EHSException(
+                'Unknown report section template key',
+                code='REPORT_SECTION_TEMPLATE_NOT_FOUND',
+                status_code=400,
+                details={'section_key': section_key},
+            )
+        if section_key not in seen:
+            selected.append(template)
+            seen.add(section_key)
+    return selected
+
+
+def _sort_sections(sections: list[ReportSection]) -> list[ReportSection]:
+    return sorted(
+        sections,
+        key=lambda section: (
+            _TEMPLATE_BY_KEY.get(section.section_key).sort_order
+            if section.section_key in _TEMPLATE_BY_KEY
+            else 10_000,
+            section.section_key,
+            section.created_at.isoformat(),
+        ),
+    )
 
 
 def _get_scoped_report(*, db: Session, actor: CurrentUser, report_id: str) -> DetectionReport:
