@@ -7,7 +7,7 @@ from decimal import Decimal
 from hashlib import sha256
 from typing import Any
 
-from sqlalchemy import or_
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import EHSException
@@ -24,6 +24,7 @@ from app.schemas.auth_context import CurrentUser
 from app.services.access_control import (
     ensure_organization_scope,
     ensure_user_has_organization,
+    is_org_admin,
     is_system_admin,
 )
 
@@ -112,6 +113,7 @@ class AgentMemoryService:
         scope_type: AgentMemoryScopeType | None = None,
         scope_id: str | None = None,
         memory_type: AgentMemoryType | None = None,
+        include_expired: bool = False,
         limit: int = 50,
     ) -> list[AgentMemory]:
         visible_organization_id = _resolve_memory_organization_id(
@@ -124,12 +126,13 @@ class AgentMemoryService:
             account_id=None if is_system_admin(actor) else actor.account_id,
             include_all_organizations=include_all_organizations,
         )
-        filters.append(
-            or_(
-                AgentMemory.expires_at.is_(None),
-                AgentMemory.expires_at > audit_now_naive(),
+        if not include_expired:
+            filters.append(
+                or_(
+                    AgentMemory.expires_at.is_(None),
+                    AgentMemory.expires_at > audit_now_naive(),
+                )
             )
-        )
         if scope_type is not None:
             filters.append(AgentMemory.scope_type == scope_type)
         if scope_id is not None:
@@ -141,6 +144,63 @@ class AgentMemoryService:
             filters=filters,
             limit=max(1, min(limit, 100)),
         )
+
+    @staticmethod
+    def verify_memory(
+        *,
+        db: Session,
+        actor: CurrentUser,
+        memory_id: str,
+        is_verified: bool,
+    ) -> AgentMemory:
+        memory = _get_mutable_memory(db=db, actor=actor, memory_id=memory_id)
+        memory.is_verified = 1 if is_verified else 0
+        memory.updated_at = audit_now_naive()
+        _add_memory_event(
+            db=db,
+            memory=memory,
+            actor=actor,
+            event_type='VERIFIED' if is_verified else 'UNVERIFIED',
+        )
+        db.commit()
+        db.refresh(memory)
+        return memory
+
+    @staticmethod
+    def set_memory_expiration(
+        *,
+        db: Session,
+        actor: CurrentUser,
+        memory_id: str,
+        expires_at: datetime | None,
+    ) -> AgentMemory:
+        memory = _get_mutable_memory(db=db, actor=actor, memory_id=memory_id)
+        memory.expires_at = expires_at
+        memory.updated_at = audit_now_naive()
+        _add_memory_event(
+            db=db,
+            memory=memory,
+            actor=actor,
+            event_type='EXPIRATION_UPDATED',
+            metadata={'expires_at': expires_at.isoformat() if expires_at else None},
+        )
+        db.commit()
+        db.refresh(memory)
+        return memory
+
+    @staticmethod
+    def delete_memory(*, db: Session, actor: CurrentUser, memory_id: str) -> int:
+        memory = _get_mutable_memory(db=db, actor=actor, memory_id=memory_id)
+        memory.deleted_at = audit_now_naive()
+        memory.updated_at = audit_now_naive()
+        _add_memory_event(
+            db=db,
+            memory=memory,
+            actor=actor,
+            event_type='DELETED',
+        )
+        db.commit()
+        return 1
 
     @staticmethod
     def record_standard_chunk_citations(
@@ -249,6 +309,65 @@ def _resolve_memory_organization_id(
         return ensure_user_has_organization(actor)
     ensure_organization_scope(actor, organization_id)
     return organization_id
+
+
+def _get_visible_memory(*, db: Session, actor: CurrentUser, memory_id: str) -> AgentMemory:
+    stmt = select(AgentMemory).where(AgentMemory.id == memory_id, AgentMemory.deleted_at.is_(None))
+    memory = db.scalars(stmt).one_or_none()
+    if memory is None or not _can_view_memory(actor=actor, memory=memory):
+        raise EHSException(
+            'Agent memory not found',
+            code='AGENT_MEMORY_NOT_FOUND',
+            status_code=404,
+        )
+    return memory
+
+
+def _get_mutable_memory(*, db: Session, actor: CurrentUser, memory_id: str) -> AgentMemory:
+    memory = _get_visible_memory(db=db, actor=actor, memory_id=memory_id)
+    if _can_mutate_memory(actor=actor, memory=memory):
+        return memory
+    raise EHSException(
+        'Agent memory mutation is forbidden',
+        code='AGENT_MEMORY_FORBIDDEN',
+        status_code=403,
+    )
+
+
+def _can_view_memory(*, actor: CurrentUser, memory: AgentMemory) -> bool:
+    if is_system_admin(actor):
+        return True
+    if memory.organization_id != ensure_user_has_organization(actor):
+        return False
+    return memory.account_id is None or memory.account_id == actor.account_id
+
+
+def _can_mutate_memory(*, actor: CurrentUser, memory: AgentMemory) -> bool:
+    if is_system_admin(actor):
+        return True
+    if memory.organization_id is not None:
+        ensure_organization_scope(actor, memory.organization_id)
+    if memory.account_id == actor.account_id:
+        return True
+    return memory.account_id is None and is_org_admin(actor)
+
+
+def _add_memory_event(
+    *,
+    db: Session,
+    memory: AgentMemory,
+    actor: CurrentUser,
+    event_type: str,
+    metadata: dict[str, Any] | None = None,
+) -> AgentMemoryEvent:
+    return AgentMemoryEventDAO(db).add_event(
+        memory_id=memory.id,
+        event_type=event_type,
+        actor_account_id=actor.account_id,
+        source_type=AgentMemorySourceType.HUMAN,
+        source_id=actor.account_id,
+        metadata_json=_json_dump(metadata),
+    )
 
 
 def _standard_chunk_citation_metadata(item: dict[str, Any]) -> dict[str, Any]:
