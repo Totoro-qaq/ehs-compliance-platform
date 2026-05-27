@@ -86,6 +86,21 @@ class SearchStandardChunksArguments(AgentToolArguments):
     limit: int = Field(default=5, ge=1, le=20)
 
 
+class SearchGuidelineChunksArguments(AgentToolArguments):
+    query: str = Field(min_length=1, max_length=8000)
+    standard_code: str | None = Field(default=None, max_length=64)
+    domain: str | None = Field(default=None, max_length=64)
+    service_type: str | None = Field(default=None, max_length=64)
+    document_id: str | None = Field(default=None, max_length=128)
+    limit: int = Field(default=5, ge=1, le=20)
+
+
+class GetGuidelineClauseArguments(AgentToolArguments):
+    standard_code: str = Field(min_length=1, max_length=64)
+    clause: str = Field(min_length=1, max_length=128)
+    limit: int = Field(default=5, ge=1, le=20)
+
+
 @dataclass(frozen=True, slots=True)
 class AgentToolSpec:
     name: str
@@ -336,6 +351,18 @@ _DEFAULT_TOOL_SPECS = [
         name='search_standard_chunks',
         description='Search standard chunk metadata and permitted excerpts.',
         input_model=SearchStandardChunksArguments,
+        tenant_scope=AgentToolTenantScope.GLOBAL,
+    ),
+    _read_tool(
+        name='search_guideline_chunks',
+        description='Search authorized external guideline chunks through RAGFlow.',
+        input_model=SearchGuidelineChunksArguments,
+        tenant_scope=AgentToolTenantScope.GLOBAL,
+    ),
+    _read_tool(
+        name='get_guideline_clause',
+        description='Search one authorized external guideline clause through RAGFlow.',
+        input_model=GetGuidelineClauseArguments,
         tenant_scope=AgentToolTenantScope.GLOBAL,
     ),
     AgentToolSpec(

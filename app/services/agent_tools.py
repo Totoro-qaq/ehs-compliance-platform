@@ -30,6 +30,7 @@ from app.services.access_control import (
     is_system_admin,
 )
 from app.services.agent_tool_registry import AgentToolPolicy
+from app.services.rag.provider import RagflowService, chunk_search_response_to_dict
 from app.services.standard_library_service import StandardLibraryService
 
 
@@ -320,6 +321,9 @@ class AgentTools:
         if any(key in user_text for key in ('标准', '条文', '条款', '导则', '依据', '规范', '规程')):
             tools.append(('search_standard_chunks', {'query': user_text, 'limit': 8}))
 
+        if any(key in user_text for key in ('瀵煎垯', '鎸囧崡', 'RAGFlow', 'ragflow')):
+            tools.append(('search_guideline_chunks', {'query': user_text, 'limit': 8}))
+
         if not tools:
             tools.append(('get_workbench_summary', {}))
 
@@ -404,6 +408,25 @@ class AgentTools:
                 service_type=arguments.get('service_type'),
                 include_sensitive=bool(arguments.get('include_sensitive') or False),
                 limit=int(arguments.get('limit') or 5),
+            )
+        elif tool_name == 'search_guideline_chunks':
+            result = chunk_search_response_to_dict(
+                RagflowService.search_chunks(
+                    query=str(arguments.get('query') or ''),
+                    standard_code=arguments.get('standard_code'),
+                    domain=arguments.get('domain'),
+                    service_type=arguments.get('service_type'),
+                    document_id=arguments.get('document_id'),
+                    limit=int(arguments.get('limit') or 5),
+                )
+            )
+        elif tool_name == 'get_guideline_clause':
+            result = chunk_search_response_to_dict(
+                RagflowService.get_clause(
+                    standard_code=str(arguments.get('standard_code') or ''),
+                    clause=str(arguments.get('clause') or ''),
+                    limit=int(arguments.get('limit') or 5),
+                )
             )
         else:
             raise EHSException(

@@ -41,6 +41,8 @@ def test_agent_tool_registry_contains_all_dispatched_tools() -> None:
         'summarize_detection_compliance',
         'search_regulatory_limits',
         'search_standard_chunks',
+        'search_guideline_chunks',
+        'get_guideline_clause',
     }
 
     registered_tool_names = {spec.name for spec in AGENT_TOOL_REGISTRY.list_specs()}

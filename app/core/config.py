@@ -83,6 +83,10 @@ class Settings(BaseSettings):
     milvus_token: str = ''
     milvus_collection: str = 'ehs_standard_chunks'
     standard_embedding_model: str = ''
+    ragflow_base_url: str = ''
+    ragflow_api_key: str = ''
+    ragflow_dataset_ids: str = ''
+    ragflow_timeout_seconds: float = Field(default=30.0, ge=1.0, le=300.0)
 
     # B 端：单文件上限（字节），可在 .env 覆盖
     max_upload_bytes: int = 50 * 1024 * 1024
@@ -140,6 +144,10 @@ class Settings(BaseSettings):
             f'mysql+pymysql://{self.mysql_user}:{self.mysql_password}'
             f'@{self.mysql_host}:{self.mysql_port}/{self.mysql_db}?charset=utf8mb4'
         )
+
+    @property
+    def ragflow_dataset_id_list(self) -> list[str]:
+        return [item.strip() for item in self.ragflow_dataset_ids.split(',') if item.strip()]
 
     @property
     def is_production(self) -> bool:

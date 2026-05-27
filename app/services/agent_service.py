@@ -45,6 +45,8 @@ _FAST_SUMMARY_TOOLS = {
     'summarize_detection_compliance',
     'search_regulatory_limits',
     'search_standard_chunks',
+    'search_guideline_chunks',
+    'get_guideline_clause',
 }
 
 _STATUS_OR_LOOKUP_INTENT_KEYWORDS = (
@@ -848,6 +850,32 @@ class AgentService:
                     lines.append(f'- {source or item.get("standard_name") or "-"}{suffix}：{text}')
             else:
                 lines.append('标准条文库没有命中结果；如果你已经处理好标准/导则文件，请导入对应 manifest 后再检索。')
+
+        guideline_chunks = _first_tool(tool_results, 'search_guideline_chunks') or _first_tool(
+            tool_results,
+            'get_guideline_clause',
+        )
+        if guideline_chunks:
+            items = guideline_chunks.get('items') or []
+            if guideline_chunks.get('configured') is False:
+                lines.append('RAGFlow 尚未配置，当前只能使用本地标准条文库和限值库。')
+            elif items:
+                lines.append('RAGFlow 导则检索命中：')
+                for item in items[:5]:
+                    source = ' '.join(
+                        part
+                        for part in [
+                            _compact_text(item.get('standard_code')),
+                            _compact_text(item.get('clause')),
+                        ]
+                        if part
+                    )
+                    page = f"第 {item.get('page')} 页" if item.get('page') else ''
+                    suffix = f'，{page}' if page else ''
+                    text = _compact_text(item.get('chunk_text'))[:180]
+                    lines.append(f'- {source or item.get("standard_name") or item.get("document_id") or "-"}{suffix}：{text}')
+            else:
+                lines.append('RAGFlow 没有命中导则结果；请确认已连接合法授权的数据集并完成索引。')
 
         if not lines:
             lines.append('我已经收到你的问题，但当前没有查到足够的业务数据。建议先进入评价任务或检测合规页面确认数据是否已上传。')
