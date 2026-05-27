@@ -46,6 +46,17 @@ def get_span_id() -> str:
     return _span_id.get()
 
 
+def set_span_id(span_id: str | None = None) -> Token[str]:
+    sid = (span_id or '').strip().lower()
+    if not _valid_span_id(sid):
+        sid = new_span_id()
+    return _span_id.set(sid)
+
+
+def reset_span_id(token: Token[str]) -> None:
+    _span_id.reset(token)
+
+
 def set_request_id(request_id: str | None) -> Token[str]:
     rid = (request_id or '').strip() or new_request_id()
     return _request_id.set(rid)

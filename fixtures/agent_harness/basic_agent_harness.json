@@ -1,0 +1,72 @@
+[
+  {
+    "id": "workbench_fast_summary",
+    "content": "总结当前工作台",
+    "llm": {
+      "mode": "forbid"
+    },
+    "expected": {
+      "provider": "rules",
+      "model_name": "fast-summary",
+      "tool_names": ["get_workbench_summary"],
+      "model_called": false
+    }
+  },
+  {
+    "id": "standard_basis_search",
+    "content": "测试因子甲的测试限值依据是什么？",
+    "setup": "standard_chunks",
+    "llm": {
+      "mode": "forbid"
+    },
+    "expected": {
+      "provider": "rules",
+      "model_name": "fast-summary",
+      "required_tools": ["search_standard_chunks"],
+      "assistant_contains": ["TEST-RAG-001"],
+      "model_called": false
+    }
+  },
+  {
+    "id": "tenant_isolation_failed_tasks",
+    "content": "最近失败的任务是什么？",
+    "setup": "tenant_isolation_tasks",
+    "llm": {
+      "mode": "forbid"
+    },
+    "expected": {
+      "provider": "rules",
+      "model_name": "fast-summary",
+      "required_tools": ["list_assessment_tasks"],
+      "assistant_contains": ["AGENT_HARNESS_OWN_FAILED_TASK"],
+      "assistant_not_contains": ["AGENT_HARNESS_OTHER_FAILED_TASK"],
+      "tool_result_not_contains": ["AGENT_HARNESS_OTHER_FAILED_TASK"],
+      "model_called": false
+    }
+  },
+  {
+    "id": "lightweight_greeting_static_reply",
+    "content": "hello",
+    "llm": {
+      "mode": "forbid"
+    },
+    "expected": {
+      "provider": "rules",
+      "model_name": "static-reply",
+      "tool_names": [],
+      "model_called": false
+    }
+  },
+  {
+    "id": "open_question_calls_mock_llm",
+    "content": "请解释一下职业卫生评价的整改思路",
+    "llm": {
+      "mode": "mock",
+      "response": "AGENT_HARNESS_MODEL_RESPONSE"
+    },
+    "expected": {
+      "assistant_content": "AGENT_HARNESS_MODEL_RESPONSE",
+      "model_called": true
+    }
+  }
+]

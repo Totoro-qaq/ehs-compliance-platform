@@ -5,9 +5,14 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.db import get_db
+from app.models.db_models import AgentMemoryScopeType, AgentMemoryType
 from app.schemas.agent_schema import (
     AgentChatRequest,
     AgentChatResponse,
+    AgentMemoryDeleteResponse,
+    AgentMemoryExpireRequest,
+    AgentMemoryOut,
+    AgentMemoryVerifyRequest,
     AgentMessageCreate,
     AgentMessageOut,
     AgentSessionCreate,
@@ -16,9 +21,87 @@ from app.schemas.agent_schema import (
 )
 from app.schemas.auth_context import CurrentUser
 from app.schemas.pagination import Page
+from app.services.agent_memory_service import AgentMemoryService
 from app.services.agent_service import AgentService
 
 router = APIRouter(prefix='/agent', tags=['Agent 助手'])
+
+
+@router.get(
+    '/memories',
+    response_model=list[AgentMemoryOut],
+    summary='查询当前账号可见的 Agent memory',
+)
+def list_agent_memories(
+    actor: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Session = Depends(get_db),
+    scope_type: AgentMemoryScopeType | None = Query(default=None),
+    scope_id: str | None = Query(default=None, max_length=128),
+    memory_type: AgentMemoryType | None = Query(default=None),
+    include_expired: bool = Query(default=False),
+    limit: int = Query(default=50, ge=1, le=100),
+):
+    return AgentMemoryService.list_memories(
+        db=db,
+        actor=actor,
+        scope_type=scope_type,
+        scope_id=scope_id,
+        memory_type=memory_type,
+        include_expired=include_expired,
+        limit=limit,
+    )
+
+
+@router.patch(
+    '/memories/{memory_id}/verify',
+    response_model=AgentMemoryOut,
+    summary='人工确认或取消确认 Agent memory',
+)
+def verify_agent_memory(
+    memory_id: str,
+    payload: AgentMemoryVerifyRequest,
+    actor: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Session = Depends(get_db),
+):
+    return AgentMemoryService.verify_memory(
+        db=db,
+        actor=actor,
+        memory_id=memory_id,
+        is_verified=payload.is_verified,
+    )
+
+
+@router.patch(
+    '/memories/{memory_id}/expiration',
+    response_model=AgentMemoryOut,
+    summary='设置或清除 Agent memory 过期时间',
+)
+def update_agent_memory_expiration(
+    memory_id: str,
+    payload: AgentMemoryExpireRequest,
+    actor: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Session = Depends(get_db),
+):
+    return AgentMemoryService.set_memory_expiration(
+        db=db,
+        actor=actor,
+        memory_id=memory_id,
+        expires_at=payload.expires_at,
+    )
+
+
+@router.delete(
+    '/memories/{memory_id}',
+    response_model=AgentMemoryDeleteResponse,
+    summary='软删除 Agent memory',
+)
+def delete_agent_memory(
+    memory_id: str,
+    actor: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Session = Depends(get_db),
+):
+    deleted = AgentMemoryService.delete_memory(db=db, actor=actor, memory_id=memory_id)
+    return AgentMemoryDeleteResponse(deleted=deleted)
 
 
 @router.post(

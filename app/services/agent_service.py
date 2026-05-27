@@ -4,12 +4,12 @@ import json
 import time
 from typing import Any
 
-import httpx
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.exceptions import EHSException
 from app.core.logging_setup import get_logger
+from app.core.tracing import start_span
 from app.dao.agent_dao import AgentMessageDAO, AgentRunDAO, AgentSessionDAO, AgentToolCallDAO
 from app.models.db_models import (
     AgentMessageRole,
@@ -21,6 +21,12 @@ from app.models.db_models import (
 from app.schemas.agent_schema import AgentChatResponse
 from app.schemas.auth_context import CurrentUser
 from app.schemas.pagination import Page
+from app.services.agent_memory_service import AgentMemoryService
+from app.services.agent_model_provider import (
+    get_configured_agent_model_metadata,
+    get_configured_agent_model_provider,
+)
+from app.services.agent_runtime_policy import AgentRuntimePolicy, AgentSandbox
 from app.services.agent_tools import AgentToolResult, AgentTools
 
 _logger = get_logger(__name__)
@@ -39,6 +45,8 @@ _FAST_SUMMARY_TOOLS = {
     'summarize_detection_compliance',
     'search_regulatory_limits',
     'search_standard_chunks',
+    'search_guideline_chunks',
+    'get_guideline_clause',
 }
 
 _STATUS_OR_LOOKUP_INTENT_KEYWORDS = (
@@ -359,19 +367,22 @@ class AgentService:
         )
         session = session_dao.touch(session, title=session.title or _title_from_content(content))
 
-        provider = settings.agent_llm_provider.strip().lower() or 'ollama'
-        model_name = settings.ollama_chat_model
+        model_metadata = get_configured_agent_model_metadata()
         run = run_dao.create_run(
             session_id=session.id,
             account_id=actor.account_id,
             organization_id=actor.organization_id,
             user_message_id=user_message.id,
-            provider=provider,
-            model_name=model_name,
+            provider=model_metadata.provider_name,
+            model_name=model_metadata.model_name,
         )
 
         degraded = False
         llm_error: str | None = None
+        runtime_policy = AgentRuntimePolicy.from_actor(actor)
+        with start_span('agent.runtime_policy', runtime_policy.to_metadata()):
+            AgentSandbox.ensure_run_allowed(runtime_policy)
+            AgentSandbox.ensure_iteration_allowed(policy=runtime_policy, iteration_index=1)
         static_answer = _static_reply_for_lightweight_prompt(content)
         if static_answer:
             run.provider = 'rules'
@@ -394,6 +405,8 @@ class AgentService:
                 session_id=session.id,
                 content=content,
                 tool_call_dao=tool_call_dao,
+                runtime_policy=runtime_policy,
+                run_started_at=chat_started,
             )
 
             fast_summary = _should_use_fast_summary(content, tool_results)
@@ -425,6 +438,10 @@ class AgentService:
                         settings.agent_request_timeout_seconds,
                         len(content),
                     )
+                    AgentSandbox.ensure_deadline(
+                        policy=runtime_policy,
+                        started_at=chat_started,
+                    )
                     answer = await AgentService._call_model(
                         db=db,
                         session_id=session.id,
@@ -454,6 +471,7 @@ class AgentService:
                 'static_reply': static_answer is not None,
                 'tool_names': tool_names,
                 'llm_error': llm_error,
+                'runtime_policy': runtime_policy.to_metadata(),
             },
         )
         run = run_dao.finish_run(
@@ -465,6 +483,21 @@ class AgentService:
         session = session_dao.touch(session)
         tool_calls = tool_call_dao.list_for_run(run.id)
         elapsed_ms = int((time.perf_counter() - chat_started) * 1000)
+        with start_span(
+            'agent.run',
+            {
+                'agent.run_id': run.id,
+                'agent.session_id': session.id,
+                'agent.provider': run.provider,
+                'agent.model_name': run.model_name,
+                'agent.fast_summary': fast_summary,
+                'agent.degraded': degraded,
+                'agent.static_reply': static_answer is not None,
+                'agent.tool_names': tool_names,
+                'agent.elapsed_ms': elapsed_ms,
+            },
+        ):
+            pass
         _logger.info(
             'agent.chat completed run_id=%s session_id=%s provider=%s model=%s fast_summary=%s degraded=%s elapsed_ms=%s tools=%s',
             run.id,
@@ -495,19 +528,37 @@ class AgentService:
         session_id: str,
         content: str,
         tool_call_dao: AgentToolCallDAO,
+        runtime_policy: AgentRuntimePolicy,
+        run_started_at: float,
     ) -> list[AgentToolResult]:
         results: list[AgentToolResult] = []
-        for tool_name, arguments in AgentTools.selected_tools(content):
+        for call_index, (tool_name, arguments) in enumerate(AgentTools.selected_tools(content), start=1):
             started = time.perf_counter()
             try:
-                tool_result = AgentTools.run_tool(
-                    db=db,
-                    actor=actor,
-                    tool_name=tool_name,
-                    arguments=arguments,
-                )
+                with start_span(
+                    f'agent.tool_call.{tool_name}',
+                    {
+                        'agent.run_id': run_id,
+                        'agent.session_id': session_id,
+                        'agent.tool_name': tool_name,
+                        'agent.tool_call_index': call_index,
+                    },
+                ) as span:
+                    AgentSandbox.before_tool_call(
+                        policy=runtime_policy,
+                        tool_name=tool_name,
+                        call_index=call_index,
+                        started_at=run_started_at,
+                    )
+                    tool_result = AgentTools.run_tool(
+                        db=db,
+                        actor=actor,
+                        tool_name=tool_name,
+                        arguments=arguments,
+                    )
+                    span.set_attribute('agent.tool_success', True)
                 elapsed_ms = int((time.perf_counter() - started) * 1000)
-                tool_call_dao.add_call(
+                tool_call = tool_call_dao.add_call(
                     run_id=run_id,
                     session_id=session_id,
                     tool_name=tool_name,
@@ -516,6 +567,25 @@ class AgentService:
                     success=True,
                     elapsed_ms=elapsed_ms,
                 )
+                if tool_name == 'search_standard_chunks':
+                    AgentMemoryService.record_standard_chunk_citations(
+                        db=db,
+                        actor=actor,
+                        session_id=session_id,
+                        tool_result=tool_result.result,
+                        tool_call_id=tool_call.id,
+                        run_id=run_id,
+                    )
+                if tool_name in {'search_guideline_chunks', 'get_guideline_clause'}:
+                    AgentMemoryService.record_ragflow_chunk_citations(
+                        db=db,
+                        actor=actor,
+                        session_id=session_id,
+                        tool_result=tool_result.result,
+                        tool_call_id=tool_call.id,
+                        run_id=run_id,
+                        tool_name=tool_name,
+                    )
                 results.append(tool_result)
             except Exception as exc:
                 elapsed_ms = int((time.perf_counter() - started) * 1000)
@@ -540,13 +610,6 @@ class AgentService:
         content: str,
         tool_results: list[AgentToolResult],
     ) -> str:
-        if settings.agent_llm_provider.strip().lower() != 'ollama':
-            raise EHSException(
-                '当前 Agent LLM provider 暂未接入',
-                code='AGENT_PROVIDER_NOT_SUPPORTED',
-                status_code=503,
-            )
-
         history = AgentMessageDAO(db).list_for_session(session_id, limit=12)
         messages: list[dict[str, str]] = [{'role': 'system', 'content': _SYSTEM_PROMPT}]
         for item in history[-10:]:
@@ -574,32 +637,18 @@ class AgentService:
             }
         )
 
-        base_url = settings.ollama_base_url.rstrip('/')
-        payload = {
-            'model': settings.ollama_chat_model,
-            'messages': messages,
-            'stream': False,
-            'options': {
-                'num_predict': 320,
-                'temperature': 0.2,
+        model_metadata = get_configured_agent_model_metadata()
+        with start_span(
+            'agent.llm.call',
+            {
+                'agent.provider': model_metadata.provider_name,
+                'agent.model_name': model_metadata.model_name,
+                'agent.prompt_messages': len(messages),
+                'agent.tool_count': len(tool_results),
             },
-        }
-        started = time.perf_counter()
-        async with httpx.AsyncClient(timeout=settings.agent_request_timeout_seconds) as client:
-            response = await client.post(f'{base_url}/api/chat', json=payload)
-            response.raise_for_status()
-            data = response.json()
-        elapsed_ms = int((time.perf_counter() - started) * 1000)
-        _logger.info(
-            'agent.ollama completed model=%s elapsed_ms=%s prompt_messages=%s',
-            settings.ollama_chat_model,
-            elapsed_ms,
-            len(messages),
-        )
-        content_text = data.get('message', {}).get('content') or data.get('response')
-        if not content_text:
-            raise RuntimeError('Ollama 返回为空')
-        return str(content_text).strip()
+        ):
+            provider = get_configured_agent_model_provider()
+            return await provider.generate(messages=messages)
 
     @staticmethod
     def _fallback_answer(
@@ -811,6 +860,32 @@ class AgentService:
                     lines.append(f'- {source or item.get("standard_name") or "-"}{suffix}：{text}')
             else:
                 lines.append('标准条文库没有命中结果；如果你已经处理好标准/导则文件，请导入对应 manifest 后再检索。')
+
+        guideline_chunks = _first_tool(tool_results, 'search_guideline_chunks') or _first_tool(
+            tool_results,
+            'get_guideline_clause',
+        )
+        if guideline_chunks:
+            items = guideline_chunks.get('items') or []
+            if guideline_chunks.get('configured') is False:
+                lines.append('RAGFlow 尚未配置，当前只能使用本地标准条文库和限值库。')
+            elif items:
+                lines.append('RAGFlow 导则检索命中：')
+                for item in items[:5]:
+                    source = ' '.join(
+                        part
+                        for part in [
+                            _compact_text(item.get('standard_code')),
+                            _compact_text(item.get('clause')),
+                        ]
+                        if part
+                    )
+                    page = f"第 {item.get('page')} 页" if item.get('page') else ''
+                    suffix = f'，{page}' if page else ''
+                    text = _compact_text(item.get('chunk_text'))[:180]
+                    lines.append(f'- {source or item.get("standard_name") or item.get("document_id") or "-"}{suffix}：{text}')
+            else:
+                lines.append('RAGFlow 没有命中导则结果；请确认已连接合法授权的数据集并完成索引。')
 
         if not lines:
             lines.append('我已经收到你的问题，但当前没有查到足够的业务数据。建议先进入评价任务或检测合规页面确认数据是否已上传。')

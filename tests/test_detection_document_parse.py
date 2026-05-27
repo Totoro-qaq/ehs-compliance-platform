@@ -285,10 +285,12 @@ def test_parse_detection_docx_tables_for_anonymized_sample_if_present():
     assert any(row.indicator_name.startswith('激光辐射') for row in rows)
     assert any(row.indicator_name == '工频电场' for row in rows)
     assert any(row.indicator_name == '照度' for row in rows)
-    assert any(row.indicator_name == '其他测试颗粒物' for row in rows)
+    assert any(row.indicator_name in {'其他测试颗粒物', '其他粉尘'} for row in rows)
     assert any(row.is_below_detection_limit for row in rows)
     assert any(row.is_background for row in rows)
 
-    raw_record_rows = parsed_by_file.get('GS-TR071-01测试颗粒物分散度原始记录(1).docx')
+    raw_record_rows = parsed_by_file.get(
+        'GS-TR071-01测试颗粒物分散度原始记录(1).docx'
+    ) or parsed_by_file.get('GS-TR071-01粉尘分散度原始记录(1).docx')
     if raw_record_rows is not None:
         assert raw_record_rows == []

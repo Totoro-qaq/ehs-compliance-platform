@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.db_models import AgentMessageRole, AgentRunStatus, AgentSessionStatus
+from app.models.db_models import (
+    AgentMemoryScopeType,
+    AgentMemorySourceType,
+    AgentMemoryType,
+    AgentMessageRole,
+    AgentRunStatus,
+    AgentSessionStatus,
+)
 
 
 class AgentSessionCreate(BaseModel):
@@ -80,6 +88,38 @@ class AgentToolCallOut(BaseModel):
 
 
 class AgentSessionDeleteResponse(BaseModel):
+    deleted: int = Field(ge=0)
+
+
+class AgentMemoryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    organization_id: str | None = None
+    account_id: str | None = None
+    scope_type: AgentMemoryScopeType
+    scope_id: str | None = None
+    memory_type: AgentMemoryType
+    content: str
+    source_type: AgentMemorySourceType
+    source_id: str | None = None
+    confidence: Decimal | None = None
+    is_verified: bool
+    expires_at: datetime | None = None
+    metadata_json: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AgentMemoryVerifyRequest(BaseModel):
+    is_verified: bool = True
+
+
+class AgentMemoryExpireRequest(BaseModel):
+    expires_at: datetime | None = None
+
+
+class AgentMemoryDeleteResponse(BaseModel):
     deleted: int = Field(ge=0)
 
 

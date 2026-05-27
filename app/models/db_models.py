@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -168,6 +168,19 @@ class ReportStatus(str, Enum):
     FAILED = 'FAILED'
 
 
+class ReportSectionCitationCheckStatus(str, Enum):
+    PENDING = 'PENDING'
+    PASSED = 'PASSED'
+    FAILED = 'FAILED'
+
+
+class ReportSectionReviewStatus(str, Enum):
+    DRAFT = 'DRAFT'
+    IN_REVIEW = 'IN_REVIEW'
+    APPROVED = 'APPROVED'
+    REJECTED = 'REJECTED'
+
+
 class SampleMedium(str, Enum):
     """采样介质，限值匹配的硬约束之一。"""
 
@@ -218,6 +231,30 @@ class AgentRunStatus(str, Enum):
     FAILED = 'FAILED'
 
 
+class AgentMemoryScopeType(str, Enum):
+    SESSION = 'SESSION'
+    PROJECT = 'PROJECT'
+    ORGANIZATION = 'ORGANIZATION'
+    STANDARD = 'STANDARD'
+
+
+class AgentMemoryType(str, Enum):
+    PREFERENCE = 'PREFERENCE'
+    FACT = 'FACT'
+    DECISION = 'DECISION'
+    WARNING = 'WARNING'
+    CITATION = 'CITATION'
+
+
+class AgentMemorySourceType(str, Enum):
+    MESSAGE = 'MESSAGE'
+    TASK = 'TASK'
+    REPORT = 'REPORT'
+    STANDARD_CHUNK = 'STANDARD_CHUNK'
+    HUMAN = 'HUMAN'
+    TOOL_CALL = 'TOOL_CALL'
+
+
 class DetectionReport(ModelBase):
     """检测报告主表：一份上传文件 + 报告类型 + 状态机。"""
 
@@ -255,6 +292,11 @@ class DetectionReport(ModelBase):
     )
     compliance_results: Mapped[list['ComplianceResult']] = relationship(
         back_populates='report', cascade='all, delete-orphan'
+    )
+    sections: Mapped[list['ReportSection']] = relationship(
+        back_populates='report',
+        cascade='all, delete-orphan',
+        order_by='ReportSection.section_key',
     )
 
 
@@ -455,6 +497,59 @@ class ComplianceResult(ModelBase):
     report: Mapped[DetectionReport] = relationship(back_populates='compliance_results')
 
 
+class ReportSection(ModelBase):
+    __tablename__ = 'report_sections'
+    __table_args__ = (
+        UniqueConstraint('report_id', 'section_key', name='uq_report_sections_report_id_section_key'),
+    )
+
+    organization_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey('organizations.id', ondelete='RESTRICT'),
+        nullable=False,
+        index=True,
+    )
+    report_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey('detection_reports.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    section_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    draft_content: Mapped[str] = mapped_column(Text, nullable=False)
+    citation_memory_ids_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    citation_check_status: Mapped[ReportSectionCitationCheckStatus] = mapped_column(
+        SAEnum(ReportSectionCitationCheckStatus),
+        nullable=False,
+        default=ReportSectionCitationCheckStatus.PENDING,
+        index=True,
+    )
+    citation_check_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review_status: Mapped[ReportSectionReviewStatus] = mapped_column(
+        SAEnum(ReportSectionReviewStatus),
+        nullable=False,
+        default=ReportSectionReviewStatus.DRAFT,
+        index=True,
+    )
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_by_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('accounts.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_by_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('accounts.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+
+    report: Mapped[DetectionReport] = relationship(back_populates='sections')
+
+
 class AgentSession(ModelBase):
     """Agent 会话：绑定调用账号和可见公司范围。"""
 
@@ -581,3 +676,71 @@ class AgentToolCall(ModelBase):
     elapsed_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     run: Mapped[AgentRun] = relationship(back_populates='tool_calls')
+
+
+class AgentMemory(ModelBase):
+    """可审计 Agent 业务记忆：默认按组织/账号/会话或项目范围隔离。"""
+
+    __tablename__ = 'agent_memories'
+
+    organization_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('organizations.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    account_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('accounts.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    scope_type: Mapped[AgentMemoryScopeType] = mapped_column(
+        SAEnum(AgentMemoryScopeType), nullable=False, index=True
+    )
+    scope_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    memory_type: Mapped[AgentMemoryType] = mapped_column(
+        SAEnum(AgentMemoryType), nullable=False, index=True
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    source_type: Mapped[AgentMemorySourceType] = mapped_column(
+        SAEnum(AgentMemorySourceType), nullable=False, index=True
+    )
+    source_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
+    is_verified: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    events: Mapped[list['AgentMemoryEvent']] = relationship(
+        back_populates='memory',
+        cascade='all, delete-orphan',
+        order_by='AgentMemoryEvent.created_at',
+    )
+
+
+class AgentMemoryEvent(ModelBase):
+    """Agent 记忆变更事件：记录创建、刷新、人工确认、删除等审计轨迹。"""
+
+    __tablename__ = 'agent_memory_events'
+
+    memory_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey('agent_memories.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    actor_account_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('accounts.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    source_type: Mapped[AgentMemorySourceType | None] = mapped_column(
+        SAEnum(AgentMemorySourceType), nullable=True, index=True
+    )
+    source_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    memory: Mapped[AgentMemory] = relationship(back_populates='events')
