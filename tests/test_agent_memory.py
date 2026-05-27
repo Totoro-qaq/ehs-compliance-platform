@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -18,6 +19,7 @@ from app.models.db_models import (
 )
 from app.schemas.auth_context import CurrentUser
 from app.services.agent_memory_service import AgentMemoryService
+from app.services.rag.schemas import RagChunkOut, RagChunkSearchResponse
 
 
 def _auth(token: str) -> dict[str, str]:
@@ -200,5 +202,83 @@ def test_standard_chunk_search_records_citation_memory_without_full_text(
 
     event = db.query(AgentMemoryEvent).filter_by(memory_id=memory.id).one()
     tool_call_ids = {call['id'] for call in data['tool_calls'] if call['tool_name'] == 'search_standard_chunks'}
+    assert event.source_type == AgentMemorySourceType.TOOL_CALL
+    assert event.source_id in tool_call_ids
+
+
+def test_ragflow_search_records_citation_memory_without_chunk_text(
+    client: TestClient,
+    user_token: str,
+    db: Session,
+    monkeypatch,
+) -> None:
+    full_text = 'authorized guideline text that must not be persisted in memory metadata'
+    monkeypatch.setattr(
+        'app.services.agent_service.AgentService._call_model',
+        AsyncMock(return_value='model answer'),
+    )
+
+    def search_chunks(**kwargs) -> RagChunkSearchResponse:
+        return RagChunkSearchResponse(
+            configured=True,
+            query=kwargs['query'],
+            dataset_ids=['dataset-a'],
+            limit=kwargs['limit'],
+            items=[
+                RagChunkOut(
+                    dataset_id='dataset-a',
+                    document_id='doc-001',
+                    chunk_id='chunk-001',
+                    standard_code='GUIDE-001',
+                    standard_name='Guideline Test',
+                    clause='3.1',
+                    page=8,
+                    version='2026',
+                    effective_date='2026-01-01',
+                    source_uri='ragflow://dataset-a/doc-001/chunk-001',
+                    chunk_text=full_text,
+                    score=0.91,
+                )
+            ],
+        )
+
+    monkeypatch.setattr('app.services.agent_tools.RagflowService.search_chunks', search_chunks)
+
+    response = client.post(
+        '/api/v1/agent/chat',
+        json={'content': 'RAGFlow guideline lookup'},
+        headers=_auth(user_token),
+    )
+
+    assert response.status_code == 200
+    data = response.json()['data']
+    memories = (
+        db.query(AgentMemory)
+        .filter(
+            AgentMemory.scope_id == data['session']['id'],
+            AgentMemory.memory_type == AgentMemoryType.CITATION,
+        )
+        .all()
+    )
+    assert len(memories) == 1
+
+    memory = memories[0]
+    metadata = json.loads(memory.metadata_json or '{}')
+    metadata_text = json.dumps(metadata, ensure_ascii=False)
+    assert memory.source_type == AgentMemorySourceType.STANDARD_CHUNK
+    assert memory.source_id == 'ragflow:dataset-a:doc-001:chunk-001'
+    assert memory.content == 'GUIDE-001 3.1 p.8'
+    assert metadata['provider'] == 'ragflow'
+    assert metadata['source_type'] == 'RAGFLOW_CHUNK'
+    assert metadata['dataset_id'] == 'dataset-a'
+    assert metadata['document_id'] == 'doc-001'
+    assert metadata['chunk_id'] == 'chunk-001'
+    assert metadata['score'] == 0.91
+    assert 'chunk_text' not in metadata
+    assert full_text not in memory.content
+    assert full_text not in metadata_text
+
+    event = db.query(AgentMemoryEvent).filter_by(memory_id=memory.id).one()
+    tool_call_ids = {call['id'] for call in data['tool_calls'] if call['tool_name'] == 'search_guideline_chunks'}
     assert event.source_type == AgentMemorySourceType.TOOL_CALL
     assert event.source_id in tool_call_ids

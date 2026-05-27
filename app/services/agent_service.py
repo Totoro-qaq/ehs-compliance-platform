@@ -576,6 +576,16 @@ class AgentService:
                         tool_call_id=tool_call.id,
                         run_id=run_id,
                     )
+                if tool_name in {'search_guideline_chunks', 'get_guideline_clause'}:
+                    AgentMemoryService.record_ragflow_chunk_citations(
+                        db=db,
+                        actor=actor,
+                        session_id=session_id,
+                        tool_result=tool_result.result,
+                        tool_call_id=tool_call.id,
+                        run_id=run_id,
+                        tool_name=tool_name,
+                    )
                 results.append(tool_result)
             except Exception as exc:
                 elapsed_ms = int((time.perf_counter() - started) * 1000)

@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from hashlib import sha256
 from typing import Any
 
 from sqlalchemy import or_
@@ -188,6 +189,54 @@ class AgentMemoryService:
             memories.append(result.memory)
         return memories
 
+    @staticmethod
+    def record_ragflow_chunk_citations(
+        *,
+        db: Session,
+        actor: CurrentUser,
+        session_id: str,
+        tool_result: dict[str, Any],
+        tool_call_id: str,
+        run_id: str,
+        tool_name: str,
+    ) -> list[AgentMemory]:
+        raw_items = tool_result.get('items')
+        if not isinstance(raw_items, list):
+            return []
+
+        memories: list[AgentMemory] = []
+        for raw_item in raw_items:
+            if not isinstance(raw_item, dict):
+                continue
+            metadata = _ragflow_chunk_citation_metadata(raw_item)
+            source_id = metadata.get('source_id')
+            content = _ragflow_chunk_citation_content(metadata)
+            if not source_id or not content:
+                continue
+            result = AgentMemoryService.upsert_memory(
+                db=db,
+                actor=actor,
+                organization_id=actor.organization_id,
+                scope_type=AgentMemoryScopeType.SESSION,
+                scope_id=session_id,
+                memory_type=AgentMemoryType.CITATION,
+                content=content,
+                source_type=AgentMemorySourceType.STANDARD_CHUNK,
+                source_id=source_id,
+                confidence=Decimal('1.0000'),
+                is_verified=False,
+                metadata=metadata,
+                event_source_type=AgentMemorySourceType.TOOL_CALL,
+                event_source_id=tool_call_id,
+                event_metadata={
+                    'run_id': run_id,
+                    'tool_call_id': tool_call_id,
+                    'tool_name': tool_name,
+                },
+            )
+            memories.append(result.memory)
+        return memories
+
 
 def _resolve_memory_organization_id(
     *,
@@ -237,6 +286,80 @@ def _standard_chunk_citation_content(metadata: dict[str, Any]) -> str:
     return _compact_text(metadata.get('source_id'))[:500]
 
 
+def _ragflow_chunk_citation_metadata(item: dict[str, Any]) -> dict[str, Any]:
+    provider = _str_or_none(item.get('provider')) or 'ragflow'
+    dataset_id = _str_or_none(item.get('dataset_id'))
+    document_id = _str_or_none(item.get('document_id'))
+    chunk_id = _str_or_none(item.get('chunk_id'))
+    source_uri = _str_or_none(item.get('source_uri'))
+    source_id = _ragflow_source_id(
+        provider=provider,
+        dataset_id=dataset_id,
+        document_id=document_id,
+        chunk_id=chunk_id,
+        source_uri=source_uri,
+    )
+    return _drop_none(
+        {
+            'provider': provider,
+            'rag_provider': provider,
+            'dataset_id': dataset_id,
+            'document_id': document_id,
+            'chunk_id': chunk_id,
+            'standard_code': _str_or_none(item.get('standard_code')),
+            'standard_name': _str_or_none(item.get('standard_name')),
+            'clause': _str_or_none(item.get('clause')),
+            'page': _int_or_none(item.get('page')),
+            'version': _str_or_none(item.get('version')),
+            'effective_date': _str_or_none(item.get('effective_date')),
+            'source_uri': source_uri,
+            'score': _float_or_none(item.get('score')),
+            'source_type': 'RAGFLOW_CHUNK',
+            'source_id': source_id,
+        }
+    )
+
+
+def _ragflow_chunk_citation_content(metadata: dict[str, Any]) -> str:
+    parts = [
+        _compact_text(metadata.get('standard_code')),
+        _compact_text(metadata.get('clause')),
+        _page_label(page_start=metadata.get('page'), page_end=None),
+    ]
+    content = ' '.join(part for part in parts if part)
+    if content:
+        return content[:500]
+    fallback = ' '.join(
+        part
+        for part in [
+            _compact_text(metadata.get('document_id')),
+            _compact_text(metadata.get('chunk_id')),
+        ]
+        if part
+    )
+    return (fallback or _compact_text(metadata.get('source_id')))[:500]
+
+
+def _ragflow_source_id(
+    *,
+    provider: str,
+    dataset_id: str | None,
+    document_id: str | None,
+    chunk_id: str | None,
+    source_uri: str | None,
+) -> str | None:
+    raw = ':'.join(
+        part
+        for part in [provider, dataset_id, document_id, chunk_id]
+        if part
+    )
+    if not raw:
+        raw = source_uri or ''
+    if not raw:
+        return None
+    return raw if len(raw) <= 128 else f'{provider}:{sha256(raw.encode("utf-8")).hexdigest()}'
+
+
 def _page_label(*, page_start: Any, page_end: Any) -> str:
     if page_start is None:
         return ''
@@ -265,6 +388,15 @@ def _int_or_none(value: Any) -> int | None:
         return None
     try:
         return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None or value == '':
+        return None
+    try:
+        return float(value)
     except (TypeError, ValueError):
         return None
 
