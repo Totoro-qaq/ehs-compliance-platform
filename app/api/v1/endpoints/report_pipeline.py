@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from typing import Annotated
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -10,6 +12,7 @@ from app.core.db import get_db
 from app.schemas.auth_context import CurrentUser
 from app.schemas.report_pipeline_schema import (
     ReportBootstrapRequest,
+    ReportExportFormat,
     ReportReadinessOut,
     ReportSectionOut,
     ReportSectionReviewRequest,
@@ -96,6 +99,38 @@ def get_report_readiness(
     db: Session = Depends(get_db),
 ):
     return ReportPipelineService.get_readiness(db=db, actor=actor, report_id=report_id)
+
+
+@router.get(
+    '/reports/{report_id}/export',
+    response_class=Response,
+    summary='Export approved report sections',
+)
+def export_report(
+    report_id: str,
+    actor: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Session = Depends(get_db),
+    export_format: Annotated[ReportExportFormat, Query(alias='format')] = (
+        ReportExportFormat.MARKDOWN
+    ),
+):
+    export = ReportPipelineService.build_file_export(
+        db=db,
+        actor=actor,
+        report_id=report_id,
+        export_format=export_format,
+    )
+    encoded_filename = quote(export.filename)
+    headers = {
+        'Content-Disposition': (
+            f'attachment; filename="report-export"; filename*=UTF-8\'\'{encoded_filename}'
+        )
+    }
+    return Response(
+        content=export.content,
+        media_type=export.media_type,
+        headers=headers,
+    )
 
 
 @router.patch(

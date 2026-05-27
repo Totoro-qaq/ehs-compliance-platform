@@ -147,6 +147,76 @@ export async function request(path, options = {}) {
   }
 }
 
+export async function requestFile(path, options = {}) {
+  const session = useSessionStore();
+  const headers = new Headers(options.headers || {});
+  const requestId = options.requestId || newRequestId();
+  headers.set(REQUEST_ID_HEADER, requestId);
+  if (session.token) headers.set('Authorization', `Bearer ${session.token}`);
+
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const base = normalizeBase(session.apiBase);
+  const requestUrl = `${base}${path}`;
+  const fetchOptions = { ...options, headers };
+  let response;
+  try {
+    response = await fetchWithTimeout(requestUrl, fetchOptions, timeoutMs);
+  } catch (err) {
+    if (base && path.startsWith('/')) {
+      try {
+        response = await fetchWithTimeout(path, fetchOptions, timeoutMs);
+        session.setApiBase('');
+      } catch {
+        throw connectionError(err, requestUrl, requestId, timeoutMs);
+      }
+    } else {
+      throw connectionError(err, requestUrl, requestId, timeoutMs);
+    }
+  }
+
+  if (base && path.startsWith('/') && response.status === 404) {
+    try {
+      const fallbackResponse = await fetchWithTimeout(path, fetchOptions, timeoutMs);
+      if (fallbackResponse.ok || fallbackResponse.status !== 404) {
+        response = fallbackResponse;
+        session.setApiBase('');
+      }
+    } catch {
+      /* Keep the original 404 response. */
+    }
+  }
+
+  const responseRequestId = response.headers.get(REQUEST_ID_HEADER) || requestId;
+  if (!response.ok) {
+    const body = await readBody(response);
+    if (response.status === 401 && session.token) {
+      session.clear();
+      useToastStore().show('登录已过期，请重新登录', 'error');
+      const router = (await import('../router')).default;
+      router.replace({ name: 'login' });
+      throw makeApiError('登录已过期', { requestId: responseRequestId, status: response.status });
+    }
+    if (body && typeof body === 'object') {
+      throw makeApiError(body.message || body.code || `HTTP ${response.status}`, {
+        code: body.code,
+        details: body.details,
+        requestId: responseRequestId,
+        status: response.status,
+      });
+    }
+    throw makeApiError(body || `HTTP ${response.status}`, {
+      requestId: responseRequestId,
+      status: response.status,
+    });
+  }
+
+  return {
+    blob: await response.blob(),
+    headers: response.headers,
+    requestId: responseRequestId,
+  };
+}
+
 export async function fetchCaptcha() {
   const session = useSessionStore();
   const requestId = newRequestId();

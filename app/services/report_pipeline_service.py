@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import html
+import io
 import json
 import re
+import zipfile
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
@@ -22,6 +26,7 @@ from app.models.db_models import (
 )
 from app.schemas.auth_context import CurrentUser
 from app.schemas.report_pipeline_schema import (
+    ReportExportFormat,
     ReportReadinessIssueOut,
     ReportReadinessOut,
     ReportSectionOut,
@@ -45,6 +50,13 @@ class _ReportSectionTemplate:
     draft_content: str
     required: bool
     sort_order: int
+
+
+@dataclass(frozen=True)
+class ReportFileExport:
+    filename: str
+    content: str | bytes
+    media_type: str
 
 
 _REPORT_SECTION_TEMPLATES: tuple[_ReportSectionTemplate, ...] = (
@@ -262,6 +274,75 @@ class ReportPipelineService:
             issues=issues,
         )
 
+    @staticmethod
+    def build_file_export(
+        *,
+        db: Session,
+        actor: CurrentUser,
+        report_id: str,
+        export_format: ReportExportFormat,
+    ) -> ReportFileExport:
+        readiness = ReportPipelineService.get_readiness(db=db, actor=actor, report_id=report_id)
+        if not readiness.ready:
+            raise EHSException(
+                'Report is not ready for export',
+                code='REPORT_EXPORT_NOT_READY',
+                status_code=400,
+                details={'issues': [issue.model_dump() for issue in readiness.issues]},
+            )
+
+        report = _get_scoped_report(db=db, actor=actor, report_id=report_id)
+        sections = ReportSectionDAO(db).list_by_report(report.id)
+        sorted_sections = _sort_sections(sections)
+        generated_at = audit_now_naive()
+        filename_stem = _safe_filename_stem(report.report_name or report.filename or report.id)
+        if export_format == ReportExportFormat.MARKDOWN:
+            return ReportFileExport(
+                filename=f'{filename_stem}.md',
+                content=_render_markdown_export(
+                    report=report,
+                    sections=sorted_sections,
+                    generated_at=generated_at,
+                ),
+                media_type='text/markdown; charset=utf-8',
+            )
+        if export_format == ReportExportFormat.TXT:
+            return ReportFileExport(
+                filename=f'{filename_stem}.txt',
+                content=_render_plain_text_export(
+                    report=report,
+                    sections=sorted_sections,
+                    generated_at=generated_at,
+                ),
+                media_type='text/plain; charset=utf-8',
+            )
+        if export_format == ReportExportFormat.DOCX:
+            return ReportFileExport(
+                filename=f'{filename_stem}.docx',
+                content=_render_docx_export(
+                    report=report,
+                    sections=sorted_sections,
+                    generated_at=generated_at,
+                ),
+                media_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            )
+        if export_format == ReportExportFormat.DOC:
+            return ReportFileExport(
+                filename=f'{filename_stem}.doc',
+                content=_render_doc_export(
+                    report=report,
+                    sections=sorted_sections,
+                    generated_at=generated_at,
+                ),
+                media_type='application/msword; charset=utf-8',
+            )
+        raise EHSException(
+            'Unsupported report export format',
+            code='REPORT_EXPORT_FORMAT_UNSUPPORTED',
+            status_code=400,
+            details={'format': export_format},
+        )
+
 
 def _template_out(template: _ReportSectionTemplate) -> ReportSectionTemplateOut:
     return ReportSectionTemplateOut(
@@ -306,6 +387,209 @@ def _sort_sections(sections: list[ReportSection]) -> list[ReportSection]:
             section.created_at.isoformat(),
         ),
     )
+
+
+def _safe_filename_stem(value: str) -> str:
+    cleaned = re.sub(r'[\\/:*?"<>|\r\n\t]+', '_', value.strip())
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip(' ._')
+    return cleaned[:80] or 'report-export'
+
+
+def _render_markdown_export(
+    *,
+    report: DetectionReport,
+    sections: list[ReportSection],
+    generated_at: datetime,
+) -> str:
+    lines = [
+        f'# {report.report_name or report.filename or "检测报告"}',
+        '',
+        '> 本文件由已审批章节生成。正式签发前仍需按机构流程复核、盖章和归档。',
+        '',
+        '## 报告信息',
+        '',
+        f'- 报告 ID：{report.id}',
+        f'- 来源文件：{report.filename or "-"}',
+        f'- 委托单位：{report.client_name or "-"}',
+        f'- 项目名称：{report.project_name or "-"}',
+        f'- 项目编号：{report.project_code or "-"}',
+        f'- 报告类别：{report.service_type or "-"}',
+        f'- 生成时间：{generated_at.isoformat(timespec="seconds")}',
+        '',
+    ]
+    for section in sections:
+        lines.extend(
+            [
+                f'## {section.title}',
+                '',
+                section.draft_content.strip(),
+                '',
+            ]
+        )
+        citation_ids = _load_citation_ids(section.citation_memory_ids_json)
+        if citation_ids:
+            lines.append('引用记忆：')
+            lines.extend(f'- `{citation_id}`' for citation_id in citation_ids)
+            lines.append('')
+    return '\n'.join(lines).rstrip() + '\n'
+
+
+def _render_plain_text_export(
+    *,
+    report: DetectionReport,
+    sections: list[ReportSection],
+    generated_at: datetime,
+) -> str:
+    lines = [
+        report.report_name or report.filename or '检测报告',
+        '=' * 24,
+        '',
+        '本文件由已审批章节生成。正式签发前仍需按机构流程复核、盖章和归档。',
+        '',
+        '报告信息',
+        '-' * 24,
+        f'报告 ID：{report.id}',
+        f'来源文件：{report.filename or "-"}',
+        f'委托单位：{report.client_name or "-"}',
+        f'项目名称：{report.project_name or "-"}',
+        f'项目编号：{report.project_code or "-"}',
+        f'报告类别：{report.service_type or "-"}',
+        f'生成时间：{generated_at.isoformat(timespec="seconds")}',
+        '',
+    ]
+    for section in sections:
+        lines.extend(
+            [
+                section.title,
+                '-' * 24,
+                section.draft_content.strip(),
+                '',
+            ]
+        )
+        citation_ids = _load_citation_ids(section.citation_memory_ids_json)
+        if citation_ids:
+            lines.append('引用记忆：')
+            lines.extend(f'- {citation_id}' for citation_id in citation_ids)
+            lines.append('')
+    return '\n'.join(lines).rstrip() + '\n'
+
+
+def _render_doc_export(
+    *,
+    report: DetectionReport,
+    sections: list[ReportSection],
+    generated_at: datetime,
+) -> bytes:
+    title = html.escape(report.report_name or report.filename or '检测报告')
+    body_parts = [
+        '<!doctype html>',
+        '<html><head><meta charset="utf-8">',
+        '<style>body{font-family:"Microsoft YaHei",Arial,sans-serif;line-height:1.6;}'
+        'h1{font-size:22px;}h2{font-size:17px;margin-top:22px;}'
+        'table{border-collapse:collapse;width:100%;}td{border:1px solid #d0d7de;padding:6px;}'
+        '.notice{color:#555;}</style>',
+        f'<title>{title}</title></head><body>',
+        f'<h1>{title}</h1>',
+        '<p class="notice">本文件由已审批章节生成。正式签发前仍需按机构流程复核、盖章和归档。</p>',
+        '<h2>报告信息</h2>',
+        '<table>',
+    ]
+    for label, value in _report_info_rows(report=report, generated_at=generated_at):
+        body_parts.append(f'<tr><td>{html.escape(label)}</td><td>{html.escape(value)}</td></tr>')
+    body_parts.append('</table>')
+    for section in sections:
+        body_parts.extend(
+            [
+                f'<h2>{html.escape(section.title)}</h2>',
+                f'<p>{html.escape(section.draft_content.strip()).replace(chr(10), "<br>")}</p>',
+            ]
+        )
+        citation_ids = _load_citation_ids(section.citation_memory_ids_json)
+        if citation_ids:
+            body_parts.append('<p>引用记忆：</p><ul>')
+            body_parts.extend(f'<li>{html.escape(citation_id)}</li>' for citation_id in citation_ids)
+            body_parts.append('</ul>')
+    body_parts.append('</body></html>')
+    return '\n'.join(body_parts).encode('utf-8')
+
+
+def _render_docx_export(
+    *,
+    report: DetectionReport,
+    sections: list[ReportSection],
+    generated_at: datetime,
+) -> bytes:
+    paragraphs: list[str] = [
+        _docx_paragraph(report.report_name or report.filename or '检测报告', bold=True, size=32),
+        _docx_paragraph('本文件由已审批章节生成。正式签发前仍需按机构流程复核、盖章和归档。'),
+        _docx_paragraph('报告信息', bold=True, size=26),
+    ]
+    for label, value in _report_info_rows(report=report, generated_at=generated_at):
+        paragraphs.append(_docx_paragraph(f'{label}：{value}'))
+    for section in sections:
+        paragraphs.append(_docx_paragraph(section.title, bold=True, size=26))
+        paragraphs.extend(_docx_paragraph(line) for line in section.draft_content.strip().splitlines())
+        citation_ids = _load_citation_ids(section.citation_memory_ids_json)
+        if citation_ids:
+            paragraphs.append(_docx_paragraph('引用记忆：'))
+            paragraphs.extend(_docx_paragraph(f'- {citation_id}') for citation_id in citation_ids)
+
+    document_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:body>'
+        f'{"".join(paragraphs)}'
+        '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" '
+        'w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>'
+        '</w:body></w:document>'
+    )
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, mode='w', compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(
+            '[Content_Types].xml',
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            '<Override PartName="/word/document.xml" '
+            'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+            '</Types>',
+        )
+        archive.writestr(
+            '_rels/.rels',
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+            'Target="word/document.xml"/></Relationships>',
+        )
+        archive.writestr('word/document.xml', document_xml)
+    return output.getvalue()
+
+
+def _docx_paragraph(text: str, *, bold: bool = False, size: int | None = None) -> str:
+    cleaned = html.escape(text.strip(), quote=False)
+    if not cleaned:
+        return '<w:p/>'
+    run_props = []
+    if bold:
+        run_props.append('<w:b/>')
+    if size is not None:
+        run_props.append(f'<w:sz w:val="{size}"/>')
+    props = f'<w:rPr>{"".join(run_props)}</w:rPr>' if run_props else ''
+    return f'<w:p><w:r>{props}<w:t xml:space="preserve">{cleaned}</w:t></w:r></w:p>'
+
+
+def _report_info_rows(*, report: DetectionReport, generated_at: datetime) -> list[tuple[str, str]]:
+    return [
+        ('报告 ID', report.id),
+        ('来源文件', report.filename or '-'),
+        ('委托单位', report.client_name or '-'),
+        ('项目名称', report.project_name or '-'),
+        ('项目编号', report.project_code or '-'),
+        ('报告类别', report.service_type or '-'),
+        ('生成时间', generated_at.isoformat(timespec='seconds')),
+    ]
 
 
 def _get_scoped_report(*, db: Session, actor: CurrentUser, report_id: str) -> DetectionReport:

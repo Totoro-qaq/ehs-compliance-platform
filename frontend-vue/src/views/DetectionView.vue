@@ -11,6 +11,14 @@ import {
   listRegulatoryLimits,
   previewDetectionDocument,
 } from '../api/detection';
+import {
+  bootstrapReportSections,
+  exportReport,
+  getReportReadiness,
+  listReportSectionTemplates,
+  listReportSections,
+  reviewReportSection,
+} from '../api/reportPipeline';
 import { formatApiError } from '../api/client';
 import { listOrganizations } from '../api/organizations';
 import Icon from '../components/Icon.vue';
@@ -126,6 +134,12 @@ const drawerOpen = ref(false);
 const activeReport = ref(null);
 const activeResults = ref([]);
 const calculateBusy = ref(false);
+const reportTemplates = ref([]);
+const reportSections = ref([]);
+const reportReadiness = ref(null);
+const reportPipelineBusy = ref(false);
+const reportExportBusy = ref(false);
+const reportExportFormat = ref('markdown');
 const RESULT_PREVIEW_LIMIT = 20;
 const RESULT_STATUS_FILTERS = [
   { value: 'abnormal', label: '只看异常' },
@@ -176,6 +190,8 @@ const activeSampleCount = computed(() => activeReport.value?.samples?.length || 
 const activeMeasurementCount = computed(() =>
   (activeReport.value?.samples || []).reduce((sum, sample) => sum + (sample.measurements?.length || 0), 0),
 );
+const canReviewReportSections = computed(() => session.isAdmin || session.isOrgAdmin);
+const readinessIssueCount = computed(() => reportReadiness.value?.issues?.length || 0);
 const resultSummary = computed(() => {
   const rows = activeResults.value || [];
   return {
@@ -402,6 +418,89 @@ function complianceText(status) {
     NEEDS_REVIEW: '需复核',
   };
   return map[status] || status || '-';
+}
+
+function citationStatusText(status) {
+  const map = {
+    PENDING: '待引用',
+    PASSED: '引用通过',
+    FAILED: '引用失败',
+  };
+  return map[status] || status || '-';
+}
+
+function reviewStatusText(status) {
+  const map = {
+    DRAFT: '草稿',
+    IN_REVIEW: '复核中',
+    APPROVED: '已批准',
+    REJECTED: '已退回',
+  };
+  return map[status] || status || '-';
+}
+
+function readinessIssueText(issue) {
+  const map = {
+    REPORT_SECTION_MISSING: '缺少必需章节',
+    REPORT_SECTION_CITATIONS_NOT_PASSED: '引用未通过',
+    REPORT_SECTION_REVIEW_NOT_APPROVED: '尚未批准',
+  };
+  const title = issue?.title || issue?.section_key || '报告';
+  return `${title}：${map[issue?.code] || issue?.message || issue?.code || '未就绪'}`;
+}
+
+function exportFormatExtension(format) {
+  const map = {
+    markdown: 'md',
+    txt: 'txt',
+    docx: 'docx',
+    doc: 'doc',
+  };
+  return map[format] || 'md';
+}
+
+function exportFormatMime(format) {
+  const map = {
+    markdown: 'text/markdown;charset=utf-8',
+    txt: 'text/plain;charset=utf-8',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    doc: 'application/msword;charset=utf-8',
+  };
+  return map[format] || 'text/markdown;charset=utf-8';
+}
+
+function safeFilename(value) {
+  const cleaned = String(value || 'report-export')
+    .replace(/[\\/:*?"<>|\r\n\t]+/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^[._ ]+|[._ ]+$/g, '');
+  return cleaned.slice(0, 80) || 'report-export';
+}
+
+function filenameFromDisposition(value) {
+  const header = value || '';
+  const encoded = header.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      return '';
+    }
+  }
+  return header.match(/filename="?([^";]+)"?/i)?.[1] || '';
+}
+
+function downloadBlob(blob, filename, mimeType) {
+  const fileBlob = blob.type ? blob : new Blob([blob], { type: mimeType });
+  const url = URL.createObjectURL(fileBlob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 function setResultFilter(filter) {
@@ -683,10 +782,15 @@ async function submitUpload() {
 
 async function openReport(reportId) {
   try {
-    activeReport.value = await getDetectionReport(reportId);
-    activeResults.value = await listDetectionResults(reportId);
+    const [report, results] = await Promise.all([
+      getDetectionReport(reportId),
+      listDetectionResults(reportId),
+    ]);
+    activeReport.value = report;
+    activeResults.value = results;
     setResultFilter('abnormal');
     drawerOpen.value = true;
+    await loadReportPipeline(reportId, { silent: true });
   } catch (err) {
     toast.show(formatApiError(err), 'error');
   }
@@ -694,6 +798,83 @@ async function openReport(reportId) {
 
 function closeDrawer() {
   drawerOpen.value = false;
+}
+
+async function loadReportPipeline(reportId, { silent = false } = {}) {
+  if (!reportId) return;
+  reportPipelineBusy.value = true;
+  try {
+    const templatesPromise = reportTemplates.value.length
+      ? Promise.resolve(reportTemplates.value)
+      : listReportSectionTemplates();
+    const [templates, sections, readiness] = await Promise.all([
+      templatesPromise,
+      listReportSections(reportId),
+      getReportReadiness(reportId),
+    ]);
+    reportTemplates.value = templates || [];
+    reportSections.value = sections || [];
+    reportReadiness.value = readiness || null;
+  } catch (err) {
+    if (!silent) toast.show(formatApiError(err), 'error');
+  } finally {
+    reportPipelineBusy.value = false;
+  }
+}
+
+async function bootstrapActiveReportSections() {
+  if (!activeReport.value || reportPipelineBusy.value) return;
+  reportPipelineBusy.value = true;
+  try {
+    reportSections.value = await bootstrapReportSections(activeReport.value.id);
+    reportReadiness.value = await getReportReadiness(activeReport.value.id);
+    toast.show('报告章节已初始化', 'success');
+  } catch (err) {
+    toast.show(formatApiError(err), 'error');
+  } finally {
+    reportPipelineBusy.value = false;
+  }
+}
+
+async function reviewActiveReportSection(section, reviewStatus) {
+  if (!section?.id || reportPipelineBusy.value) return;
+  reportPipelineBusy.value = true;
+  try {
+    await reviewReportSection(section.id, { review_status: reviewStatus });
+    await loadReportPipeline(activeReport.value?.id, { silent: true });
+    toast.show(reviewStatus === 'APPROVED' ? '章节已批准' : '章节已退回', 'success');
+  } catch (err) {
+    toast.show(formatApiError(err), 'error');
+  } finally {
+    reportPipelineBusy.value = false;
+  }
+}
+
+async function exportActiveReport() {
+  if (!activeReport.value || reportExportBusy.value) return;
+  if (reportReadiness.value && !reportReadiness.value.ready) {
+    const firstIssue = reportReadiness.value.issues?.[0];
+    toast.show(firstIssue ? readinessIssueText(firstIssue) : '报告尚未就绪', 'error');
+    return;
+  }
+  reportExportBusy.value = true;
+  try {
+    const format = reportExportFormat.value || 'markdown';
+    const result = await exportReport(activeReport.value.id, format);
+    const extension = exportFormatExtension(format);
+    const filename =
+      filenameFromDisposition(result.headers?.get('content-disposition')) ||
+      `${safeFilename(activeReport.value.report_name || activeReport.value.filename)}.${extension}`;
+    downloadBlob(result.blob, filename, exportFormatMime(format));
+    toast.show('报告已开始下载', 'success');
+  } catch (err) {
+    toast.show(formatApiError(err), 'error');
+    if (err?.code === 'REPORT_EXPORT_NOT_READY') {
+      await loadReportPipeline(activeReport.value.id, { silent: true });
+    }
+  } finally {
+    reportExportBusy.value = false;
+  }
 }
 
 async function calculateActiveReport() {
@@ -1577,6 +1758,100 @@ watch(
               <dd>{{ activeMeasurementCount }}</dd>
             </dl>
 
+            <div class="detail-section report-pipeline-panel">
+              <div class="section-title-row">
+                <h3>报告章节</h3>
+                <div class="report-pipeline-actions">
+                  <button
+                    type="button"
+                    class="btn-link-sm"
+                    :disabled="reportPipelineBusy"
+                    @click="loadReportPipeline(activeReport.id)"
+                  >
+                    刷新
+                  </button>
+                  <button
+                    type="button"
+                    class="btn-link-sm"
+                    :disabled="reportPipelineBusy"
+                    @click="bootstrapActiveReportSections"
+                  >
+                    初始化章节
+                  </button>
+                </div>
+              </div>
+
+              <div class="report-export-bar">
+                <div>
+                  <span :class="['pipeline-ready-badge', reportReadiness?.ready ? 'ready' : 'blocked']">
+                    {{ reportReadiness?.ready ? '可导出' : `阻塞 ${readinessIssueCount}` }}
+                  </span>
+                  <small>引用通过且章节批准后才能下载正式草稿</small>
+                </div>
+                <div class="report-export-actions">
+                  <select v-model="reportExportFormat" class="export-format-select">
+                    <option value="markdown">Markdown</option>
+                    <option value="txt">TXT</option>
+                    <option value="docx">DOCX</option>
+                    <option value="doc">DOC</option>
+                  </select>
+                  <button
+                    type="button"
+                    class="btn-primary"
+                    :disabled="reportExportBusy || !reportReadiness?.ready"
+                    @click="exportActiveReport"
+                  >
+                    <Icon name="save" :size="14" />
+                    {{ reportExportBusy ? '下载中' : '下载' }}
+                  </button>
+                </div>
+              </div>
+
+              <ul v-if="reportReadiness?.issues?.length" class="readiness-list">
+                <li v-for="issue in reportReadiness.issues.slice(0, 6)" :key="`${issue.code}-${issue.section_key}`">
+                  {{ readinessIssueText(issue) }}
+                </li>
+              </ul>
+
+              <p v-if="!reportSections.length" class="empty-state compact">
+                {{ reportPipelineBusy ? '加载章节中...' : '尚未初始化章节' }}
+              </p>
+              <div v-else class="report-section-list">
+                <div v-for="section in reportSections" :key="section.id" class="report-section-item">
+                  <div class="report-section-head">
+                    <strong>{{ section.title }}</strong>
+                    <div class="report-section-badges">
+                      <span :class="['pipeline-badge', section.citation_check_status]">
+                        {{ citationStatusText(section.citation_check_status) }}
+                      </span>
+                      <span :class="['pipeline-badge', section.review_status]">
+                        {{ reviewStatusText(section.review_status) }}
+                      </span>
+                    </div>
+                  </div>
+                  <p>{{ section.draft_content }}</p>
+                  <div v-if="canReviewReportSections" class="report-section-actions">
+                    <button
+                      type="button"
+                      class="btn-link-sm"
+                      :disabled="reportPipelineBusy || section.review_status === 'APPROVED'"
+                      @click="reviewActiveReportSection(section, 'APPROVED')"
+                    >
+                      批准
+                    </button>
+                    <button
+                      type="button"
+                      class="btn-link-sm"
+                      :disabled="reportPipelineBusy || section.review_status === 'REJECTED'"
+                      @click="reviewActiveReportSection(section, 'REJECTED')"
+                    >
+                      退回
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div class="metric-grid">
               <button
                 type="button"
@@ -2006,6 +2281,111 @@ watch(
 .section-title-row h3 {
   margin-bottom: 0;
 }
+.report-pipeline-panel {
+  display: grid;
+  gap: 12px;
+}
+.report-pipeline-actions,
+.report-export-actions,
+.report-section-actions,
+.report-section-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.report-export-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+}
+.report-export-bar small {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.export-format-select {
+  width: 118px;
+  min-height: 34px;
+}
+.pipeline-ready-badge,
+.pipeline-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+}
+.pipeline-ready-badge.ready,
+.pipeline-badge.PASSED,
+.pipeline-badge.APPROVED {
+  background: var(--success-bg);
+  color: var(--success);
+}
+.pipeline-ready-badge.blocked,
+.pipeline-badge.PENDING,
+.pipeline-badge.DRAFT,
+.pipeline-badge.IN_REVIEW {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+.pipeline-badge.FAILED,
+.pipeline-badge.REJECTED {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+.readiness-list {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 9px 12px 9px 28px;
+  border: 1px solid #fde68a;
+  border-radius: var(--radius);
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 12px;
+}
+.report-section-list {
+  display: grid;
+  gap: 10px;
+}
+.report-section-item {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.report-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.report-section-head strong {
+  font-size: 13px;
+}
+.report-section-item p {
+  display: -webkit-box;
+  margin: 8px 0 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+.report-section-actions {
+  justify-content: flex-end;
+  margin-top: 8px;
+}
 .result-count {
   color: var(--text-secondary);
   font-size: 12px;
@@ -2422,7 +2802,8 @@ watch(
   }
   .preview-toolbar,
   .result-toolbar,
-  .preview-actions {
+  .preview-actions,
+  .report-export-bar {
     align-items: stretch;
     flex-direction: column;
   }
