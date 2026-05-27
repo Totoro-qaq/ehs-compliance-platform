@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -8,6 +9,13 @@ from app.models.db_models import (
     ReportSectionCitationCheckStatus,
     ReportSectionReviewStatus,
 )
+
+
+class ReportExportFormat(str, Enum):
+    MARKDOWN = 'markdown'
+    TXT = 'txt'
+    DOCX = 'docx'
+    DOC = 'doc'
 
 
 class ReportSectionUpsertRequest(BaseModel):
@@ -21,6 +29,32 @@ class ReportSectionUpsertRequest(BaseModel):
 class ReportSectionReviewRequest(BaseModel):
     review_status: ReportSectionReviewStatus
     review_note: str | None = Field(default=None, max_length=1000)
+
+
+class ReportSectionTemplateOut(BaseModel):
+    section_key: str
+    title: str
+    description: str
+    required: bool
+    sort_order: int
+
+
+class ReportBootstrapRequest(BaseModel):
+    section_keys: list[str] | None = Field(default=None, max_length=20)
+
+
+class ReportReadinessIssueOut(BaseModel):
+    code: str
+    message: str
+    section_key: str | None = None
+    title: str | None = None
+
+
+class ReportReadinessOut(BaseModel):
+    report_id: str
+    ready: bool
+    required_section_keys: list[str]
+    issues: list[ReportReadinessIssueOut] = Field(default_factory=list)
 
 
 class ReportSectionOut(BaseModel):
