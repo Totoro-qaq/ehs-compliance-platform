@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -168,6 +168,19 @@ class ReportStatus(str, Enum):
     FAILED = 'FAILED'
 
 
+class ReportSectionCitationCheckStatus(str, Enum):
+    PENDING = 'PENDING'
+    PASSED = 'PASSED'
+    FAILED = 'FAILED'
+
+
+class ReportSectionReviewStatus(str, Enum):
+    DRAFT = 'DRAFT'
+    IN_REVIEW = 'IN_REVIEW'
+    APPROVED = 'APPROVED'
+    REJECTED = 'REJECTED'
+
+
 class SampleMedium(str, Enum):
     """采样介质，限值匹配的硬约束之一。"""
 
@@ -279,6 +292,11 @@ class DetectionReport(ModelBase):
     )
     compliance_results: Mapped[list['ComplianceResult']] = relationship(
         back_populates='report', cascade='all, delete-orphan'
+    )
+    sections: Mapped[list['ReportSection']] = relationship(
+        back_populates='report',
+        cascade='all, delete-orphan',
+        order_by='ReportSection.section_key',
     )
 
 
@@ -477,6 +495,59 @@ class ComplianceResult(ModelBase):
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     report: Mapped[DetectionReport] = relationship(back_populates='compliance_results')
+
+
+class ReportSection(ModelBase):
+    __tablename__ = 'report_sections'
+    __table_args__ = (
+        UniqueConstraint('report_id', 'section_key', name='uq_report_sections_report_id_section_key'),
+    )
+
+    organization_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey('organizations.id', ondelete='RESTRICT'),
+        nullable=False,
+        index=True,
+    )
+    report_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey('detection_reports.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    section_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    draft_content: Mapped[str] = mapped_column(Text, nullable=False)
+    citation_memory_ids_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    citation_check_status: Mapped[ReportSectionCitationCheckStatus] = mapped_column(
+        SAEnum(ReportSectionCitationCheckStatus),
+        nullable=False,
+        default=ReportSectionCitationCheckStatus.PENDING,
+        index=True,
+    )
+    citation_check_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review_status: Mapped[ReportSectionReviewStatus] = mapped_column(
+        SAEnum(ReportSectionReviewStatus),
+        nullable=False,
+        default=ReportSectionReviewStatus.DRAFT,
+        index=True,
+    )
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_by_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('accounts.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_by_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('accounts.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+
+    report: Mapped[DetectionReport] = relationship(back_populates='sections')
 
 
 class AgentSession(ModelBase):

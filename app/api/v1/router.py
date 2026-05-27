@@ -12,6 +12,7 @@ from app.api.v1.endpoints.auth import router as auth_router
 from app.api.v1.endpoints.detection import router as detection_router
 from app.api.v1.endpoints.organizations import router as organizations_router
 from app.api.v1.endpoints.ragflow import router as ragflow_router
+from app.api.v1.endpoints.report_pipeline import router as report_pipeline_router
 from app.api.v1.endpoints.standards import router as standards_router
 from app.api.v1.endpoints.system import router as system_router
 
@@ -35,6 +36,7 @@ business_api_v1.include_router(detection_router)
 business_api_v1.include_router(agent_router)
 business_api_v1.include_router(standards_router)
 business_api_v1.include_router(ragflow_router)
+business_api_v1.include_router(report_pipeline_router)
 
 
 def include_api_v1(app) -> None:
