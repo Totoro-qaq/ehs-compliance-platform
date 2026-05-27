@@ -25,7 +25,7 @@ const companyName = computed(() => company.value?.name || session.orgName || '�
 const currentApiText = computed(() => session.apiBase || '同源 / Vite 代理');
 const companyRows = computed(() => [
   { label: '公司名称', value: companyName.value },
-  { label: '所属行业', value: company.value?.intest particlesry || '-' },
+  { label: '所属行业', value: company.value?.industry || '-' },
   { label: '统一社会信用代码', value: company.value?.unified_social_credit_code || '-' },
   { label: '公司地址', value: company.value?.address || '-' },
   { label: '联系人', value: company.value?.contact_name || '-' },

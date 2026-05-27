@@ -44,7 +44,7 @@ class DemoAccount:
 class DemoTenant:
     name: str
     unified_social_credit_code: str
-    intest particlesry: str
+    industry: str
     address: str
     contact_name: str
     contact_phone: str
@@ -56,7 +56,7 @@ DEMO_TENANTS: tuple[DemoTenant, ...] = (
     DemoTenant(
         name='演示-华东安测检测有限公司',
         unified_social_credit_code='91310000DEMO0001X1',
-        intest particlesry='第三方检测机构',
+        industry='第三方检测机构',
         address='上海市浦东新区演示路 100 号',
         contact_name='赵机构',
         contact_phone='13800001001',
@@ -81,7 +81,7 @@ DEMO_TENANTS: tuple[DemoTenant, ...] = (
     DemoTenant(
         name='演示-北方职业卫生检测中心',
         unified_social_credit_code='91110000DEMO0002X2',
-        intest particlesry='第三方检测机构',
+        industry='第三方检测机构',
         address='北京市朝阳区演示街 88 号',
         contact_name='钱机构',
         contact_phone='13800001002',
@@ -106,7 +106,7 @@ DEMO_TENANTS: tuple[DemoTenant, ...] = (
     DemoTenant(
         name='演示-南方环境安全技术服务有限公司',
         unified_social_credit_code='91440000DEMO0003X3',
-        intest particlesry='第三方检测机构',
+        industry='第三方检测机构',
         address='广州市天河区演示大道 66 号',
         contact_name='孙机构',
         contact_phone='13800001003',
@@ -131,7 +131,7 @@ DEMO_TENANTS: tuple[DemoTenant, ...] = (
     DemoTenant(
         name='演示-海州精密制造有限公司',
         unified_social_credit_code='91320000DEMO0004X4',
-        intest particlesry='制造业企业',
+        industry='制造业企业',
         address='苏州市工业园区演示路 18 号',
         contact_name='李企业',
         contact_phone='13800001004',
@@ -156,7 +156,7 @@ DEMO_TENANTS: tuple[DemoTenant, ...] = (
     DemoTenant(
         name='演示-星河化工科技有限公司',
         unified_social_credit_code='91330000DEMO0005X5',
-        intest particlesry='化工企业',
+        industry='化工企业',
         address='宁波市化工园区演示西路 9 号',
         contact_name='周企业',
         contact_phone='13800001005',
@@ -181,7 +181,7 @@ DEMO_TENANTS: tuple[DemoTenant, ...] = (
     DemoTenant(
         name='演示-绿源电子材料有限公司',
         unified_social_credit_code='91420000DEMO0006X6',
-        intest particlesry='电子材料企业',
+        industry='电子材料企业',
         address='武汉市东湖高新区演示东路 36 号',
         contact_name='吴企业',
         contact_phone='13800001006',
@@ -219,7 +219,7 @@ def _upsert_organization(session, tenant: DemoTenant) -> Organization:
 
     org.name = tenant.name
     org.unified_social_credit_code = tenant.unified_social_credit_code
-    org.intest particlesry = tenant.intest particlesry
+    org.industry = tenant.industry
     org.address = tenant.address
     org.contact_name = tenant.contact_name
     org.contact_phone = tenant.contact_phone

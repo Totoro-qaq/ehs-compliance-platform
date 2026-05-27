@@ -8,7 +8,7 @@ from app.core.patterns import validate_organization_name
 class OrganizationCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     unified_social_credit_code: str | None = Field(default=None, max_length=32)
-    intest particlesry: str | None = Field(default=None, max_length=128)
+    industry: str | None = Field(default=None, max_length=128)
     address: str | None = Field(default=None, max_length=500)
     contact_name: str | None = Field(default=None, max_length=64)
     contact_phone: str | None = Field(default=None, max_length=32)
@@ -23,7 +23,7 @@ class OrganizationCreate(BaseModel):
 class OrganizationUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     unified_social_credit_code: str | None = Field(default=None, max_length=32)
-    intest particlesry: str | None = Field(default=None, max_length=128)
+    industry: str | None = Field(default=None, max_length=128)
     address: str | None = Field(default=None, max_length=500)
     contact_name: str | None = Field(default=None, max_length=64)
     contact_phone: str | None = Field(default=None, max_length=32)
@@ -43,7 +43,7 @@ class OrganizationOut(BaseModel):
     id: str
     name: str
     unified_social_credit_code: str | None = None
-    intest particlesry: str | None = None
+    industry: str | None = None
     address: str | None = None
     contact_name: str | None = None
     contact_phone: str | None = None

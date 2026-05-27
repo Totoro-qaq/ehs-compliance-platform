@@ -23,7 +23,7 @@ class OrganizationService:
         org = dao.create(
             name=payload.name,
             unified_social_credit_code=payload.unified_social_credit_code,
-            intest particlesry=payload.intest particlesry,
+            industry=payload.industry,
             address=payload.address,
             contact_name=payload.contact_name,
             contact_phone=payload.contact_phone,
