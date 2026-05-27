@@ -72,7 +72,7 @@ class Organization(ModelBase):
 
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     unified_social_credit_code: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
-    intest particlesry: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    industry: Mapped[str | None] = mapped_column(String(128), nullable=True)
     address: Mapped[str | None] = mapped_column(String(500), nullable=True)
     contact_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     contact_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)

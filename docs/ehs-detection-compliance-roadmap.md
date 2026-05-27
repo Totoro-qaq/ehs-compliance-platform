@@ -52,7 +52,7 @@ pandas 计算指标
 适合使用大模型的部分：
 
 1. PDF / DOCX 报告中字段抽取的辅助。
-2. 检测因子别名归一，例如“测试因子甲 / Benzene / CAS 71-43-2”。
+2. 检测因子别名归一，例如“测试因子甲 / Alias-A / TEST-CAS-001”。
 3. 报告格式识别和表格语义理解。
 4. 生成说明性文字、整改建议、复核提示。
 5. 标记数据缺失，例如缺少采样时长、单位不明确、岗位班次缺失。
@@ -80,14 +80,14 @@ else:
 ```json
 {
   "indicator": "测试因子甲",
-  "sample_point": "喷漆岗位",
-  "calculated_value": 8.6,
-  "unit": "mg/m3",
+  "sample_point": "测试岗位A",
+  "calculated_value": 12.5,
+  "unit": "test-unit",
   "limit_type": "PC-TWA",
-  "limit_value": 6,
-  "standard_code": "TEST-STD 2.1-2019",
-  "standard_name": "测试因素测试限值 第1部分：化学有害因素",
-  "clause": "表1",
+  "limit_value": 10,
+  "standard_code": "TEST-STD-001",
+  "standard_name": "测试用虚构限值标准",
+  "clause": "T-1",
   "compliance_status": "EXCEEDED",
   "exceedance_multiple": 1.43
 }
@@ -111,10 +111,10 @@ else:
 
 优先方案 A：职业卫生
 
-1. 测试因子甲、测试因子乙、测试因子丙。
-2. 测试颗粒物。
-3. 噪声。
-4. 高温 WBGT（按 TEST-STD 2.2-2007 表8 的劳动强度 / 接触时间率拆成结构化限值）。
+1. 由使用者通过官方或授权渠道取得并确认可使用的测试指标。
+2. 用户自有或授权的限值数据，不随仓库分发。
+3. 可覆盖职业卫生、噪声、高温等业务类型，但具体标准和限值由使用者自行维护。
+4. 复杂条件限值应拆成结构化数据，并保留来源、版本和适用条件。
 4. 可计算 TWA / PC-TWA / STEL 的基础样本。
 
 优先方案 B：环保废水
@@ -540,10 +540,10 @@ app/api/v1/endpoints/detection.py
 
 建议先做职业卫生结构化 MVP：
 
-1. 指标：测试因子甲、测试因子乙、测试因子丙、测试颗粒物、噪声、高温 WBGT。
+1. 指标：使用者授权提供的 5-10 个测试指标，仓库不内置正式限值。
 2. 输入：Excel / CSV。
 3. 输出：检测点维度合规结果。
-4. 规则：PC-TWA / PC-STEL / MAC / 噪声基础限值 / 高温 WBGT 标量限值。
+4. 规则：PC-TWA / PC-STEL / MAC / 即时值 / 范围值等通用判定口径。
 5. 依据：标准编号、标准名称、表号、限值。
 
 这样可以在一周左右形成可演示闭环，再决定是否投入 PDF/DOCX/OCR 解析。

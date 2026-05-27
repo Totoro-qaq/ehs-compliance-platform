@@ -14,7 +14,7 @@ class OrganizationDAO(BaseRepository[Organization]):
         *,
         name: str,
         unified_social_credit_code: str | None = None,
-        intest particlesry: str | None = None,
+        industry: str | None = None,
         address: str | None = None,
         contact_name: str | None = None,
         contact_phone: str | None = None,
@@ -23,7 +23,7 @@ class OrganizationDAO(BaseRepository[Organization]):
         org = Organization(
             name=name.strip(),
             unified_social_credit_code=unified_social_credit_code,
-            intest particlesry=intest particlesry,
+            industry=industry,
             address=address,
             contact_name=contact_name,
             contact_phone=contact_phone,

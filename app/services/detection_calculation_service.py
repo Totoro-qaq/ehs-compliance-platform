@@ -152,7 +152,7 @@ class TWASegment:
 def calc_pc_twa_8h(segments: Iterable[TWASegment]) -> Decimal:
     """PC-TWA 8h 计算：Σ(Ci · ti) / 480。
 
-    依据 TEST-STD 159 / TEST-STD 2.1：以 8 小时（480 min）为分母，未足 8h 的工时按未暴露段为 0 计入。
+    以 8 小时（480 min）为分母，未足 8h 的工时按未暴露段为 0 计入。
     """
     total_weighted = Decimal('0')
     for seg in segments:

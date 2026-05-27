@@ -9,6 +9,10 @@
 
 > ⚠️ **项目状态 / Project Status**：当前为 **Alpha**（实验性），核心流程已可跑通，但 API 与数据模型仍可能调整，不建议直接用于生产。Project is in **Alpha**: end-to-end pipeline works, but APIs and data models may still change before the first stable release.
 
+> **免责声明 / Disclaimer**：本仓库不内置、不随附、不承诺提供任何正式法规、标准原文、生产限值库、SQL 数据包或可直接用于合规判定的数据集。仓库中的样例、测试数据和开发脚本仅用于功能演示与本地验证，不构成法律、职业卫生、安全、环保或其他专业合规意见。使用者应自行通过主管部门、标准出版机构、国家标准公开服务平台或其他官方/授权渠道获取合法有效的法规、标准和限值数据，并自行负责导入、校验、版本管理、适用性复核和最终合规判断。
+>
+> This repository does not include, ship, or promise any official regulations, standard documents, production limit libraries, SQL dumps, or datasets ready for compliance decisions. Samples, test data, and development scripts are for local validation only. Users must obtain legally valid regulations, standards, and limit data through official or authorized channels, then import, verify, version, and review applicability themselves.
+
 基于 **FastAPI + Vue + Celery + Dify** 的 EHS（环境、健康与安全）合规评价系统。系统支持资料上传、异步文本解析、Dify 工作流分析、评价结果入库、任务进度查询，以及统一 JSON 响应封装。
 
 An **EHS compliance evaluation platform** built with **FastAPI, Vue, Celery, and Dify**. It supports document upload, asynchronous text extraction, Dify workflow analysis, result persistence, task status tracking, and unified JSON response envelopes.
@@ -100,13 +104,7 @@ python scripts/init_demo_companies.py
 
 该脚本只写入演示公司和演示账号，不会扫描、上传、解析或导入标准/导则原文。`.env`、上传目录、标准原文目录、RAG 缓存和本地 MinIO/Milvus 数据目录均已在 `.gitignore` 中排除。
 
-初始化检测合规限值库：
-
-```bash
-python -m scripts.user_import_limits
-```
-
-该脚本会幂等写入首批 TEST-STD 限值，覆盖测试因子甲、测试因子乙、测试因子丙、测试颗粒物、噪声和高温 WBGT。公开标准来源索引保存在 `fixtures/regulatory_source_data.json`，演示 CSV 位于 `fixtures/detection/`。
+检测合规限值库需由使用者自行维护。本仓库不内置、不提供正式法规限值库、标准原文、SQL 数据包或 seed 数据。实际使用前，请通过官方或授权渠道获取合法有效的标准和限值数据，并由管理员在系统中自行导入、校验和维护。演示 CSV 位于 `fixtures/detection/`，只用于验证导入流程。
 
 启动 API：
 
@@ -407,7 +405,7 @@ The account model has three levels:
 | `ORG_ADMIN` | Company admin; scoped to one company, can maintain that company profile and manage that company's assessment tasks |
 | `USER` | Company employee; scoped to one company, with task mutations limited to data they created by default |
 
-Seed demo companies and accounts with:
+Initialize demo companies and accounts with:
 
 ```powershell
 $env:DEMO_ACCOUNT_PASSWORD = 'change-me-locally'
@@ -416,13 +414,7 @@ python scripts/init_demo_companies.py
 
 The script only writes demo companies and demo accounts. It reads `DEMO_ACCOUNT_PASSWORD` only to hash demo account passwords and does not print credentials. It does not scan, upload, parse, or import standard/source documents. `.env`, uploads, local standard document folders, RAG caches, and local MinIO/Milvus data folders are excluded by `.gitignore`.
 
-Seed detection compliance regulatory limits:
-
-```bash
-python -m scripts.user_import_limits
-```
-
-The seeder is idempotent and inserts the first TEST-STD limits for test factor A, test factor B, test factor C, test particles, noise, and WBGT heat stress. Public source metadata is stored in `fixtures/regulatory_source_data.json`, and demo CSV files are available under `fixtures/detection/`.
+Maintain detection compliance regulatory limits yourself. This repository does not include or provide an official regulatory limit library, standard documents, SQL dumps, or seed data. Before real use, obtain legally valid standards and limit data from official or authorized channels, then import, verify, and maintain them in the system. Demo CSV files under `fixtures/detection/` are only for validating the import workflow.
 
 Start the API:
 

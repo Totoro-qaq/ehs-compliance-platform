@@ -13,14 +13,14 @@ def _auth(token: str) -> dict[str, str]:
     return {'Authorization': f'Bearer {token}'}
 
 
-def _seed_limit(
+def _add_limit_fixture(
     db,
     *,
     indicator_name: str,
     medium: SampleMedium = SampleMedium.WORKPLACE_AIR,
     limit_type: LimitType = LimitType.PC_TWA,
-    value: str | None = '6',
-    unit: str = 'mg/m3',
+    value: str | None = '10',
+    unit: str = 'test-unit',
 ) -> RegulatoryLimit:
     limit = RegulatoryLimit(
         indicator_name=indicator_name,
@@ -41,10 +41,10 @@ def _seed_limit(
 
 
 def test_upload_csv_calculate_and_list_results(client: TestClient, admin_token: str, db):
-    _seed_limit(db, indicator_name='测试因子甲', value='6')
+    _add_limit_fixture(db, indicator_name='测试因子甲', value='10', unit='mg/m3')
     csv = (
         'sample_point,indicator_name,raw_value,raw_unit,duration_minutes\n'
-        '喷漆岗,测试因子甲,50000,μg/m3,60\n'
+        '测试点A,测试因子甲,100000,μg/m3,60\n'
     ).encode('utf-8-sig')
 
     upload = client.post(
@@ -52,7 +52,7 @@ def test_upload_csv_calculate_and_list_results(client: TestClient, admin_token: 
         data={
             'organization_id': settings.default_organization_id,
             'report_type': 'OCCUPATIONAL_HEALTH',
-            'report_name': '测试因子甲检测报告',
+            'report_name': '测试因子检测报告',
             'client_name': '委托客户 B',
             'project_name': '职业卫生检测项目',
             'project_code': 'JC-001',
@@ -99,9 +99,9 @@ def test_upload_csv_calculate_and_list_results(client: TestClient, admin_token: 
     assert result['total'] == 1
     assert result['exceeded'] == 1
     assert result['results'][0]['status'] == 'EXCEEDED'
-    assert result['results'][0]['calculated_value'] == '6.250000'
-    assert result['results'][0]['limit_value'] == '6.000000'
-    assert result['results'][0]['exceedance_multiple'] == '0.0417'
+    assert result['results'][0]['calculated_value'] == '12.500000'
+    assert result['results'][0]['limit_value'] == '10.000000'
+    assert result['results'][0]['exceedance_multiple'] == '0.2500'
 
     results = client.get(
         f'/api/v1/detection/reports/{report_id}/results',
@@ -112,7 +112,7 @@ def test_upload_csv_calculate_and_list_results(client: TestClient, admin_token: 
 
 
 def test_missing_limit_returns_insufficient_data(client: TestClient, admin_token: str):
-    csv = 'sample_point,indicator_name,raw_value,raw_unit\nP1,未知因子,1,mg/m3\n'.encode()
+    csv = 'sample_point,indicator_name,raw_value,raw_unit\nP1,未知测试因子,1,test-unit\n'.encode()
 
     upload = client.post(
         '/api/v1/detection/reports',
@@ -135,7 +135,7 @@ def test_missing_limit_returns_insufficient_data(client: TestClient, admin_token
 
 
 def test_upload_rejects_legacy_detection_service_type(client: TestClient, admin_token: str):
-    csv = 'sample_point,indicator_name,raw_value,raw_unit\nP1,测试因子甲,1,mg/m3\n'.encode()
+    csv = 'sample_point,indicator_name,raw_value,raw_unit\nP1,测试因子甲,1,test-unit\n'.encode()
 
     resp = client.post(
         '/api/v1/detection/reports',
@@ -150,20 +150,23 @@ def test_upload_rejects_legacy_detection_service_type(client: TestClient, admin_
 
 def test_range_limit_uses_min_and_max(client: TestClient, admin_token: str, db):
     limit = RegulatoryLimit(
-        indicator_name='pH',
+        indicator_name='测试范围因子',
         medium=SampleMedium.WASTEWATER,
         limit_type=LimitType.RANGE,
-        limit_min=Decimal('6'),
-        limit_max=Decimal('9'),
-        unit='pH',
-        standard_code='TEST-PH',
-        standard_name='Test pH standard',
+        limit_min=Decimal('1'),
+        limit_max=Decimal('5'),
+        unit='test-range',
+        standard_code='TEST-RANGE',
+        standard_name='Test range standard',
         priority=1,
     )
     db.add(limit)
     db.commit()
 
-    csv = 'sample_point,medium,indicator_name,raw_value,raw_unit\nOutlet,WASTEWATER,pH,9.5,pH\n'.encode()
+    csv = (
+        'sample_point,medium,indicator_name,raw_value,raw_unit\n'
+        'Outlet,WASTEWATER,测试范围因子,6.5,test-range\n'
+    ).encode()
     upload = client.post(
         '/api/v1/detection/reports',
         data={'report_type': 'WASTEWATER'},
@@ -181,21 +184,21 @@ def test_range_limit_uses_min_and_max(client: TestClient, admin_token: str, db):
     item = calculated.json()['data']['results'][0]
     assert item['status'] == 'EXCEEDED'
     assert item['limit_type'] == 'RANGE'
-    assert item['limit_value'] == '9.000000'
+    assert item['limit_value'] == '5.000000'
 
 
 def test_high_temperature_wbgt_limit(client: TestClient, admin_token: str, db):
-    _seed_limit(
+    _add_limit_fixture(
         db,
         indicator_name='测试热指数-A',
         medium=SampleMedium.HIGH_TEMPERATURE,
         limit_type=LimitType.INSTANT,
-        value='30',
+        value='40',
         unit='℃',
     )
     csv = (
         'sample_point,medium,indicator_name,raw_value,raw_unit\n'
-        '炼钢平台,高温,测试热指数-A,31,WBGT(℃)\n'
+        '测试点B,高温,测试热指数-A,42,℃\n'
     ).encode('utf-8-sig')
 
     upload = client.post(
@@ -215,17 +218,17 @@ def test_high_temperature_wbgt_limit(client: TestClient, admin_token: str, db):
     item = calculated.json()['data']['results'][0]
     assert item['status'] == 'EXCEEDED'
     assert item['calculated_unit'] == '℃'
-    assert item['limit_value'] == '30.000000'
+    assert item['limit_value'] == '40.000000'
 
 
 def test_limits_crud_is_admin_only(client: TestClient, admin_token: str, user_token: str):
     payload = {
         'indicator_name': '测试因子乙',
-        'aliases': ['Toluene'],
+        'aliases': ['Test factor B'],
         'medium': 'WORKPLACE_AIR',
         'limit_type': 'PC_TWA',
-        'limit_value': '50',
-        'unit': 'mg/m3',
+        'limit_value': '20',
+        'unit': 'test-unit',
         'standard_code': 'TEST-CRUD',
         'standard_name': 'Test CRUD standard',
         'priority': 10,
@@ -244,11 +247,11 @@ def test_limits_crud_is_admin_only(client: TestClient, admin_token: str, user_to
 
     updated = client.put(
         f'/api/v1/detection/limits/{limit_id}',
-        json={'limit_value': '60'},
+        json={'limit_value': '25'},
         headers=_auth(admin_token),
     )
     assert updated.status_code == 200
-    assert updated.json()['data']['limit_value'] == '60.000000'
+    assert updated.json()['data']['limit_value'] == '25.000000'
 
     deleted = client.delete(f'/api/v1/detection/limits/{limit_id}', headers=_auth(admin_token))
     assert deleted.status_code == 200
@@ -267,28 +270,28 @@ def test_user_cannot_list_other_org_reports(client: TestClient, user_token: str,
     assert resp.status_code == 403
 
 
-def test_seed_upsert_is_idempotent(db):
+def test_fixture_limit_upsert_is_idempotent(db):
     dao = RegulatoryLimitDAO(db)
     first = dao.upsert_fixture_limit(
-        standard_code='TEST-SEED',
-        indicator_name='噪声',
-        medium=SampleMedium.NOISE,
+        standard_code='TEST-FIXTURE',
+        indicator_name='测试因子丙',
+        medium=SampleMedium.WORKPLACE_AIR,
         limit_type=LimitType.INSTANT,
-        unit='dB(A)',
-        limit_value=Decimal('85'),
-        standard_name='Noise seed',
+        unit='test-unit',
+        limit_value=Decimal('11'),
+        standard_name='Test fixture standard',
         priority=10,
     )
     second = dao.upsert_fixture_limit(
-        standard_code='TEST-SEED',
-        indicator_name='噪声',
-        medium=SampleMedium.NOISE,
+        standard_code='TEST-FIXTURE',
+        indicator_name='测试因子丙',
+        medium=SampleMedium.WORKPLACE_AIR,
         limit_type=LimitType.INSTANT,
-        unit='dB(A)',
-        limit_value=Decimal('80'),
-        standard_name='Noise seed',
+        unit='test-unit',
+        limit_value=Decimal('12'),
+        standard_name='Test fixture standard',
         priority=10,
     )
 
     assert first.id == second.id
-    assert second.limit_value == Decimal('80')
+    assert second.limit_value == Decimal('12')

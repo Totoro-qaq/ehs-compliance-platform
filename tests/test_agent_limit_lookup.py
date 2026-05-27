@@ -24,27 +24,27 @@ def test_agent_limit_lookup_extracts_indicator_from_natural_language(
     db.add_all(
         [
             RegulatoryLimit(
-                indicator_name='测试因子甲',
-                cas_no='71-43-2',
+                indicator_name='甲号测试因子',
+                cas_no='AGENT-CAS-001',
                 medium=SampleMedium.WORKPLACE_AIR,
                 limit_type=LimitType.PC_TWA,
-                limit_value=Decimal('6'),
-                unit='mg/m3',
-                standard_code='TEST-STD 2.1-2019',
-                standard_name='测试因素测试限值 第1部分：化学有害因素',
-                clause='表1',
+                limit_value=Decimal('11'),
+                unit='test-unit',
+                standard_code='AGENT-STD-001',
+                standard_name='代理测试用虚构限值标准',
+                clause='T-1',
                 priority=100,
             ),
             RegulatoryLimit(
-                indicator_name='测试因子乙',
-                cas_no='108-88-3',
+                indicator_name='乙号测试因子',
+                cas_no='AGENT-CAS-002',
                 medium=SampleMedium.WORKPLACE_AIR,
                 limit_type=LimitType.PC_TWA,
-                limit_value=Decimal('50'),
-                unit='mg/m3',
-                standard_code='TEST-STD 2.1-2019',
-                standard_name='测试因素测试限值 第1部分：化学有害因素',
-                clause='表1',
+                limit_value=Decimal('22'),
+                unit='test-unit',
+                standard_code='AGENT-STD-001',
+                standard_name='代理测试用虚构限值标准',
+                clause='T-1',
                 priority=100,
             ),
         ]
@@ -53,7 +53,7 @@ def test_agent_limit_lookup_extracts_indicator_from_natural_language(
 
     resp = client.post(
         '/api/v1/agent/chat',
-        json={'content': '帮我查一下测试因子甲的测试限值'},
+        json={'content': '查询 甲号测试因子 限值'},
         headers=_auth(user_token),
     )
 
@@ -63,7 +63,7 @@ def test_agent_limit_lookup_extracts_indicator_from_natural_language(
     assert data['run']['provider'] == 'rules'
     assert data['run']['model_name'] == 'fast-summary'
     assert '限值库命中' in answer
-    assert '测试因子甲 PC_TWA 6 mg/m3' in answer
-    assert '测试因子乙 PC_TWA 50 mg/m3' not in answer.split('限值库命中：', 1)[1].splitlines()[1]
+    assert '甲号测试因子 PC_TWA 11 test-unit' in answer
+    assert '乙号测试因子 PC_TWA 22 test-unit' not in answer.split('限值库命中：', 1)[1].splitlines()[1]
     assert '限值库没有命中明确结果' not in answer
     call_model.assert_not_called()

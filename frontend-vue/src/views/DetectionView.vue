@@ -57,16 +57,16 @@ const SAMPLE_FILES = [
     key: 'occupational',
     label: '职业卫生样例',
     filename: '职业卫生检测样例.csv',
-    // 职业病危害因素含化学因素和物理因素，列名均支持中英文，非必填列可留空
+    // 样例只使用虚构因子和虚构数值，列名均支持中英文，非必填列可留空
     content:
       '检测点,车间,岗位,检测因子,检测值,单位,介质,采样时长(分钟),班次时长\n' +
-      /* 化学因素 */ '喷漆岗,涂装车间,喷漆工,测试因子甲,50000,μg/m3,工作场所空气,60,\n' +
-      '喷漆岗,涂装车间,喷漆工,测试因子乙,20,mg/m3,工作场所空气,60,\n' +
-      '打磨岗,机加工车间,打磨工,其他测试颗粒物,6,mg/m3,工作场所空气,240,\n' +
-      /* 物理因素 */ '空压机房,动力车间,巡检工,噪声,88,dB(A),噪声,,8\n' +
-      '包装线,成品车间,包装工,噪声,84,dB(A),噪声,,8\n' +
-      '炼钢平台,炼钢车间,炉前工,测试热指数-A,31,WBGT(℃),高温,,\n' +
-      '巡检通道,公辅车间,巡检工,测试热指数-B,29,WBGT(℃),高温,,\n',
+      '测试点A,测试车间A,测试岗位A,测试因子甲,100000,μg/m3,工作场所空气,60,\n' +
+      '测试点B,测试车间B,测试岗位B,测试因子乙,22,mg/m3,工作场所空气,60,\n' +
+      '测试点C,测试车间C,测试岗位C,测试颗粒物因子,14,mg/m3,工作场所空气,240,\n' +
+      '测试点D,测试车间D,测试岗位D,测试声级因子,73,dB(A),噪声,,8\n' +
+      '测试点E,测试车间E,测试岗位E,测试声级因子,68,dB(A),噪声,,8\n' +
+      '测试点F,测试车间F,测试岗位F,测试热指数-A,42,℃,高温,,\n' +
+      '测试点G,测试车间G,测试岗位G,测试热指数-B,39,℃,高温,,\n',
   },
 ];
 
@@ -876,7 +876,7 @@ watch(
             <h4>结构化表格必须包含</h4>
             <ul>
               <li><strong>检测点 / sample_point</strong> — 采样点、岗位或监测点名称</li>
-              <li><strong>检测因子 / indicator_name</strong> — 如测试因子甲、测试因子乙、噪声、测试颗粒物、WBGT</li>
+              <li><strong>检测因子 / indicator_name</strong> — 如测试因子甲、测试声级因子、测试热指数-A</li>
               <li><strong>检测值 / raw_value</strong> — 实测数值；低于检出限可按检出限或原报告数值填写</li>
               <li><strong>单位 / raw_unit</strong> — 如 mg/m3、μg/m3、dB(A)、WBGT(℃)、mg/L</li>
             </ul>
@@ -1444,7 +1444,7 @@ watch(
           <span class="label-text">因子</span>
           <input
             v-model="limitFilter.indicatorName"
-            placeholder="测试因子甲 / pH / 噪声 / 高温WBGT"
+            placeholder="测试因子甲 / pH / 测试声级"
             @keydown.enter="applyLimitFilters"
           />
         </label>
@@ -1459,7 +1459,7 @@ watch(
           <span class="label-text">标准编号</span>
           <input
             v-model="limitFilter.standardCode"
-            placeholder="TEST-STD 2.1-2019"
+            placeholder="TEST-STD-001"
             @keydown.enter="applyLimitFilters"
           />
         </label>

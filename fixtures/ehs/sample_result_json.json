@@ -2,8 +2,8 @@
   "risks": [
     {
       "risk_level": "HIGH",
-      "violation_clause": "TEST-STD 2.1-2019 及相关职业卫生管理要求（示例引用）",
-      "rectification_advice": "为干式打磨岗位增设有效局部排尘或湿式作业措施，明确测试颗粒物清扫频次与禁扫方式；按危害因素配备符合 TEST-STD 的防颗粒物呼吸器并建立更换记录。",
+      "violation_clause": "TEST-EHS-001 及相关测试管理要求（虚构示例）",
+      "rectification_advice": "为测试岗位增设有效局部控制措施，明确清扫频次与记录要求；按测试危害因素配备适用防护用品并建立更换记录。",
       "evidence": "文本：未见局部吸尘罩连接除尘系统；配发纱布口罩且三年未检测。"
     },
     {

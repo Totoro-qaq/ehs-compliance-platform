@@ -36,7 +36,7 @@ const form = reactive({
   id: '',
   name: '',
   unified_social_credit_code: '',
-  intest particlesry: '',
+  industry: '',
   address: '',
   contact_name: '',
   contact_phone: '',
@@ -84,7 +84,7 @@ function openEdit(org) {
   form.id = org.id;
   form.name = org.name || '';
   form.unified_social_credit_code = org.unified_social_credit_code || '';
-  form.intest particlesry = org.intest particlesry || '';
+  form.industry = org.industry || '';
   form.address = org.address || '';
   form.contact_name = org.contact_name || '';
   form.contact_phone = org.contact_phone || '';
@@ -96,7 +96,7 @@ function resetForm() {
   form.id = '';
   form.name = '';
   form.unified_social_credit_code = '';
-  form.intest particlesry = '';
+  form.industry = '';
   form.address = '';
   form.contact_name = '';
   form.contact_phone = '';
@@ -107,7 +107,7 @@ function formPayload() {
   return {
     name: form.name.trim(),
     unified_social_credit_code: form.unified_social_credit_code.trim() || null,
-    intest particlesry: form.intest particlesry.trim() || null,
+    industry: form.industry.trim() || null,
     address: form.address.trim() || null,
     contact_name: form.contact_name.trim() || null,
     contact_phone: form.contact_phone.trim() || null,
@@ -219,7 +219,7 @@ onMounted(loadPage);
             </label>
             <label class="form-field">
               <span class="label-text">所属行业</span>
-              <input v-model="form.intest particlesry" maxlength="128" placeholder="如：制造业 / 化工 / 电子" />
+              <input v-model="form.industry" maxlength="128" placeholder="如：制造业 / 化工 / 电子" />
             </label>
             <label class="form-field">
               <span class="label-text">联系人</span>
@@ -290,7 +290,7 @@ onMounted(loadPage);
                   org.unified_social_credit_code
                 }}</small>
               </td>
-              <td>{{ org.intest particlesry || '-' }}</td>
+              <td>{{ org.industry || '-' }}</td>
               <td>
                 {{ org.contact_name || '-' }}
                 <small v-if="org.contact_phone" class="subtle-line">{{ org.contact_phone }}</small>
@@ -349,7 +349,7 @@ onMounted(loadPage);
               <dt>信用代码</dt>
               <dd>{{ activeOrg.unified_social_credit_code || '-' }}</dd>
               <dt>所属行业</dt>
-              <dd>{{ activeOrg.intest particlesry || '-' }}</dd>
+              <dd>{{ activeOrg.industry || '-' }}</dd>
               <dt>公司地址</dt>
               <dd>{{ activeOrg.address || '-' }}</dd>
               <dt>联系人</dt>

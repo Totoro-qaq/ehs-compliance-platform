@@ -19,7 +19,7 @@ depends_on = None
 
 def upgrade() -> None:
     op.add_column('organizations', sa.Column('unified_social_credit_code', sa.String(length=32), nullable=True))
-    op.add_column('organizations', sa.Column('intest particlesry', sa.String(length=128), nullable=True))
+    op.add_column('organizations', sa.Column('industry', sa.String(length=128), nullable=True))
     op.add_column('organizations', sa.Column('address', sa.String(length=500), nullable=True))
     op.add_column('organizations', sa.Column('contact_name', sa.String(length=64), nullable=True))
     op.add_column('organizations', sa.Column('contact_phone', sa.String(length=32), nullable=True))
@@ -38,5 +38,5 @@ def downgrade() -> None:
     op.drop_column('organizations', 'contact_phone')
     op.drop_column('organizations', 'contact_name')
     op.drop_column('organizations', 'address')
-    op.drop_column('organizations', 'intest particlesry')
+    op.drop_column('organizations', 'industry')
     op.drop_column('organizations', 'unified_social_credit_code')

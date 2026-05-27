@@ -648,16 +648,16 @@ def test_agent_summarizes_detection_compliance_by_client_project_context(
     sample_a = DetectionSample(
         report_id=report_a.id,
         sample_point='A-01',
-        workplace='涂装车间',
-        post_name='喷漆岗',
+        workplace='测试车间A',
+        post_name='测试岗位A',
         medium=SampleMedium.WORKPLACE_AIR,
     )
     sample_b = DetectionSample(
         report_id=report_b.id,
         sample_point='B-01',
-        workplace='空压机房',
-        post_name='巡检岗',
-        medium=SampleMedium.NOISE,
+        workplace='测试车间B',
+        post_name='测试岗位B',
+        medium=SampleMedium.WORKPLACE_AIR,
     )
     db.add_all([sample_a, sample_b])
     db.flush()
@@ -665,18 +665,18 @@ def test_agent_summarizes_detection_compliance_by_client_project_context(
     measurement_a = DetectionMeasurement(
         sample_id=sample_a.id,
         indicator_name='测试因子甲',
-        raw_value=Decimal('8.0'),
-        raw_unit='mg/m3',
-        normalized_value=Decimal('8.0'),
-        normalized_unit='mg/m3',
+        raw_value=Decimal('12.0'),
+        raw_unit='test-unit',
+        normalized_value=Decimal('12.0'),
+        normalized_unit='test-unit',
     )
     measurement_b = DetectionMeasurement(
         sample_id=sample_b.id,
-        indicator_name='噪声',
-        raw_value=Decimal('92'),
-        raw_unit='dB(A)',
-        normalized_value=Decimal('92'),
-        normalized_unit='dB(A)',
+        indicator_name='测试因子乙',
+        raw_value=Decimal('30'),
+        raw_unit='test-unit',
+        normalized_value=Decimal('30'),
+        normalized_unit='test-unit',
     )
     db.add_all([measurement_a, measurement_b])
     db.flush()
@@ -687,29 +687,29 @@ def test_agent_summarizes_detection_compliance_by_client_project_context(
                 report_id=report_a.id,
                 sample_id=sample_a.id,
                 measurement_id=measurement_a.id,
-                calculated_value=Decimal('8.0'),
-                calculated_unit='mg/m3',
-                limit_value=Decimal('6.0'),
-                limit_unit='mg/m3',
+                calculated_value=Decimal('12.0'),
+                calculated_unit='test-unit',
+                limit_value=Decimal('10.0'),
+                limit_unit='test-unit',
                 limit_type=LimitType.PC_TWA,
                 status=ComplianceStatus.EXCEEDED,
-                exceedance_multiple=Decimal('0.3333'),
-                standard_code='TEST-STD 2.1-2019',
-                clause='第4.1条',
+                exceedance_multiple=Decimal('0.2000'),
+                standard_code='TEST-STD-001',
+                clause='T-1',
             ),
             ComplianceResult(
                 report_id=report_b.id,
                 sample_id=sample_b.id,
                 measurement_id=measurement_b.id,
-                calculated_value=Decimal('92'),
-                calculated_unit='dB(A)',
-                limit_value=Decimal('85'),
-                limit_unit='dB(A)',
-                limit_type=LimitType.INSTANT,
+                calculated_value=Decimal('30'),
+                calculated_unit='test-unit',
+                limit_value=Decimal('20'),
+                limit_unit='test-unit',
+                limit_type=LimitType.PC_TWA,
                 status=ComplianceStatus.EXCEEDED,
-                exceedance_multiple=Decimal('0.0824'),
-                standard_code='TEST-STD 2.2-2007',
-                clause='第11条',
+                exceedance_multiple=Decimal('0.5000'),
+                standard_code='TEST-STD-002',
+                clause='T-2',
             ),
         ]
     )
@@ -731,5 +731,5 @@ def test_agent_summarizes_detection_compliance_by_client_project_context(
     assert '测试因子甲' in answer
     assert '安测 A 已判定报告' in answer
     assert '安测 B 已判定报告' not in answer
-    assert '噪声' not in answer
+    assert '测试因子乙' not in answer
     assert any(call['tool_name'] == 'summarize_detection_compliance' for call in data['tool_calls'])
