@@ -25,6 +25,7 @@ const STATUS_MAP = {
   VALIDATING: '校验中',
   PERSISTING: '保存中',
   SUCCESS: '已完成',
+  NEEDS_REVIEW: '需复核',
   FAILED: '失败',
 };
 

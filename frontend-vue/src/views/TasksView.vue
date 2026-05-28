@@ -15,7 +15,7 @@ import { useToastStore } from '../stores/toast';
 import { formatTime, statusText } from '../utils/format';
 import Icon from '../components/Icon.vue';
 
-const TERMINAL_STATUSES = new Set(['SUCCESS', 'FAILED']);
+const TERMINAL_STATUSES = new Set(['SUCCESS', 'NEEDS_REVIEW', 'FAILED']);
 const POLL_INTERVAL_MS = 5000;
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const ALLOWED_EXTENSIONS = new Set(['pdf', 'txt', 'doc', 'docx', 'csv']);
@@ -28,7 +28,7 @@ const totalTasks = ref(0);
 const totalPages = ref(0);
 const currentPage = ref(1);
 const pageSize = 15;
-const taskStats = ref({ all: 0, active: 0, success: 0, failed: 0 });
+const taskStats = ref({ all: 0, active: 0, success: 0, needsReview: 0, failed: 0 });
 
 const organizations = ref([]);
 const orgSelected = ref('');
@@ -72,6 +72,7 @@ const hasActiveWork = computed(
     Boolean(activeTask.value && !TERMINAL_STATUSES.has(activeTask.value.status)),
 );
 const activeRiskCount = computed(() => activeTask.value?.result?.risks?.length || 0);
+const activeTaskNeedsReview = computed(() => activeTask.value?.status === 'NEEDS_REVIEW');
 const statusStageText = (status) => statusText(status) || '待处理';
 const activeTaskIndex = computed(() =>
   tasks.value.findIndex((task) => task.task_id === activeTask.value?.task_id),
@@ -154,7 +155,7 @@ async function loadTasks({ silent = false } = {}) {
 
 async function loadTaskStats() {
   try {
-    const [all, pending, parsing, analyzing, validating, persisting, success, failed] = await Promise.all([
+    const [all, pending, parsing, analyzing, validating, persisting, success, needsReview, failed] = await Promise.all([
       listTasks(1, 1),
       listTasks(1, 1, { status: 'PENDING' }),
       listTasks(1, 1, { status: 'PARSING' }),
@@ -162,6 +163,7 @@ async function loadTaskStats() {
       listTasks(1, 1, { status: 'VALIDATING' }),
       listTasks(1, 1, { status: 'PERSISTING' }),
       listTasks(1, 1, { status: 'SUCCESS' }),
+      listTasks(1, 1, { status: 'NEEDS_REVIEW' }),
       listTasks(1, 1, { status: 'FAILED' }),
     ]);
     taskStats.value = {
@@ -173,6 +175,7 @@ async function loadTaskStats() {
         (validating?.total || 0) +
         (persisting?.total || 0),
       success: success?.total || 0,
+      needsReview: needsReview?.total || 0,
       failed: failed?.total || 0,
     };
   } catch {
@@ -311,7 +314,7 @@ async function deleteActiveTask() {
 }
 
 function canRequeue(task) {
-  return task?.status === 'FAILED';
+  return task?.status === 'FAILED' || task?.status === 'NEEDS_REVIEW';
 }
 
 async function requeueAssessment(taskId) {
@@ -720,6 +723,10 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
           <span>{{ taskStats.success }}</span>
           <small>已完成</small>
         </button>
+        <button type="button" class="task-stat-card warning" @click="statusFilter = 'NEEDS_REVIEW'; applyFilters()">
+          <span>{{ taskStats.needsReview }}</span>
+          <small>需复核</small>
+        </button>
         <button type="button" class="task-stat-card failed" @click="statusFilter = 'FAILED'; applyFilters()">
           <span>{{ taskStats.failed }}</span>
           <small>失败</small>
@@ -746,6 +753,7 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
             <option value="VALIDATING">校验中</option>
             <option value="PERSISTING">保存中</option>
             <option value="SUCCESS">成功</option>
+            <option value="NEEDS_REVIEW">需复核</option>
             <option value="FAILED">失败</option>
           </select>
         </label>
@@ -948,6 +956,9 @@ onBeforeUnmount(() => clearTimeout(searchTimer));
                 <dd style="color: var(--danger)">{{ activeTask.error_message }}</dd>
               </template>
             </dl>
+            <div v-if="activeTaskNeedsReview" class="needs-review-alert">
+              模型返回未结构化内容，当前结果需人工复核；风险列表不会进入正常成功统计。
+            </div>
             <div v-if="drawerSummary" class="detail-section">
               <h3>评价摘要</h3>
               <p style="font-size: 14px; line-height: 1.7; color: var(--text-secondary)">

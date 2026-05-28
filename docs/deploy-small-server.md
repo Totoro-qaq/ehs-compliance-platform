@@ -59,6 +59,8 @@ docker compose -f docker-compose.yml -f docker-compose.ocr.yml up -d --build wor
 - schema 校验失败
 - 阻塞超时
 
+其中 Dify 工作流执行成功但输出 JSON 结构错误或 schema 校验失败时，评价任务会进入 `NEEDS_REVIEW`，保存 `risks=[]` 和模型原始文本摘要，供前端人工复核；HTTP、网络、鉴权、Dify API 非 JSON 等调用失败仍进入 `FAILED`。
+
 阻塞超时可能表示 Dify 仍在执行。默认 `DIFY_RETRY_ON_TIMEOUT=false` 是为了避免重复扣费和重复工作流运行。
 
 ### 轻量可观测性
@@ -146,6 +148,8 @@ The following are not retried by default:
 - invalid output JSON
 - schema validation failures
 - blocking timeouts
+
+When the Dify workflow succeeds but the final output has invalid JSON structure or fails schema validation, the assessment task is marked `NEEDS_REVIEW` with `risks=[]` and the raw model text stored for frontend manual review. HTTP, network, auth, and non-JSON Dify API failures still become `FAILED`.
 
 A blocking timeout may mean Dify is still running. Keeping `DIFY_RETRY_ON_TIMEOUT=false` avoids duplicate billing and duplicate workflow execution.
 

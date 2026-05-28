@@ -20,10 +20,16 @@ from app.core.request_context import (
 from app.core.sse_broker import publish_task_progress
 from app.dao.assessment_dao import AssessmentDAO
 from app.models.db_models import TaskStatus
-from app.services.dify_service import DifyWorkflowError, fetch_assessment_result
+from app.schemas.ehs_schema import EHSAssessmentResult
+from app.services.dify_service import (
+    DifyResultStructureError,
+    DifyWorkflowError,
+    fetch_assessment_result,
+)
 from app.services.pdf_text_service import DocumentTextExtractError, extract_text_from_document_file
 
 _log = get_logger(__name__)
+_NEEDS_REVIEW_SUMMARY_MAX_CHARS = 20000
 
 
 def _mark_status(
@@ -110,6 +116,23 @@ def _load_body_text(
     return text
 
 
+def _build_needs_review_result(exc: DifyResultStructureError) -> EHSAssessmentResult:
+    raw_output = (exc.raw_output or '').strip()
+    summary = raw_output or '模型返回结果未满足结构化契约，需人工复核。'
+    truncated = len(summary) > _NEEDS_REVIEW_SUMMARY_MAX_CHARS
+    if truncated:
+        summary = summary[:_NEEDS_REVIEW_SUMMARY_MAX_CHARS]
+
+    metadata = {
+        'needs_review': True,
+        'reason': str(exc),
+    }
+    if raw_output:
+        metadata['raw_output_chars'] = len(raw_output)
+        metadata['raw_output_truncated'] = truncated
+    return EHSAssessmentResult(risks=[], summary=summary, metadata=metadata)
+
+
 @celery_app.task(name='app.tasks.worker.run_assessment_task')
 def run_assessment_task(
     task_id: str,
@@ -171,11 +194,53 @@ def run_assessment_task(
             message='Dify 工作流分析',
         )
         publish_task_progress(task_id, TaskStatus.AI_ANALYZING.value, 45)
-        validated = fetch_assessment_result(
-            document_text=body,
-            filename=task.filename,
-            task_id=task_id,
-        )
+        try:
+            validated = fetch_assessment_result(
+                document_text=body,
+                filename=task.filename,
+                task_id=task_id,
+            )
+        except DifyResultStructureError as exc:
+            _log.warning(
+                'Dify workflow returned unstructured result task_id=%s error=%s',
+                task_id,
+                exc,
+            )
+            review_result = _build_needs_review_result(exc)
+            _mark_status(
+                dao,
+                task_id=task_id,
+                status=TaskStatus.VALIDATING,
+                progress=82,
+                started_at=started_at,
+                message='校验结构化结果',
+            )
+            publish_task_progress(task_id, TaskStatus.VALIDATING.value, 82)
+            _mark_status(
+                dao,
+                task_id=task_id,
+                status=TaskStatus.PERSISTING,
+                progress=94,
+                started_at=started_at,
+                message='保存待复核结果',
+            )
+            publish_task_progress(task_id, TaskStatus.PERSISTING.value, 94)
+            error_message = str(exc)[:2000]
+            dao.save_result(
+                task_id=task_id,
+                result=review_result,
+                status=TaskStatus.NEEDS_REVIEW,
+                error_message=error_message,
+            )
+            dao.append_timeline_event(
+                task_id=task_id,
+                status=TaskStatus.NEEDS_REVIEW,
+                progress=100,
+                message='模型返回未结构化，需人工复核',
+                elapsed_ms=int((time.perf_counter() - started_at) * 1000),
+            )
+            publish_task_progress(task_id, TaskStatus.NEEDS_REVIEW.value, 100, error_message[:500])
+            return
 
         _mark_status(
             dao,

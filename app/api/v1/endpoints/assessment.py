@@ -74,7 +74,7 @@ def list_assessments(
     actor: Annotated[CurrentUser, Depends(get_current_user)],
     db: Session = Depends(get_db),
     organization_id: str | None = Query(default=None, description='筛选公司 ID'),
-    status: str | None = Query(default=None, description='筛选任务状态，如 PENDING / SUCCESS / FAILED'),
+    status: str | None = Query(default=None, description='筛选任务状态，如 PENDING / SUCCESS / NEEDS_REVIEW / FAILED'),
     q: str | None = Query(default=None, description='按文件名模糊搜索，或按任务 ID 精确搜索'),
     client_name: str | None = Query(default=None, description='按委托单位 / 客户公司筛选'),
     project_name: str | None = Query(default=None, description='按项目名称筛选'),
@@ -116,15 +116,15 @@ def get_assessment(
 @router.post(
     '/{task_id}/requeue',
     response_model=AssessmentCreateResponse,
-    summary='重新分析失败任务',
-    description='仅失败状态的评价任务可以重新投递。公司员工只能重新投递自己创建的任务；公司管理员可处理本公司任务；系统管理员不受公司限制。',
+    summary='重新分析失败或待复核任务',
+    description='仅 FAILED 或 NEEDS_REVIEW 状态的评价任务可以重新投递。公司员工只能重新投递自己创建的任务；公司管理员可处理本公司任务；系统管理员不受公司限制。',
 )
 def requeue_assessment(
     task_id: str,
     actor: Annotated[CurrentUser, Depends(get_current_user)],
     db: Session = Depends(get_db),
 ):
-    return AssessmentService.requeue_failed_task(db=db, actor=actor, task_id=task_id)
+    return AssessmentService.requeue_assessment_task(db=db, actor=actor, task_id=task_id)
 
 
 @router.delete(
