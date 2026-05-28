@@ -225,10 +225,11 @@ response_mode=blocking
 当前重试策略：
 
 - `run_workflow_blocking()` 对单次 Dify 请求设置默认 `600s` 超时。
-- 发生 HTTP 错误、超时、网络错误、非 JSON 响应或结果结构校验失败时，会抛出 `DifyWorkflowError`。
-- Celery Worker 捕获该错误后，将评价任务标记为 `FAILED`，进度置为 `100`，并把错误摘要写入 `error_message`。
+- 发生 HTTP 错误、超时、网络错误或 Dify API 非 JSON 响应时，会抛出 `DifyWorkflowError`。
+- Celery Worker 捕获 `DifyWorkflowError` 后，将评价任务标记为 `FAILED`，进度置为 `100`，并把错误摘要写入 `error_message`。
+- 如果 Dify 工作流成功，但最终输出仍无法解析为包含 `risks` 与 `summary` 的结构化结果，任务会进入 `NEEDS_REVIEW`：`result.risks=[]`，`result.summary` 保存模型原始文本（过长时为安全入库截断），`error_message` 保存结构化失败原因，前端提示需人工复核。
 - 当前代码会对可恢复错误执行有限重试：`429`、`500`、`502`、`503`、`504` 和临时网络错误。
-- 不自动重试 `400`、`401`、`403`、非 JSON 响应、输出 JSON 结构错误或 schema 校验失败；这些通常需要先修正配置、Key、工作流变量或提示词。
+- 不自动重试 `400`、`401`、`403`、非 JSON 响应、输出 JSON 结构错误或 schema 校验失败；这些通常需要先修正配置、Key、工作流变量或提示词，或在 `NEEDS_REVIEW` 详情中人工确认模型原文。
 - 阻塞超时默认不自动重试，因为 Dify 侧可能仍在执行，重复请求可能造成重复扣费或重复工作流运行。如确需开启，可设置 `DIFY_RETRY_ON_TIMEOUT=true`。
 - 重试使用指数退避与随机抖动，默认最多 `3` 次尝试；两次重试等待约为 `2s -> 4s`，并受 `DIFY_RETRY_MAX_DELAY_SECONDS` 限制。
 - 日志会记录 `attempt`、`max_attempts`、`retryable`、`status_code` 和 `elapsed_ms`，便于排查外部服务波动。
@@ -325,7 +326,7 @@ uploads/YYYY/MM/DD/{uuid}_{safe_original_name}.{ext}
 | `GET` | `/api/v1/report-pipeline/reports/{report_id}/export?format=markdown|txt|docx|doc` | 导出报告文件 |
 | `*` | `/api/v1/admin/*` | 管理接口 |
 
-失败任务可以在前端任务列表或详情抽屉中点击「重新分析」。后端只允许 `FAILED` 状态重新投递，普通用户只能操作自己创建的任务。
+失败或需复核任务可以在前端任务列表或详情抽屉中点击「重新分析」。后端只允许 `FAILED` / `NEEDS_REVIEW` 状态重新投递，普通用户只能操作自己创建的任务。
 
 ### 备份与恢复
 
@@ -580,10 +581,11 @@ Workflow output:
 Retry policy:
 
 - `run_workflow_blocking()` uses a default request timeout of `600s`.
-- HTTP errors, timeouts, network errors, non-JSON responses, and schema validation failures are raised as `DifyWorkflowError`.
-- The Celery worker catches the error, marks the assessment task as `FAILED`, sets progress to `100`, and stores a short error message in `error_message`.
+- HTTP errors, timeouts, network errors, and non-JSON Dify API responses are raised as `DifyWorkflowError`.
+- The Celery worker catches `DifyWorkflowError`, marks the assessment task as `FAILED`, sets progress to `100`, and stores a short error message in `error_message`.
+- If the Dify workflow succeeds but the final model output still cannot be parsed into a structured result with `risks` and `summary`, the task is marked `NEEDS_REVIEW`: `result.risks=[]`, `result.summary` stores the raw model text (truncated when needed for safe storage), `error_message` stores the structure error, and the frontend asks for manual review.
 - The code retries recoverable failures only: `429`, `500`, `502`, `503`, `504`, and temporary network errors.
-- It does not retry `400`, `401`, `403`, non-JSON responses, invalid output JSON, or schema validation failures; these usually require fixing configuration, API keys, workflow variables, or prompts first.
+- It does not retry `400`, `401`, `403`, non-JSON responses, invalid output JSON, or schema validation failures; these usually require fixing configuration, API keys, workflow variables, or prompts first, or manually reviewing the raw model text in `NEEDS_REVIEW`.
 - Blocking timeouts are not retried by default because Dify may still be running. Replaying the request can cause duplicate billing or duplicate workflow execution. Set `DIFY_RETRY_ON_TIMEOUT=true` only when that tradeoff is acceptable.
 - Retries use exponential backoff with jitter. The default is up to `3` attempts, with retry waits around `2s -> 4s`, capped by `DIFY_RETRY_MAX_DELAY_SECONDS`.
 - Logs include `attempt`, `max_attempts`, `retryable`, `status_code`, and `elapsed_ms` to make upstream instability easier to diagnose.
@@ -680,7 +682,7 @@ uploads/YYYY/MM/DD/{uuid}_{safe_original_name}.{ext}
 | `GET` | `/api/v1/report-pipeline/reports/{report_id}/export?format=markdown|txt|docx|doc` | Export report file |
 | `*` | `/api/v1/admin/*` | Admin APIs |
 
-Failed tasks can be requeued from the task list or the detail drawer. The backend only accepts `FAILED` tasks, and non-admin users can only requeue tasks they created.
+Failed or review-needed tasks can be requeued from the task list or the detail drawer. The backend only accepts `FAILED` / `NEEDS_REVIEW` tasks, and non-admin users can only requeue tasks they created.
 
 ### Backup and Restore
 

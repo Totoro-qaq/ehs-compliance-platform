@@ -24,6 +24,7 @@ class TaskStatus(str, Enum):
     VALIDATING = 'VALIDATING'
     PERSISTING = 'PERSISTING'
     SUCCESS = 'SUCCESS'
+    NEEDS_REVIEW = 'NEEDS_REVIEW'
     FAILED = 'FAILED'
 
 
@@ -33,8 +34,9 @@ _VALID_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
     TaskStatus.PARSING: frozenset({TaskStatus.AI_ANALYZING, TaskStatus.FAILED}),
     TaskStatus.AI_ANALYZING: frozenset({TaskStatus.VALIDATING, TaskStatus.FAILED}),
     TaskStatus.VALIDATING: frozenset({TaskStatus.PERSISTING, TaskStatus.FAILED}),
-    TaskStatus.PERSISTING: frozenset({TaskStatus.SUCCESS, TaskStatus.FAILED}),
+    TaskStatus.PERSISTING: frozenset({TaskStatus.SUCCESS, TaskStatus.NEEDS_REVIEW, TaskStatus.FAILED}),
     TaskStatus.SUCCESS: frozenset(),
+    TaskStatus.NEEDS_REVIEW: frozenset(),
     TaskStatus.FAILED: frozenset(),
 }
 

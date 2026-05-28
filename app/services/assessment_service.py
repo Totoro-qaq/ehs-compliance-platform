@@ -34,6 +34,8 @@ from app.services.access_control import (
     is_system_admin,
 )
 
+_REQUEUEABLE_TASK_STATUSES = {TaskStatus.FAILED, TaskStatus.NEEDS_REVIEW}
+
 
 class AssessmentService:
     @staticmethod
@@ -267,21 +269,21 @@ class AssessmentService:
         dao.soft_delete_by_id(task_id)
 
     @staticmethod
-    def requeue_failed_task(*, db: Session, actor: CurrentUser, task_id: str) -> AssessmentCreateResponse:
+    def requeue_assessment_task(*, db: Session, actor: CurrentUser, task_id: str) -> AssessmentCreateResponse:
         dao = AssessmentDAO(db)
         task = dao.get_by_id(task_id)
         if task is None:
             raise EHSException('任务不存在或已删除', code='TASK_NOT_FOUND', status_code=404)
         ensure_task_author_for_mutation(actor, task)
-        if task.status != TaskStatus.FAILED:
+        if task.status not in _REQUEUEABLE_TASK_STATUSES:
             raise EHSException(
-                '只有失败状态的评价任务可以重新分析',
+                '只有失败或需复核状态的评价任务可以重新分析',
                 code='TASK_NOT_REQUEUEABLE',
                 status_code=409,
                 details={'status': task.status.value},
             )
 
-        reset_task = dao.reset_failed_for_requeue(task_id=task_id)
+        reset_task = dao.reset_for_requeue(task_id=task_id)
         if reset_task is None:
             raise EHSException('任务不存在或已删除', code='TASK_NOT_FOUND', status_code=404)
 

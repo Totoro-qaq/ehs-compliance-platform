@@ -6,7 +6,12 @@ import httpx
 import pytest
 
 from app.core.config import settings
-from app.services.dify_service import DifyWorkflowError, run_workflow_blocking
+from app.services.dify_service import (
+    DifyResultStructureError,
+    DifyWorkflowError,
+    fetch_assessment_result,
+    run_workflow_blocking,
+)
 
 
 class _FakeClient:
@@ -116,3 +121,21 @@ def test_run_workflow_disables_proxy_env_for_local_dify(monkeypatch):
     run_workflow_blocking(inputs={'document_text': 'text'}, user='test-user')
 
     assert _FakeClient.init_kwargs[0]['trust_env'] is False
+
+
+def test_fetch_assessment_result_raises_structure_error_with_raw_output(monkeypatch):
+    def _fake_run_workflow_blocking(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {
+            'data': {
+                'status': 'succeeded',
+                'outputs': {'result': 'plain model answer without json'},
+            }
+        }
+
+    monkeypatch.setattr('app.services.dify_service.run_workflow_blocking', _fake_run_workflow_blocking)
+
+    with pytest.raises(DifyResultStructureError) as exc_info:
+        fetch_assessment_result(document_text='text', filename='sample.txt', task_id='task-1')
+
+    assert exc_info.value.raw_output == 'plain model answer without json'
+    assert exc_info.value.retryable is False

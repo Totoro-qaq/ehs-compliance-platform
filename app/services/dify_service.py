@@ -38,6 +38,21 @@ class DifyWorkflowError(Exception):
         self.attempts = attempts
 
 
+class DifyResultStructureError(DifyWorkflowError):
+    """Dify 已成功执行，但模型输出不满足 EHS 结构化契约。"""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        raw_output: str = '',
+        payload: Any | None = None,
+    ) -> None:
+        super().__init__(message, retryable=False)
+        self.raw_output = raw_output
+        self.payload = payload
+
+
 def _base_url() -> str:
     return settings.dify_base_url.rstrip('/')
 
@@ -284,10 +299,32 @@ def _parse_jsonish_to_dict(raw: Any) -> dict[str, Any] | None:
     return got
 
 
+def _stringify_raw_output(raw: Any) -> str:
+    if raw is None:
+        return ''
+    if isinstance(raw, str):
+        return raw.strip()
+    try:
+        return json.dumps(raw, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(raw)
+
+
+def _raw_output_text(outputs: dict[str, Any]) -> str:
+    key = settings.dify_workflow_result_key
+    candidate_keys = [key, 'result', 'result_json', 'output', 'structured_json', 'ehs_result', 'answer']
+    for candidate_key in candidate_keys:
+        if candidate_key in outputs:
+            text = _stringify_raw_output(outputs[candidate_key])
+            if text:
+                return text
+    return _stringify_raw_output(outputs)
+
+
 def _coerce_ehs_dict(outputs: dict[str, Any]) -> dict[str, Any]:
     """从 data.outputs 得到可喂给 EHSAssessmentResult 的 dict。"""
     if not outputs:
-        raise DifyWorkflowError('工作流 outputs 为空')
+        raise DifyResultStructureError('工作流 outputs 为空')
 
     if 'risks' in outputs and 'summary' in outputs:
         return outputs
@@ -310,15 +347,15 @@ def _coerce_ehs_dict(outputs: dict[str, Any]) -> dict[str, Any]:
         if parsed:
             return parsed
 
-    preview = ''
-    if key in outputs:
-        p = outputs[key]
-        preview = (str(p)[:300] + '…') if p is not None and len(str(p)) > 300 else str(p)
+    raw_output = _raw_output_text(outputs)
+    preview = (raw_output[:300] + '…') if len(raw_output) > 300 else raw_output
 
-    raise DifyWorkflowError(
+    raise DifyResultStructureError(
         '无法从工作流输出解析 EHS 结构（需要包含 risks、summary；'
         f'或配置 DIFY_WORKFLOW_RESULT_KEY 指向含 JSON 的输出变量）。当前 keys: {list(outputs.keys())}'
-        + (f'；{key} 内容预览: {preview!r}' if preview else '')
+        + (f'；输出内容预览: {preview!r}' if preview else ''),
+        raw_output=raw_output,
+        payload=outputs,
     )
 
 
@@ -364,4 +401,8 @@ def fetch_assessment_result(
     try:
         return EHSAssessmentResult.model_validate(payload)
     except Exception as exc:
-        raise DifyWorkflowError(f'EHS 结果校验失败: {exc}；payload 摘要: {str(payload)[:400]}') from exc
+        raise DifyResultStructureError(
+            f'EHS 结果校验失败: {exc}；payload 摘要: {str(payload)[:400]}',
+            raw_output=_stringify_raw_output(payload),
+            payload=payload,
+        ) from exc
