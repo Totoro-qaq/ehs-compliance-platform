@@ -1,21 +1,38 @@
 from __future__ import annotations
 
 from typing import Annotated
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.db import get_db
 from app.schemas.auth_context import CurrentUser
 from app.schemas.report_pipeline_schema import (
+    ReportBootstrapRequest,
+    ReportExportFormat,
+    ReportReadinessOut,
     ReportSectionOut,
     ReportSectionReviewRequest,
+    ReportSectionTemplateOut,
     ReportSectionUpsertRequest,
 )
 from app.services.report_pipeline_service import ReportPipelineService
 
 router = APIRouter(prefix='/report-pipeline', tags=['报告生成流水线'])
+
+
+@router.get(
+    '/templates',
+    response_model=list[ReportSectionTemplateOut],
+    summary='List built-in report section templates',
+)
+def list_report_section_templates(
+    _actor: Annotated[CurrentUser, Depends(get_current_user)],
+):
+    return ReportPipelineService.list_templates()
 
 
 @router.post(
@@ -39,6 +56,25 @@ def upsert_report_section(
     )
 
 
+@router.post(
+    '/reports/{report_id}/bootstrap-sections',
+    response_model=list[ReportSectionOut],
+    summary='Create missing report sections from templates',
+)
+def bootstrap_report_sections(
+    report_id: str,
+    actor: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Session = Depends(get_db),
+    payload: ReportBootstrapRequest | None = None,
+):
+    return ReportPipelineService.bootstrap_sections(
+        db=db,
+        actor=actor,
+        report_id=report_id,
+        section_keys=payload.section_keys if payload is not None else None,
+    )
+
+
 @router.get(
     '/reports/{report_id}/sections',
     response_model=list[ReportSectionOut],
@@ -50,6 +86,51 @@ def list_report_sections(
     db: Session = Depends(get_db),
 ):
     return ReportPipelineService.list_sections(db=db, actor=actor, report_id=report_id)
+
+
+@router.get(
+    '/reports/{report_id}/readiness',
+    response_model=ReportReadinessOut,
+    summary='Check whether report sections are ready for export',
+)
+def get_report_readiness(
+    report_id: str,
+    actor: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Session = Depends(get_db),
+):
+    return ReportPipelineService.get_readiness(db=db, actor=actor, report_id=report_id)
+
+
+@router.get(
+    '/reports/{report_id}/export',
+    response_class=Response,
+    summary='Export approved report sections',
+)
+def export_report(
+    report_id: str,
+    actor: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Session = Depends(get_db),
+    export_format: Annotated[ReportExportFormat, Query(alias='format')] = (
+        ReportExportFormat.MARKDOWN
+    ),
+):
+    export = ReportPipelineService.build_file_export(
+        db=db,
+        actor=actor,
+        report_id=report_id,
+        export_format=export_format,
+    )
+    encoded_filename = quote(export.filename)
+    headers = {
+        'Content-Disposition': (
+            f'attachment; filename="report-export"; filename*=UTF-8\'\'{encoded_filename}'
+        )
+    }
+    return Response(
+        content=export.content,
+        media_type=export.media_type,
+        headers=headers,
+    )
 
 
 @router.patch(

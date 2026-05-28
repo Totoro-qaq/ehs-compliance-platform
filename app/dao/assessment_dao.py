@@ -98,7 +98,7 @@ class AssessmentDAO(BaseRepository[AssessmentTask]):
         fields: dict = {'status': status, 'progress': progress, 'error_message': error_message}
         return self.update_by_id(task_id, **fields)
 
-    def reset_failed_for_requeue(self, *, task_id: str) -> AssessmentTask | None:
+    def reset_for_requeue(self, *, task_id: str) -> AssessmentTask | None:
         task = self.get_by_id(task_id)
         if task is None:
             return None
@@ -112,14 +112,24 @@ class AssessmentDAO(BaseRepository[AssessmentTask]):
         self.session.refresh(task)
         return task
 
-    def save_result(self, *, task_id: str, result: EHSAssessmentResult) -> AssessmentTask | None:
+    def save_result(
+        self,
+        *,
+        task_id: str,
+        result: EHSAssessmentResult,
+        status: TaskStatus = TaskStatus.SUCCESS,
+        error_message: str | None = None,
+    ) -> AssessmentTask | None:
         task = self.get_by_id(task_id)
         if task is None:
             return None
-        task.status = TaskStatus.SUCCESS
+        if status not in {TaskStatus.SUCCESS, TaskStatus.NEEDS_REVIEW}:
+            raise ValueError(f'Unsupported result status: {status.value}')
+        check_status_transition(task.status, status)
+        task.status = status
         task.progress = 100
         task.result_json = json.dumps(result.model_dump(), ensure_ascii=False)
-        task.error_message = None
+        task.error_message = error_message
         task.updated_at = audit_now_naive()
         self.session.commit()
         self.session.refresh(task)

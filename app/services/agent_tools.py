@@ -301,7 +301,10 @@ class AgentTools:
 
         if any(key in user_text for key in ('失败', '异常', '报错')):
             tools.append(('list_assessment_tasks', {'status': TaskStatus.FAILED.value, 'limit': 8, **context_args}))
+            tools.append(('list_assessment_tasks', {'status': TaskStatus.NEEDS_REVIEW.value, 'limit': 8, **context_args}))
             tools.append(('list_detection_reports', {'status': ReportStatus.FAILED.value, 'limit': 8, **context_args}))
+        if any(key in user_text for key in ('需复核', '复核', '未结构化')):
+            tools.append(('list_assessment_tasks', {'status': TaskStatus.NEEDS_REVIEW.value, 'limit': 8, **context_args}))
 
         if any(key in user_text for key in ('评价', '任务', '材料')) or 'assessment' in text:
             tools.append(('list_assessment_tasks', {'limit': 8, **context_args}))
@@ -472,6 +475,7 @@ class AgentTools:
             'assessment': {
                 'total': count_tasks(),
                 'success': count_tasks(AssessmentTask.status == TaskStatus.SUCCESS),
+                'needs_review': count_tasks(AssessmentTask.status == TaskStatus.NEEDS_REVIEW),
                 'failed': count_tasks(AssessmentTask.status == TaskStatus.FAILED),
                 'active': count_tasks(AssessmentTask.status.in_(active_statuses)),
             },

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from zipfile import ZipFile
@@ -223,6 +224,43 @@ class TestAssessmentCRUD:
         assert resp.status_code == 409
         assert resp.json()['code'] == 'TASK_NOT_REQUEUEABLE'
 
+    def test_requeue_needs_review_task(self, client: TestClient, admin_token: str, db):
+        from app.models.db_models import AssessmentTask, Organization, TaskStatus
+
+        org = db.get(Organization, '00000000-0000-4000-8000-000000000001')
+        if org is None:
+            org = Organization(id='00000000-0000-4000-8000-000000000001', name='Default Test Org')
+            db.add(org)
+            db.flush()
+
+        task = AssessmentTask(
+            organization_id=org.id,
+            filename='needs-review.txt',
+            content_type='text/plain',
+            file_path='uploads/needs-review.txt',
+            status=TaskStatus.NEEDS_REVIEW,
+            progress=100,
+            error_message='model output is not structured',
+            result_json='{"risks": [], "summary": "raw"}',
+        )
+        db.add(task)
+        db.flush()
+        delay = MagicMock()
+
+        with patch('app.tasks.worker.run_assessment_task.delay', new=delay):
+            resp = client.post(
+                f'/api/v1/assessment/{task.id}/requeue',
+                headers={'Authorization': f'Bearer {admin_token}'},
+            )
+
+        assert resp.status_code == 200
+        delay.assert_called_once()
+        db.refresh(task)
+        assert task.status == TaskStatus.PENDING
+        assert task.progress == 0
+        assert task.error_message is None
+        assert task.result_json is None
+
 
 class TestAssessmentPermissions:
     def test_user_cannot_see_other_org_tasks(self, client: TestClient, user_token: str, admin_token: str, db):
@@ -409,6 +447,78 @@ def test_worker_extracts_docx_text_and_persists_parsed_text(monkeypatch, tmp_pat
         TaskStatus.SUCCESS,
     ]
     assert all(event.elapsed_ms is not None for event in timeline)
+
+
+def test_worker_marks_unstructured_dify_result_as_needs_review(monkeypatch, tmp_path: Path):
+    from app.core.db import SessionLocal
+    from app.models.db_models import AssessmentTask, Organization, TaskStatus
+    from app.services.dify_service import DifyResultStructureError
+    from app.tasks.worker import run_assessment_task
+
+    doc_path = tmp_path / 'needs-review.txt'
+    doc_path.write_text('source text', encoding='utf-8')
+
+    with SessionLocal() as setup_session:
+        org = setup_session.get(Organization, '00000000-0000-4000-8000-000000000001')
+        if org is None:
+            org = Organization(id='00000000-0000-4000-8000-000000000001', name='Default Test Org')
+            setup_session.add(org)
+            setup_session.flush()
+
+        task = AssessmentTask(
+            organization_id=org.id,
+            filename='needs-review.txt',
+            content_type='text/plain',
+            file_path=str(doc_path),
+            status=TaskStatus.PENDING,
+            progress=0,
+        )
+        setup_session.add(task)
+        setup_session.commit()
+        task_id = task.id
+
+    def _fake_fetch(*_args, **_kwargs):
+        raise DifyResultStructureError(
+            '无法从工作流输出解析 EHS 结构',
+            raw_output='plain model answer without json',
+        )
+
+    published: list[tuple[str, str, int, str | None]] = []
+    monkeypatch.setattr('app.tasks.worker.fetch_assessment_result', _fake_fetch)
+    monkeypatch.setattr(
+        'app.tasks.worker.publish_task_progress',
+        lambda *args, **kwargs: published.append(args),
+    )
+
+    run_assessment_task(task_id)
+
+    with SessionLocal() as session:
+        saved = session.get(AssessmentTask, task_id)
+        from app.dao.assessment_dao import AssessmentDAO
+
+        timeline = AssessmentDAO(session).list_timeline_events(task_id)
+
+    assert saved is not None
+    assert saved.status == TaskStatus.NEEDS_REVIEW
+    assert saved.progress == 100
+    assert saved.error_message == '无法从工作流输出解析 EHS 结构'
+    result = json.loads(saved.result_json or '{}')
+    assert result['risks'] == []
+    assert result['summary'] == 'plain model answer without json'
+    assert result['metadata']['needs_review'] is True
+    assert [event.status for event in timeline] == [
+        TaskStatus.PARSING,
+        TaskStatus.AI_ANALYZING,
+        TaskStatus.VALIDATING,
+        TaskStatus.PERSISTING,
+        TaskStatus.NEEDS_REVIEW,
+    ]
+    assert published[-1] == (
+        task_id,
+        TaskStatus.NEEDS_REVIEW.value,
+        100,
+        '无法从工作流输出解析 EHS 结构',
+    )
 
 
 def test_worker_skips_non_pending_stale_message(monkeypatch, tmp_path: Path):

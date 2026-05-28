@@ -767,7 +767,7 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 
 .task-stat-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
   padding: 14px 16px;
   border-bottom: 1px solid var(--border);
@@ -799,6 +799,7 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 .task-stat-card.info span { color: var(--info); }
 .task-stat-card.active-work span { color: var(--info); }
 .task-stat-card.success span { color: var(--success); }
+.task-stat-card.warning span { color: var(--warning); }
 .task-stat-card.failed span,
 .task-stat-card.danger span { color: var(--danger); }
 
@@ -876,6 +877,8 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 .status-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; }
 .status-badge.SUCCESS { background: var(--success-bg); color: var(--success); }
 .status-badge.SUCCESS::before { background: var(--success); }
+.status-badge.NEEDS_REVIEW { background: var(--warning-bg); color: var(--warning); }
+.status-badge.NEEDS_REVIEW::before { background: var(--warning); }
 .status-badge.FAILED { background: var(--danger-bg); color: var(--danger); }
 .status-badge.FAILED::before { background: var(--danger); }
 .status-badge.PENDING { background: var(--bg-subtle); color: var(--text-secondary); }
@@ -976,6 +979,17 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 .detail-meta dt { font-size: 13px; color: var(--text-tertiary); font-weight: 500; }
 .detail-meta dd { font-size: 14px; word-break: break-all; }
 
+.needs-review-alert {
+  margin-bottom: 20px;
+  padding: 12px 14px;
+  border: 1px solid #fcd34d;
+  border-radius: 6px;
+  background: var(--warning-bg);
+  color: #92400e;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .detail-section { margin-bottom: 24px; }
 .detail-section h3 { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border-subtle); }
 .section-title-row {
@@ -1039,6 +1053,7 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
   background: var(--accent);
 }
 .waterfall-bar.SUCCESS { background: var(--success); }
+.waterfall-bar.NEEDS_REVIEW { background: var(--warning); }
 .waterfall-bar.FAILED { background: var(--danger); }
 .waterfall-bar.PARSING,
 .waterfall-bar.AI_ANALYZING,

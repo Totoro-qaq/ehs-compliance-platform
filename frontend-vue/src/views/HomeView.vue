@@ -25,6 +25,7 @@ const failedTasks = ref('-');
 const recentTasks = ref([]);
 const activeTaskItems = ref([]);
 const failedTaskItems = ref([]);
+const needsReviewTaskItems = ref([]);
 const recentReports = ref([]);
 const pendingReportItems = ref([]);
 const failedReportItems = ref([]);
@@ -152,12 +153,13 @@ const workbenchStats = computed(() => [
   { label: '已完成任务', value: publicCompletedTasks.value, tone: 'success' },
   { label: '评价任务', value: assessmentTasks.value, tone: 'info' },
   { label: '检测任务', value: detectionTasks.value, tone: 'info' },
-  { label: '失败任务', value: failedTasks.value, tone: 'danger' },
+  { label: '异常/复核任务', value: failedTasks.value, tone: 'danger' },
 ]);
 
 const allTodoItems = computed(() => {
   const items = [
     ...failedTaskItems.value.map((task) => buildTodoItem({ kind: 'assessment', type: '失败', record: task, priority: 0 })),
+    ...needsReviewTaskItems.value.map((task) => buildTodoItem({ kind: 'assessment', type: '需复核', record: task, priority: 0 })),
     ...failedReportItems.value.map((report) => buildTodoItem({ kind: 'detection', type: '失败', record: report, priority: 0 })),
     ...activeTaskItems.value.map((task) => buildTodoItem({ kind: 'assessment', type: '处理中', record: task, priority: 1 })),
     ...pendingReportItems.value.map((report) => buildTodoItem({ kind: 'detection', type: '待判定', record: report, priority: 1 })),
@@ -174,7 +176,7 @@ const todoCategories = computed(() => [
   { key: 'all', label: '全部', count: allTodoItems.value.length },
   { key: 'assessment', label: '评价任务', count: allTodoItems.value.filter((item) => item.kind === 'assessment').length },
   { key: 'detection', label: '检测合规', count: allTodoItems.value.filter((item) => item.kind === 'detection').length },
-  { key: 'failed', label: '失败异常', count: allTodoItems.value.filter((item) => item.priority === 0).length },
+  { key: 'failed', label: '异常/复核', count: allTodoItems.value.filter((item) => item.priority === 0).length },
 ]);
 
 const filteredTodoItems = computed(() => {
@@ -256,6 +258,7 @@ function resetWorkbenchData() {
   recentTasks.value = [];
   activeTaskItems.value = [];
   failedTaskItems.value = [];
+  needsReviewTaskItems.value = [];
   recentReports.value = [];
   pendingReportItems.value = [];
   failedReportItems.value = [];
@@ -292,6 +295,7 @@ async function loadWorkbenchData() {
       listTasks(1, 5),
       listTasks(1, 1, { status: 'SUCCESS' }),
       listTasks(1, TODO_FETCH_PAGE_SIZE, { status: 'FAILED' }),
+      listTasks(1, TODO_FETCH_PAGE_SIZE, { status: 'NEEDS_REVIEW' }),
       listDetectionReports(1, 1),
       listDetectionReports(1, 1, { status: 'CALCULATED' }),
       listDetectionReports(1, 1, { status: 'FAILED' }),
@@ -307,6 +311,7 @@ async function loadWorkbenchData() {
       tasks,
       success,
       failed,
+      needsReview,
       reportsTotal,
       reportsDone,
       reportsFailed,
@@ -316,16 +321,17 @@ async function loadWorkbenchData() {
       validatedReports,
       failedReports,
     ] = results.map((_, index) => settledValue(results, index));
-    const activePages = results.slice(11).map((item) => (item.status === 'fulfilled' ? item.value : null));
+    const activePages = results.slice(12).map((item) => (item.status === 'fulfilled' ? item.value : null));
 
     const assessmentTotal = tasks?.total ?? numberOrZero(publicTotalTasks.value);
     const detectionTotal = reportsTotal?.total ?? 0;
     assessmentTasks.value = assessmentTotal;
     detectionTasks.value = detectionTotal;
-    failedTasks.value = (failed?.total || 0) + (reportsFailed?.total || 0);
+    failedTasks.value = (failed?.total || 0) + (needsReview?.total || 0) + (reportsFailed?.total || 0);
     recentTasks.value = tasks?.items || [];
     activeTaskItems.value = activePages.flatMap((page) => page?.items || []);
     failedTaskItems.value = failed?.items || [];
+    needsReviewTaskItems.value = needsReview?.items || [];
     recentReports.value = reports?.items || [];
     pendingReportItems.value = [
       ...(uploadedReports?.items || []),

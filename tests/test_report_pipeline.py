@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from io import BytesIO
+from zipfile import ZipFile
+
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -59,6 +62,99 @@ def _create_citation_memory(
         source_id=source_id,
     )
     return result.memory.id
+
+
+def _bootstrap_sections(client: TestClient, token: str, report_id: str) -> list[dict]:
+    response = client.post(
+        f'/api/v1/report-pipeline/reports/{report_id}/bootstrap-sections',
+        headers=_auth(token),
+    )
+    assert response.status_code == 200
+    return response.json()['data']
+
+
+def _approve_sections(
+    *,
+    client: TestClient,
+    db: Session,
+    actor: CurrentUser,
+    user_token: str,
+    org_admin_token: str,
+    report_id: str,
+    sections: list[dict],
+) -> list[dict]:
+    approved_sections: list[dict] = []
+    for section in sections:
+        citation_id = _create_citation_memory(
+            db=db,
+            actor=actor,
+            source_id=f'pipeline-approved-{section["section_key"]}',
+        )
+        updated = client.post(
+            '/api/v1/report-pipeline/sections',
+            json={
+                'report_id': report_id,
+                'section_key': section['section_key'],
+                'title': section['title'],
+                'draft_content': f'Approved draft for {section["section_key"]}',
+                'citation_memory_ids': [citation_id],
+            },
+            headers=_auth(user_token),
+        )
+        assert updated.status_code == 200
+        approved = client.patch(
+            f'/api/v1/report-pipeline/sections/{updated.json()["data"]["id"]}/review',
+            json={'review_status': 'APPROVED'},
+            headers=_auth(org_admin_token),
+        )
+        assert approved.status_code == 200
+        approved_sections.append(approved.json()['data'])
+    return approved_sections
+
+
+def test_report_pipeline_lists_builtin_templates(client: TestClient, user_token: str) -> None:
+    response = client.get('/api/v1/report-pipeline/templates', headers=_auth(user_token))
+
+    assert response.status_code == 200
+    templates = response.json()['data']
+    assert [item['section_key'] for item in templates] == [
+        'summary',
+        'basis',
+        'findings',
+        'conclusion',
+        'actions',
+    ]
+    assert all(item['required'] for item in templates)
+
+
+def test_report_pipeline_bootstrap_sections_is_idempotent(
+    client: TestClient,
+    user_token: str,
+    db: Session,
+) -> None:
+    actor = current_user_from_token(user_token)
+    assert actor.organization_id is not None
+    report = _create_detection_report(
+        db=db,
+        organization_id=actor.organization_id,
+        created_by_id=actor.account_id,
+    )
+
+    first_sections = _bootstrap_sections(client, user_token, report.id)
+    second_sections = _bootstrap_sections(client, user_token, report.id)
+
+    assert [section['section_key'] for section in first_sections] == [
+        'summary',
+        'basis',
+        'findings',
+        'conclusion',
+        'actions',
+    ]
+    assert [section['id'] for section in second_sections] == [
+        section['id'] for section in first_sections
+    ]
+    assert all(section['citation_check_status'] == 'PENDING' for section in first_sections)
+    assert all(section['review_status'] == 'DRAFT' for section in first_sections)
 
 
 def test_report_pipeline_upserts_section_and_validates_citations(
@@ -183,6 +279,161 @@ def test_report_pipeline_rejects_approval_without_passed_citations(
     assert response.json()['code'] == 'REPORT_SECTION_CITATIONS_NOT_PASSED'
 
 
+def test_report_pipeline_readiness_blocks_until_required_sections_are_approved(
+    client: TestClient,
+    user_token: str,
+    org_admin_token: str,
+    db: Session,
+) -> None:
+    actor = current_user_from_token(user_token)
+    assert actor.organization_id is not None
+    report = _create_detection_report(
+        db=db,
+        organization_id=actor.organization_id,
+        created_by_id=actor.account_id,
+    )
+
+    missing_response = client.get(
+        f'/api/v1/report-pipeline/reports/{report.id}/readiness',
+        headers=_auth(user_token),
+    )
+    assert missing_response.status_code == 200
+    missing_body = missing_response.json()['data']
+    assert missing_body['ready'] is False
+    assert {issue['code'] for issue in missing_body['issues']} == {'REPORT_SECTION_MISSING'}
+
+    sections = _bootstrap_sections(client, user_token, report.id)
+    pending_response = client.get(
+        f'/api/v1/report-pipeline/reports/{report.id}/readiness',
+        headers=_auth(user_token),
+    )
+    assert pending_response.status_code == 200
+    pending_codes = {issue['code'] for issue in pending_response.json()['data']['issues']}
+    assert pending_codes == {
+        'REPORT_SECTION_CITATIONS_NOT_PASSED',
+        'REPORT_SECTION_REVIEW_NOT_APPROVED',
+    }
+
+    approved_sections = _approve_sections(
+        client=client,
+        db=db,
+        actor=actor,
+        user_token=user_token,
+        org_admin_token=org_admin_token,
+        report_id=report.id,
+        sections=sections,
+    )
+
+    assert len(approved_sections) == 5
+    ready_response = client.get(
+        f'/api/v1/report-pipeline/reports/{report.id}/readiness',
+        headers=_auth(user_token),
+    )
+    assert ready_response.status_code == 200
+    ready_body = ready_response.json()['data']
+    assert ready_body['ready'] is True
+    assert ready_body['issues'] == []
+
+
+def test_report_pipeline_export_requires_readiness(
+    client: TestClient,
+    user_token: str,
+    db: Session,
+) -> None:
+    actor = current_user_from_token(user_token)
+    assert actor.organization_id is not None
+    report = _create_detection_report(
+        db=db,
+        organization_id=actor.organization_id,
+        created_by_id=actor.account_id,
+    )
+    _bootstrap_sections(client, user_token, report.id)
+
+    response = client.get(
+        f'/api/v1/report-pipeline/reports/{report.id}/export?format=markdown',
+        headers=_auth(user_token),
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body['code'] == 'REPORT_EXPORT_NOT_READY'
+    assert body['details']['issues']
+
+
+def test_report_pipeline_exports_approved_sections_as_selected_format(
+    client: TestClient,
+    user_token: str,
+    org_admin_token: str,
+    db: Session,
+) -> None:
+    actor = current_user_from_token(user_token)
+    assert actor.organization_id is not None
+    report = _create_detection_report(
+        db=db,
+        organization_id=actor.organization_id,
+        created_by_id=actor.account_id,
+    )
+    sections = _bootstrap_sections(client, user_token, report.id)
+    _approve_sections(
+        client=client,
+        db=db,
+        actor=actor,
+        user_token=user_token,
+        org_admin_token=org_admin_token,
+        report_id=report.id,
+        sections=sections,
+    )
+
+    markdown_response = client.get(
+        f'/api/v1/report-pipeline/reports/{report.id}/export?format=markdown',
+        headers=_auth(user_token),
+    )
+
+    assert markdown_response.status_code == 200
+    assert markdown_response.headers['content-type'].startswith('text/markdown')
+    assert 'attachment;' in markdown_response.headers['content-disposition']
+    markdown_content = markdown_response.text
+    assert markdown_content.startswith('# Pipeline Report')
+    assert '## 报告信息' in markdown_content
+    assert '## 报告摘要' in markdown_content
+    assert 'Approved draft for summary' in markdown_content
+    assert '引用记忆：' in markdown_content
+
+    txt_response = client.get(
+        f'/api/v1/report-pipeline/reports/{report.id}/export?format=txt',
+        headers=_auth(user_token),
+    )
+
+    assert txt_response.status_code == 200
+    assert txt_response.headers['content-type'].startswith('text/plain')
+    assert txt_response.text.startswith('Pipeline Report')
+    assert '# Pipeline Report' not in txt_response.text
+
+    doc_response = client.get(
+        f'/api/v1/report-pipeline/reports/{report.id}/export?format=doc',
+        headers=_auth(user_token),
+    )
+
+    assert doc_response.status_code == 200
+    assert doc_response.headers['content-type'].startswith('application/msword')
+    assert b'<html>' in doc_response.content
+    assert 'Approved draft for summary'.encode('utf-8') in doc_response.content
+
+    docx_response = client.get(
+        f'/api/v1/report-pipeline/reports/{report.id}/export?format=docx',
+        headers=_auth(user_token),
+    )
+
+    assert docx_response.status_code == 200
+    assert docx_response.headers['content-type'].startswith(
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    )
+    assert docx_response.content.startswith(b'PK')
+    with ZipFile(BytesIO(docx_response.content)) as archive:
+        document_xml = archive.read('word/document.xml').decode('utf-8')
+    assert 'Approved draft for summary' in document_xml
+
+
 def test_report_pipeline_blocks_other_org_report_access(
     client: TestClient,
     user_token: str,
@@ -200,6 +451,29 @@ def test_report_pipeline_blocks_other_org_report_access(
 
     response = client.get(
         f'/api/v1/report-pipeline/reports/{other_report.id}/sections',
+        headers=_auth(user_token),
+    )
+
+    assert response.status_code == 403
+
+
+def test_report_pipeline_blocks_other_org_readiness_access(
+    client: TestClient,
+    user_token: str,
+    db: Session,
+) -> None:
+    other_org = Organization(name='Report Pipeline Readiness Hidden Org')
+    db.add(other_org)
+    db.flush()
+    other_report = _create_detection_report(
+        db=db,
+        organization_id=other_org.id,
+        created_by_id='other-account',
+        filename='hidden-pipeline-readiness-report.csv',
+    )
+
+    response = client.get(
+        f'/api/v1/report-pipeline/reports/{other_report.id}/readiness',
         headers=_auth(user_token),
     )
 

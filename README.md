@@ -13,9 +13,9 @@
 >
 > This repository does not include, ship, or promise any official regulations, standard documents, production limit libraries, SQL dumps, or datasets ready for compliance decisions. Samples, test data, and development scripts are for local validation only. Users must obtain legally valid regulations, standards, and limit data through official or authorized channels, then import, verify, version, and review applicability themselves.
 
-基于 **FastAPI + Vue + Celery + Dify** 的 EHS（环境、健康与安全）合规评价系统。系统支持资料上传、异步文本解析、Dify 工作流分析、评价结果入库、任务进度查询，以及统一 JSON 响应封装。
+基于 **FastAPI + Vue + Celery + Dify** 的 EHS（环境、健康与安全）合规评价系统。系统支持资料上传、异步文本解析、Dify 工作流分析、检测合规判定、Agent 助手、RAGFlow 只读检索壳、报告章节流水线与 Markdown / TXT / DOCX / DOC 导出。
 
-An **EHS compliance evaluation platform** built with **FastAPI, Vue, Celery, and Dify**. It supports document upload, asynchronous text extraction, Dify workflow analysis, result persistence, task status tracking, and unified JSON response envelopes.
+An **EHS compliance evaluation platform** built with **FastAPI, Vue, Celery, and Dify**. It supports document upload, asynchronous text extraction, Dify workflow analysis, detection compliance calculation, an Agent assistant, a read-only RAGFlow search shell, a report section pipeline, and Markdown / TXT / DOCX / DOC export.
 
 参与贡献请阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 与 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)。安全漏洞请按 [SECURITY.md](SECURITY.md) 流程上报。
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) before contributing. Report security issues via [SECURITY.md](SECURITY.md).
@@ -32,6 +32,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.
 | Redis | Celery Broker / Result Backend |
 | Celery | 异步评价任务 |
 | Dify Workflow API | EHS 文档智能分析 |
+| Ollama / mock provider | Agent 助手模型 provider |
+| RAGFlow API（可选） | 标准、导则只读检索壳 |
 | PyJWT + passlib | 登录认证与密码哈希 |
 
 ### 目录结构
@@ -39,7 +41,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.
 ```text
 ├── main.py                 # FastAPI ASGI 入口
 ├── app/
-│   ├── api/v1/             # 路由：认证、组织、评价任务、管理员、系统
+│   ├── api/v1/             # 路由：认证、组织、评价、检测、Agent、RAGFlow、报告流水线
 │   ├── core/               # 配置、数据库、安全、日志、上传策略
 │   ├── dao/                # 数据访问层
 │   ├── models/             # SQLAlchemy ORM
@@ -128,6 +130,8 @@ npm run dev
 
 登录后进入顶部导航「检测合规」或访问 `/detection`，可上传 CSV / XLSX / XLSM 结构化数据，也可通过解析预览导入 PDF / DOCX / DOC / TXT / ZIP 报告文件；确认入库后可运行合规判定，并由管理员维护限值库。页面内置职业卫生、噪声、高温三个样例按钮，方便本地演示。
 
+检测报告详情抽屉支持初始化报告章节、查看导出就绪状态、管理员审批或退回章节，并可下载 Markdown / TXT / DOCX / DOC。导出前必须满足：章节完整、引用来源校验通过、所有章节已批准。
+
 前端环境变量：
 
 ```bash
@@ -171,6 +175,16 @@ cp .env.example .env.local
 | `DIFY_RETRY_MAX_DELAY_SECONDS` | Dify 重试最大退避秒数 | `10` |
 | `DIFY_RETRY_JITTER_SECONDS` | Dify 重试随机抖动秒数 | `0.5` |
 | `DIFY_RETRY_ON_TIMEOUT` | 是否对阻塞超时自动重试；默认关闭以避免重复扣费 | `false` |
+| `AGENT_LLM_PROVIDER` | Agent 模型 provider；支持 `ollama`、`mock` | `ollama` |
+| `OLLAMA_BASE_URL` | 本地 Ollama 服务地址 | `http://127.0.0.1:11434` |
+| `OLLAMA_CHAT_MODEL` | Agent 使用的 Ollama chat 模型 | `qwen2.5:7b` |
+| `AGENT_REQUEST_TIMEOUT_SECONDS` | Agent 单次模型请求超时秒数 | `120` |
+| `AGENT_RUNTIME_MAX_TOOL_CALLS` | Agent 单轮最大工具调用次数 | `12` |
+| `AGENT_RUNTIME_TIMEOUT_SECONDS` | Agent 单轮运行超时秒数 | `30` |
+| `RAGFLOW_BASE_URL` | RAGFlow API 根地址；为空时只读检索壳禁用 | 空 |
+| `RAGFLOW_API_KEY` | RAGFlow API Key | 空 |
+| `RAGFLOW_DATASET_IDS` | 允许检索的数据集 ID，逗号分隔 | 空 |
+| `RAGFLOW_TIMEOUT_SECONDS` | RAGFlow 请求超时秒数 | `30` |
 | `HTTP_USER_AGENT` | 调用 Dify 等外部 HTTP 服务时使用的 User-Agent | 内置浏览器 UA |
 | `PDF_OCR_ENABLED` | 是否启用扫描 PDF OCR；默认关闭以减小镜像和内存占用 | `false` |
 | `UPLOAD_DIR` | 上传文件根目录 | `./uploads` |
@@ -211,13 +225,23 @@ response_mode=blocking
 当前重试策略：
 
 - `run_workflow_blocking()` 对单次 Dify 请求设置默认 `600s` 超时。
-- 发生 HTTP 错误、超时、网络错误、非 JSON 响应或结果结构校验失败时，会抛出 `DifyWorkflowError`。
-- Celery Worker 捕获该错误后，将评价任务标记为 `FAILED`，进度置为 `100`，并把错误摘要写入 `error_message`。
+- 发生 HTTP 错误、超时、网络错误或 Dify API 非 JSON 响应时，会抛出 `DifyWorkflowError`。
+- Celery Worker 捕获 `DifyWorkflowError` 后，将评价任务标记为 `FAILED`，进度置为 `100`，并把错误摘要写入 `error_message`。
+- 如果 Dify 工作流成功，但最终输出仍无法解析为包含 `risks` 与 `summary` 的结构化结果，任务会进入 `NEEDS_REVIEW`：`result.risks=[]`，`result.summary` 保存模型原始文本（过长时为安全入库截断），`error_message` 保存结构化失败原因，前端提示需人工复核。
 - 当前代码会对可恢复错误执行有限重试：`429`、`500`、`502`、`503`、`504` 和临时网络错误。
-- 不自动重试 `400`、`401`、`403`、非 JSON 响应、输出 JSON 结构错误或 schema 校验失败；这些通常需要先修正配置、Key、工作流变量或提示词。
+- 不自动重试 `400`、`401`、`403`、非 JSON 响应、输出 JSON 结构错误或 schema 校验失败；这些通常需要先修正配置、Key、工作流变量或提示词，或在 `NEEDS_REVIEW` 详情中人工确认模型原文。
 - 阻塞超时默认不自动重试，因为 Dify 侧可能仍在执行，重复请求可能造成重复扣费或重复工作流运行。如确需开启，可设置 `DIFY_RETRY_ON_TIMEOUT=true`。
 - 重试使用指数退避与随机抖动，默认最多 `3` 次尝试；两次重试等待约为 `2s -> 4s`，并受 `DIFY_RETRY_MAX_DELAY_SECONDS` 限制。
 - 日志会记录 `attempt`、`max_attempts`、`retryable`、`status_code` 和 `elapsed_ms`，便于排查外部服务波动。
+
+### Agent 与 RAGFlow
+
+- Agent 助手提供工作台快捷问答和完整会话页，支持会话列表、消息历史、软删除和清空当前账号会话。
+- 工作台总结、轻量问候、检测任务概览等固定场景优先走规则化快速摘要，避免无意义调用 LLM。
+- 开放式问题通过 provider 抽象调用模型；默认 provider 为本地 Ollama，可在测试或联调时切换为 `mock`。
+- Agent 工具调用受 schema、权限策略、只读副作用检查、单轮工具调用数和运行超时限制保护。
+- RAGFlow 当前只做只读检索壳：`RAGFLOW_*` 未配置时接口返回禁用原因，不会从仓库加载或提交真实标准、法规、导则内容。
+- Agent memory 可记录经人工确认或来自 RAGFlow chunk 的引用记忆，用于后续报告章节引用校验。
 
 ### 轻量可观测性
 
@@ -259,6 +283,14 @@ uploads/YYYY/MM/DD/{uuid}_{safe_original_name}.{ext}
 - 软删除任务不会立即删除磁盘文件；文件保留 `UPLOAD_RETENTION_DAYS` 天，Celery Beat 中的清理任务每日清理过期上传文件。
 - `.gitignore` 应排除 `uploads/`，生产环境建议使用持久化磁盘、对象存储或挂载卷。
 
+### 检测报告流水线
+
+- 内置报告章节模板，支持按检测报告初始化缺失章节。
+- 每个章节可保存草稿内容和引用 memory，后端会校验引用是否属于当前租户且处于可用状态。
+- 管理员可将章节标记为 `APPROVED` 或 `REJECTED`，普通用户可查看章节和导出阻塞原因。
+- readiness 检查会阻塞缺章、引用未通过、任一章节未批准的报告导出。
+- 支持导出 `markdown`、`txt`、`docx`、`doc`；其中 `docx` 为真实 OOXML zip，`doc` 为 Word 可打开的 HTML `.doc`。
+
 ### 常用 API
 
 | 方法 | 路径 | 说明 |
@@ -279,9 +311,22 @@ uploads/YYYY/MM/DD/{uuid}_{safe_original_name}.{ext}
 | `POST` | `/api/v1/detection/reports/{report_id}/calculate` | 运行检测合规判定 |
 | `GET` | `/api/v1/detection/reports/{report_id}/results` | 查询检测合规判定结果 |
 | `GET / POST / PUT / DELETE` | `/api/v1/detection/limits` | 法规限值库查询与维护 |
+| `POST` | `/api/v1/agent/chat` | Agent 快捷聊天 |
+| `GET / POST / DELETE` | `/api/v1/agent/sessions` | Agent 会话列表 / 创建 / 清空 |
+| `GET` | `/api/v1/agent/sessions/{session_id}/messages` | 查询 Agent 会话消息 |
+| `GET / PATCH / DELETE` | `/api/v1/agent/memories` | Agent memory 查询与维护 |
+| `GET` | `/api/v1/ragflow/health` | RAGFlow 只读检索壳健康检查 |
+| `GET` | `/api/v1/ragflow/chunks/search` | 检索授权 RAGFlow chunk |
+| `GET` | `/api/v1/ragflow/clauses/search` | 按标准号与条款检索 RAGFlow chunk |
+| `GET` | `/api/v1/report-pipeline/templates` | 查询报告章节模板 |
+| `POST` | `/api/v1/report-pipeline/reports/{report_id}/bootstrap-sections` | 初始化报告章节 |
+| `GET` | `/api/v1/report-pipeline/reports/{report_id}/sections` | 查询报告章节 |
+| `GET` | `/api/v1/report-pipeline/reports/{report_id}/readiness` | 查询报告导出就绪状态 |
+| `PATCH` | `/api/v1/report-pipeline/sections/{section_id}/review` | 审批或退回报告章节 |
+| `GET` | `/api/v1/report-pipeline/reports/{report_id}/export?format=markdown|txt|docx|doc` | 导出报告文件 |
 | `*` | `/api/v1/admin/*` | 管理接口 |
 
-失败任务可以在前端任务列表或详情抽屉中点击「重新分析」。后端只允许 `FAILED` 状态重新投递，普通用户只能操作自己创建的任务。
+失败或需复核任务可以在前端任务列表或详情抽屉中点击「重新分析」。后端只允许 `FAILED` / `NEEDS_REVIEW` 状态重新投递，普通用户只能操作自己创建的任务。
 
 ### 备份与恢复
 
@@ -300,6 +345,7 @@ uploads/YYYY/MM/DD/{uuid}_{safe_original_name}.{ext}
 python -m pytest -q
 python -m ruff check .
 cd frontend-vue
+npm run lint
 npm run build
 ```
 
@@ -342,6 +388,8 @@ docker compose -f docker-compose.yml -f docker-compose.ocr.yml up -d --build wor
 | Redis | Celery broker and result backend |
 | Celery | Asynchronous assessment jobs |
 | Dify Workflow API | AI-powered EHS document analysis |
+| Ollama / mock provider | Agent assistant model provider |
+| RAGFlow API (optional) | Read-only standard and guideline search shell |
 | PyJWT + passlib | Authentication and password hashing |
 
 ### Project Layout
@@ -349,7 +397,7 @@ docker compose -f docker-compose.yml -f docker-compose.ocr.yml up -d --build wor
 ```text
 ├── main.py                 # FastAPI ASGI entrypoint
 ├── app/
-│   ├── api/v1/             # Auth, organizations, assessments, admin, system routes
+│   ├── api/v1/             # Auth, organizations, assessments, detection, Agent, RAGFlow, report pipeline routes
 │   ├── core/               # Config, database, security, logging, upload policy
 │   ├── dao/                # Data access layer
 │   ├── models/             # SQLAlchemy ORM models
@@ -438,6 +486,8 @@ npm run dev
 
 After signing in, open "检测合规" in the top navigation or visit `/detection`. The page supports CSV / XLSX / XLSM structured upload plus PDF / DOCX / DOC / TXT / ZIP document import through parsing preview. After confirming parsed rows, you can run compliance calculation and maintain regulatory limits as an admin. Built-in sample buttons cover occupational health, noise, and high-temperature WBGT workflows.
 
+The detection report drawer can bootstrap report sections, show export readiness, let admins approve or reject sections, and download Markdown / TXT / DOCX / DOC. Export is blocked until required sections exist, citations pass validation, and all sections are approved.
+
 Frontend environment variable:
 
 ```bash
@@ -481,6 +531,16 @@ cp .env.example .env.local
 | `DIFY_RETRY_MAX_DELAY_SECONDS` | Maximum Dify retry backoff in seconds | `10` |
 | `DIFY_RETRY_JITTER_SECONDS` | Random jitter added to Dify retry delay in seconds | `0.5` |
 | `DIFY_RETRY_ON_TIMEOUT` | Whether blocking timeouts are retried automatically; disabled by default to avoid duplicate billing | `false` |
+| `AGENT_LLM_PROVIDER` | Agent model provider; supports `ollama` and `mock` | `ollama` |
+| `OLLAMA_BASE_URL` | Local Ollama service URL | `http://127.0.0.1:11434` |
+| `OLLAMA_CHAT_MODEL` | Ollama chat model used by the Agent | `qwen2.5:7b` |
+| `AGENT_REQUEST_TIMEOUT_SECONDS` | Timeout for one Agent model request, in seconds | `120` |
+| `AGENT_RUNTIME_MAX_TOOL_CALLS` | Maximum Agent tool calls per turn | `12` |
+| `AGENT_RUNTIME_TIMEOUT_SECONDS` | Agent runtime timeout per turn, in seconds | `30` |
+| `RAGFLOW_BASE_URL` | RAGFlow API base URL; empty disables the read-only search shell | empty |
+| `RAGFLOW_API_KEY` | RAGFlow API key | empty |
+| `RAGFLOW_DATASET_IDS` | Allowed dataset IDs, comma-separated | empty |
+| `RAGFLOW_TIMEOUT_SECONDS` | RAGFlow request timeout, in seconds | `30` |
 | `HTTP_USER_AGENT` | User-Agent used for outbound HTTP requests | built-in browser UA |
 | `PDF_OCR_ENABLED` | Whether scanned-PDF OCR is enabled; disabled by default to reduce image size and memory usage | `false` |
 | `UPLOAD_DIR` | Upload root directory | `./uploads` |
@@ -521,13 +581,23 @@ Workflow output:
 Retry policy:
 
 - `run_workflow_blocking()` uses a default request timeout of `600s`.
-- HTTP errors, timeouts, network errors, non-JSON responses, and schema validation failures are raised as `DifyWorkflowError`.
-- The Celery worker catches the error, marks the assessment task as `FAILED`, sets progress to `100`, and stores a short error message in `error_message`.
+- HTTP errors, timeouts, network errors, and non-JSON Dify API responses are raised as `DifyWorkflowError`.
+- The Celery worker catches `DifyWorkflowError`, marks the assessment task as `FAILED`, sets progress to `100`, and stores a short error message in `error_message`.
+- If the Dify workflow succeeds but the final model output still cannot be parsed into a structured result with `risks` and `summary`, the task is marked `NEEDS_REVIEW`: `result.risks=[]`, `result.summary` stores the raw model text (truncated when needed for safe storage), `error_message` stores the structure error, and the frontend asks for manual review.
 - The code retries recoverable failures only: `429`, `500`, `502`, `503`, `504`, and temporary network errors.
-- It does not retry `400`, `401`, `403`, non-JSON responses, invalid output JSON, or schema validation failures; these usually require fixing configuration, API keys, workflow variables, or prompts first.
+- It does not retry `400`, `401`, `403`, non-JSON responses, invalid output JSON, or schema validation failures; these usually require fixing configuration, API keys, workflow variables, or prompts first, or manually reviewing the raw model text in `NEEDS_REVIEW`.
 - Blocking timeouts are not retried by default because Dify may still be running. Replaying the request can cause duplicate billing or duplicate workflow execution. Set `DIFY_RETRY_ON_TIMEOUT=true` only when that tradeoff is acceptable.
 - Retries use exponential backoff with jitter. The default is up to `3` attempts, with retry waits around `2s -> 4s`, capped by `DIFY_RETRY_MAX_DELAY_SECONDS`.
 - Logs include `attempt`, `max_attempts`, `retryable`, `status_code`, and `elapsed_ms` to make upstream instability easier to diagnose.
+
+### Agent and RAGFlow
+
+- The Agent assistant supports quick workbench questions and a full chat page with session list, message history, soft delete, and clearing current-account sessions.
+- Fixed scenarios such as workbench summaries, lightweight greetings, and detection task summaries prefer rule-based fast summaries to avoid unnecessary LLM calls.
+- Open-ended questions use the model provider abstraction. The default provider is local Ollama, and tests or integration checks can switch to `mock`.
+- Agent tool calls are protected by schemas, permission policy, read-only side-effect checks, per-turn tool-call limits, and runtime timeout.
+- RAGFlow is currently a read-only search shell. If `RAGFLOW_*` is not configured, the API returns the disabled reason and does not load or commit real standards, regulations, or guideline content from the repository.
+- Agent memory can store manually verified memories or citation memories derived from RAGFlow chunks for later report-section citation validation.
 
 ### Lightweight Observability
 
@@ -569,6 +639,14 @@ uploads/YYYY/MM/DD/{uuid}_{safe_original_name}.{ext}
 - Soft-deleting a task does not immediately delete its file. Files are retained for `UPLOAD_RETENTION_DAYS`, and a Celery Beat cleanup task removes expired uploads daily.
 - Exclude `uploads/` from Git. For production, prefer persistent disks, object storage, or mounted volumes.
 
+### Detection Report Pipeline
+
+- Built-in section templates can initialize missing sections for a detection report.
+- Each section can store draft content and citation memory IDs. The backend validates that citations belong to the current tenant and are usable.
+- Admins can mark sections as `APPROVED` or `REJECTED`; regular users can view sections and export blocking reasons.
+- Readiness checks block export when required sections are missing, citations have not passed validation, or any section has not been approved.
+- Supported export formats are `markdown`, `txt`, `docx`, and `doc`. `docx` is a real OOXML zip file, while `doc` is Word-compatible HTML with a `.doc` extension.
+
 ### Common APIs
 
 | Method | Path | Description |
@@ -584,9 +662,27 @@ uploads/YYYY/MM/DD/{uuid}_{safe_original_name}.{ext}
 | `GET / DELETE` | `/api/v1/assessment/{task_id}` | Get / soft-delete a task |
 | `POST` | `/api/v1/assessment/{task_id}/requeue` | Requeue a failed task |
 | `GET` | `/api/v1/assessment/{task_id}/progress` | SSE task progress |
+| `GET / POST` | `/api/v1/detection/reports` | List reports / upload structured detection data |
+| `GET` | `/api/v1/detection/reports/{report_id}` | Get detection report details |
+| `POST` | `/api/v1/detection/reports/{report_id}/calculate` | Run detection compliance calculation |
+| `GET` | `/api/v1/detection/reports/{report_id}/results` | List detection compliance results |
+| `GET / POST / PUT / DELETE` | `/api/v1/detection/limits` | Query and maintain regulatory limits |
+| `POST` | `/api/v1/agent/chat` | Agent quick chat |
+| `GET / POST / DELETE` | `/api/v1/agent/sessions` | List / create / clear Agent sessions |
+| `GET` | `/api/v1/agent/sessions/{session_id}/messages` | List Agent session messages |
+| `GET / PATCH / DELETE` | `/api/v1/agent/memories` | Query and maintain Agent memories |
+| `GET` | `/api/v1/ragflow/health` | RAGFlow read-only search shell healthcheck |
+| `GET` | `/api/v1/ragflow/chunks/search` | Search authorized RAGFlow chunks |
+| `GET` | `/api/v1/ragflow/clauses/search` | Search RAGFlow chunks by standard code and clause |
+| `GET` | `/api/v1/report-pipeline/templates` | List report section templates |
+| `POST` | `/api/v1/report-pipeline/reports/{report_id}/bootstrap-sections` | Bootstrap report sections |
+| `GET` | `/api/v1/report-pipeline/reports/{report_id}/sections` | List report sections |
+| `GET` | `/api/v1/report-pipeline/reports/{report_id}/readiness` | Check report export readiness |
+| `PATCH` | `/api/v1/report-pipeline/sections/{section_id}/review` | Approve or reject a report section |
+| `GET` | `/api/v1/report-pipeline/reports/{report_id}/export?format=markdown|txt|docx|doc` | Export report file |
 | `*` | `/api/v1/admin/*` | Admin APIs |
 
-Failed tasks can be requeued from the task list or the detail drawer. The backend only accepts `FAILED` tasks, and non-admin users can only requeue tasks they created.
+Failed or review-needed tasks can be requeued from the task list or the detail drawer. The backend only accepts `FAILED` / `NEEDS_REVIEW` tasks, and non-admin users can only requeue tasks they created.
 
 ### Backup and Restore
 
@@ -605,6 +701,7 @@ Failed tasks can be requeued from the task list or the detail drawer. The backen
 python -m pytest -q
 python -m ruff check .
 cd frontend-vue
+npm run lint
 npm run build
 ```
 

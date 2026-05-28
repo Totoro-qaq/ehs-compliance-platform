@@ -61,6 +61,8 @@ _STATUS_OR_LOOKUP_INTENT_KEYWORDS = (
     '没判定',
     '未判定',
     '待判定',
+    '复核',
+    '需复核',
     '哪些',
     '什么',
     '多少',
@@ -118,6 +120,7 @@ _STATUS_LABELS = {
     TaskStatus.VALIDATING.value: '校验中',
     TaskStatus.PERSISTING.value: '保存中',
     TaskStatus.SUCCESS.value: '成功',
+    TaskStatus.NEEDS_REVIEW.value: '需复核',
     TaskStatus.FAILED.value: '失败',
     ReportStatus.UPLOADED.value: '已上传',
     ReportStatus.PARSED.value: '已解析',
@@ -666,16 +669,17 @@ class AgentService:
             assessment = summary.get('assessment') or {}
             detection = summary.get('detection') or {}
             assessment_pending = int(assessment.get('active') or 0)
+            assessment_needs_review = int(assessment.get('needs_review') or 0)
             detection_pending = int(detection.get('pending') or 0)
             failed_total = int(assessment.get('failed') or 0) + int(detection.get('failed') or 0)
-            todo_total = assessment_pending + detection_pending + failed_total
+            todo_total = assessment_pending + assessment_needs_review + detection_pending + failed_total
 
             lines.extend(
                 [
                     '当前账号可见范围内的工作台摘要：',
-                    f'- 评价任务 {assessment.get("total", 0)} 个，成功 {assessment.get("success", 0)} 个，处理中 {assessment_pending} 个，失败 {assessment.get("failed", 0)} 个。',
+                    f'- 评价任务 {assessment.get("total", 0)} 个，成功 {assessment.get("success", 0)} 个，需复核 {assessment_needs_review} 个，处理中 {assessment_pending} 个，失败 {assessment.get("failed", 0)} 个。',
                     f'- 检测报告 {detection.get("total", 0)} 个，已判定 {detection.get("calculated", 0)} 个，待判定 {detection_pending} 个，失败 {detection.get("failed", 0)} 个。',
-                    f'- 当前需要关注的事项约 {todo_total} 个，其中失败异常 {failed_total} 个。',
+                    f'- 当前需要关注的事项约 {todo_total} 个，其中需复核 {assessment_needs_review} 个、失败异常 {failed_total} 个。',
                 ]
             )
 
@@ -691,6 +695,7 @@ class AgentService:
                 lines.append(
                     '- 评价任务：'
                     f'共 {sum(int(value or 0) for value in assessment_counts.values())} 个，'
+                    f'需复核 {assessment_counts.get(TaskStatus.NEEDS_REVIEW.value, 0)} 个，'
                     f'失败 {assessment_counts.get(TaskStatus.FAILED.value, 0)} 个，'
                     f'处理中 {sum(int(assessment_counts.get(status.value, 0) or 0) for status in (TaskStatus.PENDING, TaskStatus.PARSING, TaskStatus.AI_ANALYZING, TaskStatus.VALIDATING, TaskStatus.PERSISTING))} 个。'
                 )
@@ -720,6 +725,13 @@ class AgentService:
             and result.arguments.get('status') == TaskStatus.FAILED.value
             for item in result.result.get('items', [])
         ]
+        review_tasks = [
+            item
+            for result in tool_results
+            if result.tool_name == 'list_assessment_tasks'
+            and result.arguments.get('status') == TaskStatus.NEEDS_REVIEW.value
+            for item in result.result.get('items', [])
+        ]
         failed_reports = [
             item
             for result in tool_results
@@ -727,12 +739,13 @@ class AgentService:
             and result.arguments.get('status') == ReportStatus.FAILED.value
             for item in result.result.get('items', [])
         ]
-        if failed_tasks or failed_reports:
+        if failed_tasks or review_tasks or failed_reports:
             failed_records = [
                 *_dedupe_failed_records(kind='评价', items=failed_tasks),
+                *_dedupe_failed_records(kind='评价', items=review_tasks),
                 *_dedupe_failed_records(kind='检测', items=failed_reports),
             ]
-            lines.append('优先处理失败项：')
+            lines.append('优先处理异常项：')
             for record in failed_records[:3]:
                 same_kind_suffix = f'，同类 {record["count"]} 条' if record['count'] > 1 else ''
                 lines.append(
@@ -742,7 +755,7 @@ class AgentService:
                 )
             hidden_count = sum(record['count'] for record in failed_records[3:])
             if hidden_count:
-                lines.append(f'- 另有 {hidden_count} 条失败项未展示，可进入对应模块按失败状态筛选。')
+                lines.append(f'- 另有 {hidden_count} 条异常项未展示，可进入对应模块按失败或需复核状态筛选。')
 
         compliance_summary = _first_tool(tool_results, 'summarize_detection_compliance')
         if compliance_summary:
@@ -807,7 +820,7 @@ class AgentService:
                     lines.append(f'- {formatted}')
 
         assessment_list = _first_tool(tool_results, 'list_assessment_tasks')
-        if assessment_list and not failed_tasks:
+        if assessment_list and not failed_tasks and not review_tasks:
             items = assessment_list.get('items') or []
             if items:
                 lines.append('最近评价任务：')
@@ -891,8 +904,8 @@ class AgentService:
             lines.append('我已经收到你的问题，但当前没有查到足够的业务数据。建议先进入评价任务或检测合规页面确认数据是否已上传。')
 
         if '整改' in content or '建议' in content:
-            lines.append('建议动作：先处理失败任务，再处理待判定检测报告；涉及法规结论时需要人工复核依据条款。')
+            lines.append('建议动作：先处理失败或需复核任务，再处理待判定检测报告；涉及法规结论时需要人工复核依据条款。')
         else:
-            lines.append('下一步建议：进入工作台对应模块查看详情，失败项优先复核错误信息，待判定报告优先运行限值判定。')
+            lines.append('下一步建议：进入工作台对应模块查看详情，需复核项优先检查模型原文和 Dify 输出配置，失败项优先复核错误信息。')
 
         return '\n'.join(lines)

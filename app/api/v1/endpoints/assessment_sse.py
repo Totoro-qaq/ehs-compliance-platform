@@ -20,6 +20,11 @@ from app.schemas.auth_context import CurrentUser
 from app.services.assessment_service import AssessmentService
 
 router = APIRouter(prefix='/assessment', tags=['评价任务'])
+_TERMINAL_TASK_STATUSES = {
+    TaskStatus.SUCCESS.value,
+    TaskStatus.NEEDS_REVIEW.value,
+    TaskStatus.FAILED.value,
+}
 
 
 async def _sse_generator(request: Request, task_id: str, db: Session):
@@ -27,7 +32,7 @@ async def _sse_generator(request: Request, task_id: str, db: Session):
     SSE 事件流生成器：
     1. 先推送当前状态（防止订阅前已完成的情况）
     2. 监听 Redis Pub/Sub 推送实时进度
-    3. 终态（SUCCESS/FAILED）推送后自动关闭流
+    3. 终态（SUCCESS/NEEDS_REVIEW/FAILED）推送后自动关闭流
     """
     # 推送当前快照（兼容任务已完成但客户端刚连接的场景）
     task = db.get(AssessmentTask, task_id)
@@ -44,7 +49,7 @@ async def _sse_generator(request: Request, task_id: str, db: Session):
     yield _format_sse({'event': 'progress', 'data': current})
 
     # 如果已经是终态，直接结束
-    if current['status'] in (TaskStatus.SUCCESS.value, TaskStatus.FAILED.value):
+    if current['status'] in _TERMINAL_TASK_STATUSES:
         yield _format_sse({'event': 'complete', 'data': current})
         return
 
@@ -64,7 +69,7 @@ async def _sse_generator(request: Request, task_id: str, db: Session):
                 yield _format_sse({'event': 'progress', 'data': payload})
 
                 # 终态：推送 complete 事件后关闭
-                if payload.get('status') in (TaskStatus.SUCCESS.value, TaskStatus.FAILED.value):
+                if payload.get('status') in _TERMINAL_TASK_STATUSES:
                     yield _format_sse({'event': 'complete', 'data': payload})
                     break
             else:
@@ -91,7 +96,7 @@ def _format_sse(msg: dict) -> str:
         '通过 Server-Sent Events 实时接收任务进度变更，替代轮询。\n\n'
         '**事件类型：**\n'
         '- `progress` — 状态/进度变更（含 `task_id`, `status`, `progress`, `error_message`）\n'
-        '- `complete` — 任务到达终态（SUCCESS 或 FAILED），流自动关闭\n'
+        '- `complete` — 任务到达终态（SUCCESS、NEEDS_REVIEW 或 FAILED），流自动关闭\n'
         '- `heartbeat` — 空心跳，保持连接活跃\n\n'
         '**使用方式：**\n'
         '```javascript\n'
