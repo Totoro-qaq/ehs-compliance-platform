@@ -20,11 +20,17 @@
 - Vue 3 frontend (`frontend-vue/`) replacing the legacy vanilla-JS prototype / Vue 3 前端替换旧版原型
 - Request-id propagation through API and Celery worker / 请求 ID 在 API 与 Worker 之间贯通
 - `requirements-dev.txt` for pytest / ruff (separated from runtime deps) / 开发依赖独立文件
+- Agent assistant with session history, provider abstraction, tool schema policy, runtime sandbox, tracing, and harness tests / Agent 助手：会话历史、模型 provider 抽象、工具 schema 策略、运行时沙箱、链路记录和 harness 测试
+- Agent memory APIs and citation memory support for report evidence validation / Agent memory 接口与报告引用校验记忆
+- RAGFlow read-only search shell with healthcheck, chunk search, clause search, and disabled-state handling / RAGFlow 只读检索壳：健康检查、chunk 检索、条款检索和未配置禁用态
+- Detection report pipeline with section templates, section review, readiness checks, and Markdown / TXT / DOCX / DOC export / 检测报告流水线：章节模板、章节复核、导出就绪检查和 Markdown / TXT / DOCX / DOC 导出
+- Detection page integration for report sections, readiness blockers, admin review, and file download / 检测合规页面接入报告章节、导出阻塞提示、管理员复核和文件下载
 
 ### Changed / 变更
 - Dify workflow client switched to `httpx` with explicit timeouts / Dify 客户端改用 httpx 并显式控制超时
 - Logging setup unified across API and Worker / API 与 Worker 日志格式统一
 - README rewritten with project status, badges, contribution links / README 重写并增加状态、徽章、贡献入口
+- CI pull-request trigger now includes `totoro_develop` / CI 的 pull request 触发目标包含 `totoro_develop`
 
 ### Removed / 移除
 - Legacy `frontend/` (vanilla JS) directory in favor of `frontend-vue/` / 移除旧版 vanilla JS 前端
