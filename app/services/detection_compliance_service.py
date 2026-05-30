@@ -67,6 +67,7 @@ from app.services.detection_calculation_service import (
 from app.services.detection_import_service import DetectionImportService
 from app.services.detection_limit_service import DetectionLimitService
 from app.services.detection_service_types import clean_detection_service_type
+from app.services.standard_graph_service import StandardGraphService
 
 _ALLOWED_UPLOAD_EXTENSIONS = frozenset({'.csv', '.xlsx', '.xlsm'})
 _BORDERLINE_RATIO = Decimal('0.9')
@@ -505,6 +506,11 @@ class DetectionComplianceService:
             report_id=report.id,
             results=results,
         )
+        StandardGraphService.replace_evidence_for_results(
+            db=db,
+            report=report,
+            results=saved_results,
+        )
         DetectionReportDAO(db).update_status(
             report_id=report.id,
             status=ReportStatus.CALCULATED,
@@ -753,20 +759,34 @@ class DetectionComplianceService:
             measurement=measurement,
         )
         if preferred is not None:
-            limit = DetectionLimitService.match(
+            candidates = DetectionLimitService.find_candidates(
                 db=db,
                 measurement=measurement,
                 medium=sample.medium,
                 as_of=report.report_date,
                 limit_type=preferred,
             )
+            limit = StandardGraphService.select_applicable_limit(
+                db=db,
+                report=report,
+                sample=sample,
+                measurement=measurement,
+                candidates=candidates,
+            )
             if limit is not None:
                 return limit
-        return DetectionLimitService.match(
+        candidates = DetectionLimitService.find_candidates(
             db=db,
             measurement=measurement,
             medium=sample.medium,
             as_of=report.report_date,
+        )
+        return StandardGraphService.select_applicable_limit(
+            db=db,
+            report=report,
+            sample=sample,
+            measurement=measurement,
+            candidates=candidates,
         )
 
     @staticmethod

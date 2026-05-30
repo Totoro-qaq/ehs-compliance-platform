@@ -408,6 +408,64 @@ class StandardSourceReviewStatus(str, Enum):
     EXPIRED = 'EXPIRED'
 
 
+class StandardClauseType(str, Enum):
+    DEFINITION = 'DEFINITION'
+    REQUIREMENT = 'REQUIREMENT'
+    LIMIT = 'LIMIT'
+    METHOD = 'METHOD'
+    APPENDIX = 'APPENDIX'
+    TABLE = 'TABLE'
+    OTHER = 'OTHER'
+
+
+class StandardClauseStatus(str, Enum):
+    ACTIVE = 'ACTIVE'
+    DEPRECATED = 'DEPRECATED'
+
+
+class StandardGraphNodeType(str, Enum):
+    STANDARD = 'STANDARD'
+    CLAUSE = 'CLAUSE'
+    LIMIT = 'LIMIT'
+    INDICATOR = 'INDICATOR'
+    INDUSTRY = 'INDUSTRY'
+    REGION = 'REGION'
+    MEDIUM = 'MEDIUM'
+    RULE = 'RULE'
+
+
+class StandardRelationType(str, Enum):
+    REPLACES = 'REPLACES'
+    REPLACED_BY = 'REPLACED_BY'
+    CITES = 'CITES'
+    REFINES = 'REFINES'
+    APPLIES_TO = 'APPLIES_TO'
+    EXCLUDES = 'EXCLUDES'
+    REQUIRES = 'REQUIRES'
+    RELATED_TO = 'RELATED_TO'
+
+
+class StandardRelationSourceType(str, Enum):
+    HUMAN = 'HUMAN'
+    IMPORT = 'IMPORT'
+    LLM_SUGGESTED = 'LLM_SUGGESTED'
+
+
+class StandardRuleReviewStatus(str, Enum):
+    PENDING = 'PENDING'
+    APPROVED = 'APPROVED'
+    REJECTED = 'REJECTED'
+    EXPIRED = 'EXPIRED'
+
+
+class ComplianceEvidenceType(str, Enum):
+    LIMIT_MATCH = 'LIMIT_MATCH'
+    APPLICABILITY = 'APPLICABILITY'
+    PRECEDENCE = 'PRECEDENCE'
+    CALCULATION = 'CALCULATION'
+    CITATION = 'CITATION'
+
+
 class StandardSource(ModelBase):
     __tablename__ = 'standard_sources'
 
@@ -505,6 +563,10 @@ class StandardDocument(ModelBase):
         cascade='all, delete-orphan',
         order_by='StandardChunk.chunk_index',
     )
+    clauses: Mapped[list['StandardClause']] = relationship(
+        back_populates='document',
+        order_by='StandardClause.clause_code',
+    )
     source: Mapped[StandardSource | None] = relationship(back_populates='documents')
 
 
@@ -540,6 +602,132 @@ class StandardChunk(ModelBase):
     metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     document: Mapped[StandardDocument] = relationship(back_populates='chunks')
+
+
+class StandardClause(ModelBase):
+    __tablename__ = 'standard_clauses'
+    __table_args__ = (
+        UniqueConstraint(
+            'standard_code', 'version', 'clause_code', name='uq_standard_clauses_code_version_clause'
+        ),
+    )
+
+    document_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('standard_documents.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    standard_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    standard_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    version: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    clause_code: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    clause_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    clause_type: Mapped[StandardClauseType] = mapped_column(
+        SAEnum(StandardClauseType), nullable=False, default=StandardClauseType.OTHER, index=True
+    )
+    page_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    page_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    text_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    source_uri: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    status: Mapped[StandardClauseStatus] = mapped_column(
+        SAEnum(StandardClauseStatus),
+        nullable=False,
+        default=StandardClauseStatus.ACTIVE,
+        index=True,
+    )
+    effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+
+    document: Mapped[StandardDocument | None] = relationship(back_populates='clauses')
+
+
+class StandardRelation(ModelBase):
+    __tablename__ = 'standard_relations'
+
+    subject_type: Mapped[StandardGraphNodeType] = mapped_column(
+        SAEnum(StandardGraphNodeType), nullable=False, index=True
+    )
+    subject_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    relation_type: Mapped[StandardRelationType] = mapped_column(
+        SAEnum(StandardRelationType), nullable=False, index=True
+    )
+    object_type: Mapped[StandardGraphNodeType] = mapped_column(
+        SAEnum(StandardGraphNodeType), nullable=False, index=True
+    )
+    object_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
+    source_type: Mapped[StandardRelationSourceType] = mapped_column(
+        SAEnum(StandardRelationSourceType),
+        nullable=False,
+        default=StandardRelationSourceType.HUMAN,
+        index=True,
+    )
+    is_verified: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
+    verified_by_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('accounts.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class StandardApplicabilityRule(ModelBase):
+    __tablename__ = 'standard_applicability_rules'
+
+    standard_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    clause_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('standard_clauses.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    report_type: Mapped[ReportType | None] = mapped_column(SAEnum(ReportType), nullable=True, index=True)
+    medium: Mapped[SampleMedium | None] = mapped_column(SAEnum(SampleMedium), nullable=True, index=True)
+    industry: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    region: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    pollutant_category: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    indicator_name: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    cas_no: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    process_type: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    applicability_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100, index=True)
+    effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    review_status: Mapped[StandardRuleReviewStatus] = mapped_column(
+        SAEnum(StandardRuleReviewStatus),
+        nullable=False,
+        default=StandardRuleReviewStatus.PENDING,
+        index=True,
+    )
+
+
+class StandardPrecedenceRule(ModelBase):
+    __tablename__ = 'standard_precedence_rules'
+
+    rule_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    domain: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    region: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    industry: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    higher_standard_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    lower_standard_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    condition_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100, index=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_clause_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('standard_clauses.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    review_status: Mapped[StandardRuleReviewStatus] = mapped_column(
+        SAEnum(StandardRuleReviewStatus),
+        nullable=False,
+        default=StandardRuleReviewStatus.PENDING,
+        index=True,
+    )
 
 
 class ComplianceResult(ModelBase):
@@ -587,6 +775,61 @@ class ComplianceResult(ModelBase):
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     report: Mapped[DetectionReport] = relationship(back_populates='compliance_results')
+
+
+class ComplianceEvidence(ModelBase):
+    __tablename__ = 'compliance_evidence'
+
+    report_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey('detection_reports.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    sample_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('detection_samples.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    measurement_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('detection_measurements.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    result_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('compliance_results.id', ondelete='CASCADE'),
+        nullable=True,
+        index=True,
+    )
+    standard_code: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    standard_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    clause_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('standard_clauses.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    limit_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('regulatory_limits.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    source_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('standard_sources.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    source_uri: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    evidence_type: Mapped[ComplianceEvidenceType] = mapped_column(
+        SAEnum(ComplianceEvidenceType), nullable=False, index=True
+    )
+    evidence_summary: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class ReportSection(ModelBase):
