@@ -169,7 +169,13 @@ def get_configured_rag_provider() -> RagProvider:
 
 
 def chunk_search_response_to_dict(response: RagChunkSearchResponse) -> dict[str, object]:
-    return response.model_dump(mode='json')
+    authorized_items = [
+        item for item in response.items if item.authorized and item.allow_ai_retrieval
+    ]
+    blocked_count = response.blocked_count + len(response.items) - len(authorized_items)
+    return response.model_copy(
+        update={'items': authorized_items, 'blocked_count': blocked_count}
+    ).model_dump(mode='json')
 
 
 def chunk_to_dict(chunk: RagChunkOut) -> dict[str, object]:

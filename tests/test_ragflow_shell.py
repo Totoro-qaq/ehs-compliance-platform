@@ -87,6 +87,11 @@ def test_ragflow_client_maps_retrieval_response() -> None:
                                 'clause': '3.1',
                                 'page': 8,
                                 'source_uri': 'ragflow://dataset-a/doc-001/chunk-001',
+                                'authorized': True,
+                                'license_id': 'LIC-RAG-001',
+                                'source_review_status': 'APPROVED',
+                                'allow_ai_retrieval': True,
+                                'allow_excerpt_export': False,
                             },
                         }
                     ]
@@ -119,10 +124,49 @@ def test_ragflow_client_maps_retrieval_response() -> None:
     assert item.standard_code == 'GUIDE-001'
     assert item.clause == '3.1'
     assert item.page == 8
+    assert item.authorized is True
+    assert item.license_id == 'LIC-RAG-001'
+    assert item.source_review_status == 'APPROVED'
+    assert item.allow_ai_retrieval is True
+    assert item.allow_excerpt_export is False
     assert item.chunk_text == 'authorized guideline excerpt'
     assert item.score == 0.91
+    assert result.blocked_count == 0
     assert requests[0].url.path == '/api/v1/retrieval'
     assert requests[0].headers['Authorization'] == 'Bearer test-key'
+
+
+def test_ragflow_client_blocks_chunks_without_authorization_metadata() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                'code': 0,
+                'data': {
+                    'chunks': [
+                        {
+                            'id': 'chunk-unauthorized',
+                            'document_id': 'doc-unauthorized',
+                            'content': 'unauthorized guideline excerpt',
+                            'metadata': {'standard_code': 'GUIDE-UNAUTH'},
+                        }
+                    ]
+                },
+            },
+        )
+
+    client = RagflowClient(
+        base_url='http://ragflow.test',
+        api_key='test-key',
+        dataset_ids=['dataset-a'],
+        timeout_seconds=3.0,
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = client.search_chunks(query='guideline test', limit=2)
+
+    assert result.items == []
+    assert result.blocked_count == 1
 
 
 def test_agent_guideline_tool_returns_disabled_shell_result(

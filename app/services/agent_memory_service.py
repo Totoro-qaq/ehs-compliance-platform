@@ -221,6 +221,8 @@ class AgentMemoryService:
             if not isinstance(raw_item, dict):
                 continue
             metadata = _standard_chunk_citation_metadata(raw_item)
+            if not _citation_authorized(metadata):
+                continue
             source_id = metadata.get('source_id')
             content = _standard_chunk_citation_content(metadata)
             if not source_id or not content:
@@ -269,6 +271,8 @@ class AgentMemoryService:
             if not isinstance(raw_item, dict):
                 continue
             metadata = _ragflow_chunk_citation_metadata(raw_item)
+            if not _citation_authorized(metadata):
+                continue
             source_id = metadata.get('source_id')
             content = _ragflow_chunk_citation_content(metadata)
             if not source_id or not content:
@@ -384,6 +388,12 @@ def _standard_chunk_citation_metadata(item: dict[str, Any]) -> dict[str, Any]:
             'document_id': _str_or_none(item.get('document_id')),
             'chunk_id': chunk_id,
             'standard_chunk_id': standard_chunk_id,
+            'standard_source_id': _str_or_none(item.get('source_id')),
+            'license_id': _str_or_none(item.get('license_id')),
+            'source_review_status': _str_or_none(item.get('source_review_status')),
+            'authorized': _bool_or_none(item.get('authorized')),
+            'allow_ai_retrieval': _bool_or_none(item.get('allow_ai_retrieval')),
+            'allow_excerpt_export': _bool_or_none(item.get('allow_excerpt_export')),
             'source_type': AgentMemorySourceType.STANDARD_CHUNK.value,
             'source_id': source_id,
         }
@@ -433,6 +443,11 @@ def _ragflow_chunk_citation_metadata(item: dict[str, Any]) -> dict[str, Any]:
             'effective_date': _str_or_none(item.get('effective_date')),
             'source_uri': source_uri,
             'score': _float_or_none(item.get('score')),
+            'license_id': _str_or_none(item.get('license_id')),
+            'source_review_status': _str_or_none(item.get('source_review_status')),
+            'authorized': _bool_or_none(item.get('authorized')),
+            'allow_ai_retrieval': _bool_or_none(item.get('allow_ai_retrieval')),
+            'allow_excerpt_export': _bool_or_none(item.get('allow_excerpt_export')),
             'source_type': 'RAGFLOW_CHUNK',
             'source_id': source_id,
         }
@@ -467,16 +482,16 @@ def _ragflow_source_id(
     chunk_id: str | None,
     source_uri: str | None,
 ) -> str | None:
-    raw = ':'.join(
-        part
-        for part in [provider, dataset_id, document_id, chunk_id]
-        if part
-    )
+    raw = ':'.join(part for part in [provider, dataset_id, document_id, chunk_id] if part)
     if not raw:
         raw = source_uri or ''
     if not raw:
         return None
     return raw if len(raw) <= 128 else f'{provider}:{sha256(raw.encode("utf-8")).hexdigest()}'
+
+
+def _citation_authorized(metadata: dict[str, Any]) -> bool:
+    return metadata.get('authorized') is True and metadata.get('allow_ai_retrieval') is True
 
 
 def _page_label(*, page_start: Any, page_end: Any) -> str:
@@ -518,6 +533,21 @@ def _float_or_none(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _bool_or_none(value: Any) -> bool | None:
+    if value is None or value == '':
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value == 1
+    text = _compact_text(value).lower()
+    if text in {'1', 'true', 'yes', 'y', 'approved', 'allow', 'allowed'}:
+        return True
+    if text in {'0', 'false', 'no', 'n', 'rejected', 'deny', 'denied'}:
+        return False
+    return None
 
 
 def _drop_none(value: dict[str, Any]) -> dict[str, Any]:

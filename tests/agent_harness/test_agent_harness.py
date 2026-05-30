@@ -17,16 +17,16 @@ from app.models.db_models import (
     Organization,
     StandardChunk,
     StandardDocument,
+    StandardSource,
+    StandardSourceReviewStatus,
+    StandardSourceType,
     TaskStatus,
 )
 
 FixtureCase = dict[str, Any]
 
 FIXTURE_PATH = (
-    Path(__file__).resolve().parents[2]
-    / 'fixtures'
-    / 'agent_harness'
-    / 'basic_agent_harness.json'
+    Path(__file__).resolve().parents[2] / 'fixtures' / 'agent_harness' / 'basic_agent_harness.json'
 )
 
 
@@ -44,10 +44,29 @@ def _load_cases() -> list[FixtureCase]:
 
 def _seed_standard_chunks(db: Session) -> None:
     text_chunk = '测试因子甲的测试限值依据来自 TEST-RAG-001 第 5.2 条。'
+    source = StandardSource(
+        source_name='Agent Harness Authorized Source',
+        source_type=StandardSourceType.AUTHORIZED_PURCHASE,
+        provider_name='Test Provider',
+        license_no='LIC-HARNESS-001',
+        license_scope='Harness seed source.',
+        allow_storage=1,
+        allow_vectorization=1,
+        allow_ai_retrieval=1,
+        allow_excerpt_export=1,
+        review_status=StandardSourceReviewStatus.APPROVED,
+    )
+    db.add(source)
+    db.flush()
     document = StandardDocument(
         standard_code='TEST-RAG-001',
         standard_name='Agent Harness Test Standard',
         domain='occupational_health',
+        source_id=source.id,
+        license_id=source.license_no,
+        source_review_status=StandardSourceReviewStatus.APPROVED,
+        allow_ai_retrieval=1,
+        allow_excerpt_export=1,
         storage_backend='minio',
         bucket='ehs-standard-library',
         object_key='raw/agent_harness/test-rag-001.pdf',
@@ -190,7 +209,9 @@ def test_agent_basic_harness_cases(
 
     llm_config = case.get('llm') or {}
     if llm_config.get('mode') == 'mock':
-        call_model = AsyncMock(return_value=llm_config.get('response', 'AGENT_HARNESS_MODEL_RESPONSE'))
+        call_model = AsyncMock(
+            return_value=llm_config.get('response', 'AGENT_HARNESS_MODEL_RESPONSE')
+        )
     else:
         call_model = AsyncMock(side_effect=RuntimeError('agent harness forbids LLM call'))
     monkeypatch.setattr('app.services.agent_service.AgentService._call_model', call_model)

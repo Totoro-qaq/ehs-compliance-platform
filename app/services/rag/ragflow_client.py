@@ -79,12 +79,17 @@ class RagflowClient:
             response = client.post('/api/v1/retrieval', json=payload)
             data = self._json_data(response)
 
-        chunks = _response_chunks(data)
+        chunks = [
+            _chunk_out(item, default_dataset_id=self._default_dataset_id())
+            for item in _response_chunks(data)
+        ]
+        authorized_chunks = [item for item in chunks if _retrieval_authorized(item)]
         return RagChunkSearchResponse(
             configured=True,
             query=normalized_query,
             dataset_ids=self.dataset_ids,
-            items=[_chunk_out(item, default_dataset_id=self._default_dataset_id()) for item in chunks],
+            items=authorized_chunks,
+            blocked_count=len(chunks) - len(authorized_chunks),
             limit=max_items,
         )
 
@@ -184,6 +189,7 @@ def _response_chunks(data: dict[str, Any]) -> list[Mapping[str, Any]]:
 
 def _chunk_out(item: Mapping[str, Any], *, default_dataset_id: str | None) -> RagChunkOut:
     metadata = _metadata(item)
+    authorization = _authorization_fields(item=item, metadata=metadata)
     return RagChunkOut(
         dataset_id=_text(item, 'dataset_id') or _text(metadata, 'dataset_id') or default_dataset_id,
         document_id=_text(item, 'document_id') or _text(metadata, 'document_id'),
@@ -195,10 +201,13 @@ def _chunk_out(item: Mapping[str, Any], *, default_dataset_id: str | None) -> Ra
         version=_text(item, 'version') or _text(metadata, 'version'),
         effective_date=_text(item, 'effective_date') or _text(metadata, 'effective_date'),
         source_uri=_text(item, 'source_uri') or _text(item, 'url') or _text(metadata, 'source_uri'),
-        chunk_text=_text(item, 'content')
-        or _text(item, 'chunk_text')
-        or _text(item, 'text')
-        or '',
+        authorized=authorization['authorized'],
+        license_id=_text(item, 'license_id') or _text(metadata, 'license_id'),
+        source_review_status=_text(item, 'source_review_status')
+        or _text(metadata, 'source_review_status'),
+        allow_ai_retrieval=authorization['allow_ai_retrieval'],
+        allow_excerpt_export=authorization['allow_excerpt_export'],
+        chunk_text=_text(item, 'content') or _text(item, 'chunk_text') or _text(item, 'text') or '',
         score=_float_value(
             item.get('score')
             or item.get('similarity')
@@ -238,6 +247,53 @@ def _float_value(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _authorization_fields(
+    *, item: Mapping[str, Any], metadata: Mapping[str, Any]
+) -> dict[str, bool]:
+    explicit_authorized = _optional_bool(item.get('authorized'))
+    if explicit_authorized is None:
+        explicit_authorized = _optional_bool(metadata.get('authorized'))
+
+    explicit_ai_retrieval = _optional_bool(item.get('allow_ai_retrieval'))
+    if explicit_ai_retrieval is None:
+        explicit_ai_retrieval = _optional_bool(metadata.get('allow_ai_retrieval'))
+
+    if explicit_ai_retrieval is None:
+        allow_ai_retrieval = explicit_authorized is True
+    else:
+        allow_ai_retrieval = explicit_ai_retrieval is True
+
+    authorized = allow_ai_retrieval if explicit_authorized is None else explicit_authorized is True
+    allow_excerpt_export = _optional_bool(item.get('allow_excerpt_export'))
+    if allow_excerpt_export is None:
+        allow_excerpt_export = _optional_bool(metadata.get('allow_excerpt_export'))
+
+    return {
+        'authorized': authorized and allow_ai_retrieval,
+        'allow_ai_retrieval': allow_ai_retrieval,
+        'allow_excerpt_export': allow_excerpt_export is True,
+    }
+
+
+def _retrieval_authorized(chunk: RagChunkOut) -> bool:
+    return chunk.authorized and chunk.allow_ai_retrieval
+
+
+def _optional_bool(value: Any) -> bool | None:
+    if value is None or value == '':
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value == 1
+    text = str(value).strip().lower()
+    if text in {'1', 'true', 'yes', 'y', 'approved', 'allow', 'allowed'}:
+        return True
+    if text in {'0', 'false', 'no', 'n', 'rejected', 'deny', 'denied'}:
+        return False
+    return None
 
 
 def _drop_empty(value: dict[str, str | None]) -> dict[str, str]:
