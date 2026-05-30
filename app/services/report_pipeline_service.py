@@ -35,6 +35,7 @@ from app.schemas.report_pipeline_schema import (
 from app.services.access_control import (
     ensure_org_admin_or_system_admin,
     ensure_organization_scope,
+    is_org_admin,
     is_system_admin,
 )
 
@@ -57,6 +58,13 @@ class ReportFileExport:
     filename: str
     content: str | bytes
     media_type: str
+
+
+@dataclass(frozen=True)
+class _CitationCheckResult:
+    status: ReportSectionCitationCheckStatus
+    message: str | None = None
+    export_forbidden: bool = False
 
 
 _REPORT_SECTION_TEMPLATES: tuple[_ReportSectionTemplate, ...] = (
@@ -162,7 +170,7 @@ class ReportPipelineService:
         normalized_title = _clean_required_text(title, field_name='title', max_length=255)
         normalized_content = _clean_required_text(draft_content, field_name='draft_content')
         normalized_citation_ids = _normalize_citation_ids(citation_memory_ids)
-        citation_status, citation_message = _check_citations(
+        citation_check = _check_citations(
             db=db,
             actor=actor,
             organization_id=report.organization_id,
@@ -176,8 +184,8 @@ class ReportPipelineService:
             title=normalized_title,
             draft_content=normalized_content,
             citation_memory_ids_json=_dump_citation_ids(normalized_citation_ids),
-            citation_check_status=citation_status,
-            citation_check_message=citation_message,
+            citation_check_status=citation_check.status,
+            citation_check_message=citation_check.message,
             created_by_id=actor.account_id,
         )
         db.commit()
@@ -248,13 +256,26 @@ class ReportPipelineService:
                 )
 
         for section in _sort_sections(sections):
-            if section.citation_check_status != ReportSectionCitationCheckStatus.PASSED:
+            citation_ids = _load_citation_ids(section.citation_memory_ids_json)
+            citation_check = _check_citations(
+                db=db,
+                actor=actor,
+                organization_id=report.organization_id,
+                citation_memory_ids=citation_ids,
+            )
+            if (
+                section.citation_check_status != ReportSectionCitationCheckStatus.PASSED
+                or citation_check.status != ReportSectionCitationCheckStatus.PASSED
+            ):
                 issues.append(
                     ReportReadinessIssueOut(
-                        code='REPORT_SECTION_CITATIONS_NOT_PASSED',
+                        code='REPORT_SECTION_CITATION_EXPORT_FORBIDDEN'
+                        if citation_check.export_forbidden
+                        else 'REPORT_SECTION_CITATIONS_NOT_PASSED',
                         section_key=section.section_key,
                         title=section.title,
-                        message='Report section citations must pass before export',
+                        message=citation_check.message
+                        or 'Report section citations must pass before export',
                     )
                 )
             if section.review_status != ReportSectionReviewStatus.APPROVED:
@@ -669,9 +690,12 @@ def _check_citations(
     actor: CurrentUser,
     organization_id: str,
     citation_memory_ids: list[str],
-) -> tuple[ReportSectionCitationCheckStatus, str | None]:
+) -> _CitationCheckResult:
     if not citation_memory_ids:
-        return ReportSectionCitationCheckStatus.PENDING, 'No citation memory ids supplied'
+        return _CitationCheckResult(
+            status=ReportSectionCitationCheckStatus.PENDING,
+            message='No citation memory ids supplied',
+        )
 
     filters = [
         AgentMemory.id.in_(citation_memory_ids),
@@ -680,17 +704,29 @@ def _check_citations(
         AgentMemory.deleted_at.is_(None),
         or_(AgentMemory.expires_at.is_(None), AgentMemory.expires_at > audit_now_naive()),
     ]
-    if not is_system_admin(actor):
+    if not is_system_admin(actor) and not is_org_admin(actor):
         filters.append(or_(AgentMemory.account_id.is_(None), AgentMemory.account_id == actor.account_id))
 
-    found_ids = set(db.scalars(select(AgentMemory.id).where(*filters)).all())
+    memories = list(db.scalars(select(AgentMemory).where(*filters)).all())
+    found_ids = {memory.id for memory in memories}
     missing_ids = [citation_id for citation_id in citation_memory_ids if citation_id not in found_ids]
     if missing_ids:
-        return (
-            ReportSectionCitationCheckStatus.FAILED,
-            f'Invalid or invisible citation memory ids: {", ".join(missing_ids[:5])}',
+        return _CitationCheckResult(
+            status=ReportSectionCitationCheckStatus.FAILED,
+            message=f'Invalid or invisible citation memory ids: {", ".join(missing_ids[:5])}',
         )
-    return ReportSectionCitationCheckStatus.PASSED, None
+    blocked_ids = [
+        memory.id
+        for memory in memories
+        if not _citation_allows_report_export(memory)
+    ]
+    if blocked_ids:
+        return _CitationCheckResult(
+            status=ReportSectionCitationCheckStatus.FAILED,
+            message=f'Citation export authorization failed: {", ".join(blocked_ids[:5])}',
+            export_forbidden=True,
+        )
+    return _CitationCheckResult(status=ReportSectionCitationCheckStatus.PASSED)
 
 
 def _clean_required_text(value: str, *, field_name: str, max_length: int | None = None) -> str:
@@ -726,6 +762,27 @@ def _load_citation_ids(raw: str | None) -> list[str]:
     if not isinstance(data, list):
         return []
     return [item for item in data if isinstance(item, str)]
+
+
+def _citation_allows_report_export(memory: AgentMemory) -> bool:
+    metadata = _json_dict(memory.metadata_json)
+    if metadata.get('citation_authorized_for_export') is True:
+        return True
+    return (
+        metadata.get('authorized') is True
+        and metadata.get('allow_ai_retrieval') is True
+        and metadata.get('allow_excerpt_export') is True
+    )
+
+
+def _json_dict(raw: str | None) -> dict[str, object]:
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _section_out(section: ReportSection) -> ReportSectionOut:

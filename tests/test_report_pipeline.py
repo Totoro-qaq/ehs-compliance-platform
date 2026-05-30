@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from io import BytesIO
 from zipfile import ZipFile
 
@@ -8,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import current_user_from_token
 from app.models.db_models import (
+    AgentMemory,
     AgentMemoryScopeType,
     AgentMemorySourceType,
     AgentMemoryType,
@@ -50,6 +52,7 @@ def _create_citation_memory(
     db: Session,
     actor: CurrentUser,
     source_id: str,
+    allow_excerpt_export: bool = True,
 ) -> str:
     result = AgentMemoryService.upsert_memory(
         db=db,
@@ -60,6 +63,13 @@ def _create_citation_memory(
         content='GB test clause p.1',
         source_type=AgentMemorySourceType.HUMAN,
         source_id=source_id,
+        metadata={
+            'authorized': True,
+            'allow_ai_retrieval': True,
+            'allow_excerpt_export': allow_excerpt_export,
+            'license_id': f'LIC-{source_id}',
+            'source_review_status': 'APPROVED',
+        },
     )
     return result.memory.id
 
@@ -333,6 +343,55 @@ def test_report_pipeline_readiness_blocks_until_required_sections_are_approved(
     ready_body = ready_response.json()['data']
     assert ready_body['ready'] is True
     assert ready_body['issues'] == []
+
+
+def test_report_pipeline_rechecks_citation_export_authorization(
+    client: TestClient,
+    user_token: str,
+    org_admin_token: str,
+    db: Session,
+) -> None:
+    actor = current_user_from_token(user_token)
+    assert actor.organization_id is not None
+    report = _create_detection_report(
+        db=db,
+        organization_id=actor.organization_id,
+        created_by_id=actor.account_id,
+    )
+    sections = _bootstrap_sections(client, user_token, report.id)
+    approved_sections = _approve_sections(
+        client=client,
+        db=db,
+        actor=actor,
+        user_token=user_token,
+        org_admin_token=org_admin_token,
+        report_id=report.id,
+        sections=sections,
+    )
+
+    citation_id = approved_sections[0]['citation_memory_ids'][0]
+    memory = db.get(AgentMemory, citation_id)
+    assert memory is not None
+    metadata = json.loads(memory.metadata_json or '{}')
+    metadata['allow_excerpt_export'] = False
+    memory.metadata_json = json.dumps(metadata, ensure_ascii=False, sort_keys=True)
+    db.commit()
+
+    readiness = client.get(
+        f'/api/v1/report-pipeline/reports/{report.id}/readiness',
+        headers=_auth(user_token),
+    )
+    assert readiness.status_code == 200
+    body = readiness.json()['data']
+    assert body['ready'] is False
+    assert any(issue['code'] == 'REPORT_SECTION_CITATION_EXPORT_FORBIDDEN' for issue in body['issues'])
+
+    export = client.get(
+        f'/api/v1/report-pipeline/reports/{report.id}/export?format=markdown',
+        headers=_auth(user_token),
+    )
+    assert export.status_code == 400
+    assert export.json()['code'] == 'REPORT_EXPORT_NOT_READY'
 
 
 def test_report_pipeline_export_requires_readiness(

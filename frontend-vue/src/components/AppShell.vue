@@ -20,13 +20,17 @@ const navItems = computed(() => {
       { key: 'release', label: '版本', external: RELEASES_URL },
     ];
   }
-  return [
+  const items = [
     { key: 'home', label: '首页', view: 'home', query: { view: 'home' } },
     { key: 'workbench', label: '工作台', view: 'home', query: { view: 'workbench' } },
     { key: 'tasks', label: '评价任务', view: 'tasks' },
     { key: 'detection', label: '检测合规', view: 'detection' },
     { key: 'agent', label: 'AI 助手', view: 'agent' },
   ];
+  if (session.isAdmin) {
+    items.push({ key: 'standards', label: '标准授权', view: 'standards' });
+  }
+  return items;
 });
 
 const userMenuOpen = ref(false);
@@ -52,6 +56,11 @@ function gotoLogin() {
   router.push({ name: 'login', query: route.fullPath !== '/' ? { redirect: route.fullPath } : undefined });
 }
 
+function gotoHomeView(view) {
+  userMenuOpen.value = false;
+  router.push({ name: 'home', query: { view } });
+}
+
 function goto(view) {
   userMenuOpen.value = false;
   router.push({ name: view });
@@ -75,6 +84,7 @@ function logout() {
 }
 
 const isOrgManagementVisible = computed(() => session.token && session.canManageOrganizations);
+const isStandardManagementVisible = computed(() => session.token && session.isAdmin);
 
 onMounted(() => document.addEventListener('click', closeMenuOnOutside));
 onUnmounted(() => document.removeEventListener('click', closeMenuOnOutside));
@@ -148,19 +158,11 @@ onUnmounted(() => document.removeEventListener('click', closeMenuOnOutside));
                   <span class="user-menu-role">{{ session.roleText }}</span>
                 </div>
                 <div class="user-menu-list">
-                  <button
-                    type="button"
-                    class="user-menu-item"
-                    @click="userMenuOpen = false; router.push({ name: 'home', query: { view: 'home' } })"
-                  >
+                  <button type="button" class="user-menu-item" @click="gotoHomeView('home')">
                     <Icon name="home" :size="14" />
                     <span>首页</span>
                   </button>
-                  <button
-                    type="button"
-                    class="user-menu-item"
-                    @click="userMenuOpen = false; router.push({ name: 'home', query: { view: 'workbench' } })"
-                  >
+                  <button type="button" class="user-menu-item" @click="gotoHomeView('workbench')">
                     <Icon name="grid" :size="14" />
                     <span>工作台</span>
                   </button>
@@ -176,9 +178,23 @@ onUnmounted(() => document.removeEventListener('click', closeMenuOnOutside));
                     <Icon name="message" :size="14" />
                     <span>AI 助手</span>
                   </button>
-                  <button v-if="isOrgManagementVisible" type="button" class="user-menu-item" @click="goto('orgs')">
+                  <button
+                    v-if="isOrgManagementVisible"
+                    type="button"
+                    class="user-menu-item"
+                    @click="goto('orgs')"
+                  >
                     <Icon name="building" :size="14" />
                     <span>公司管理</span>
+                  </button>
+                  <button
+                    v-if="isStandardManagementVisible"
+                    type="button"
+                    class="user-menu-item"
+                    @click="goto('standards')"
+                  >
+                    <Icon name="database" :size="14" />
+                    <span>标准授权</span>
                   </button>
                   <button type="button" class="user-menu-item" @click="goto('settings')">
                     <Icon name="settings" :size="14" />
