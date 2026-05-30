@@ -642,6 +642,13 @@ class AgentRun(ModelBase):
         SAEnum(AgentRunStatus), nullable=False, default=AgentRunStatus.RUNNING, index=True
     )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    policy_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    policy_version: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    policy_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    context_snapshot_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prompt_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    output_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    risk_flags_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -671,13 +678,49 @@ class AgentToolCall(ModelBase):
         index=True,
     )
     tool_name: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    tool_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    permission_level: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    side_effect_level: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    policy_decision: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     arguments_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_summary_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     success: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     elapsed_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     run: Mapped[AgentRun] = relationship(back_populates='tool_calls')
+
+
+class AgentSecurityEvent(ModelBase):
+    """Agent 安全审计事件：记录工具拦截、越权、未授权资料等高风险行为。"""
+
+    __tablename__ = 'agent_security_events'
+
+    run_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('agent_runs.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    session_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('agent_sessions.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    account_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('accounts.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    tool_name: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    details_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class AgentMemory(ModelBase):

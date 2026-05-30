@@ -65,6 +65,13 @@ class AgentRunOut(BaseModel):
     model_name: str
     status: AgentRunStatus
     error_message: str | None = None
+    policy_id: str | None = None
+    policy_version: str | None = None
+    policy_json: str | None = None
+    context_snapshot_json: str | None = None
+    prompt_hash: str | None = None
+    output_hash: str | None = None
+    risk_flags_json: str | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
     created_at: datetime
@@ -78,11 +85,33 @@ class AgentToolCallOut(BaseModel):
     run_id: str
     session_id: str
     tool_name: str
+    tool_version: str | None = None
+    permission_level: str | None = None
+    side_effect_level: str | None = None
+    policy_decision: str | None = None
     arguments_json: str | None = None
     result_json: str | None = None
+    result_summary_json: str | None = None
     success: bool
     error_message: str | None = None
     elapsed_ms: int | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AgentSecurityEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    run_id: str | None = None
+    session_id: str | None = None
+    account_id: str | None = None
+    organization_id: str | None = None
+    event_type: str
+    severity: str
+    tool_name: str | None = None
+    message: str
+    details_json: str | None = None
     created_at: datetime
     updated_at: datetime
 

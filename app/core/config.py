@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     agent_request_timeout_seconds: float = Field(default=120.0, ge=3.0, le=300.0)
     agent_runtime_max_tool_calls: int = Field(default=12, ge=1, le=50)
     agent_runtime_timeout_seconds: float = Field(default=30.0, ge=1.0, le=300.0)
+    agent_runtime_policy_id: str = 'agent-readonly-default'
+    agent_runtime_policy_version: str = 'v1'
+    agent_runtime_max_context_chars: int = Field(default=16000, ge=1000, le=100000)
+    agent_runtime_max_retrieval_results: int = Field(default=20, ge=1, le=100)
 
     # 预置默认公司 ID（init_db 会写入），上传评价未指定公司时使用
     default_organization_id: str = '00000000-0000-4000-8000-000000000001'

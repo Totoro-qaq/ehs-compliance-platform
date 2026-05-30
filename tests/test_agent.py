@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from decimal import Decimal
 from unittest.mock import AsyncMock
 
@@ -10,6 +11,7 @@ from app.models.db_models import (
     AgentMessage,
     AgentMessageRole,
     AgentRun,
+    AgentSecurityEvent,
     AgentSession,
     AgentToolCall,
     AssessmentTask,
@@ -66,6 +68,24 @@ def test_agent_chat_persists_messages_run_and_tool_call(
     ]
     assert db.query(AgentRun).filter_by(session_id=data['session']['id']).count() == 1
     assert db.query(AgentToolCall).filter_by(session_id=data['session']['id']).count() == 1
+    assert db.query(AgentSecurityEvent).filter_by(session_id=data['session']['id']).count() == 0
+
+    run = db.query(AgentRun).filter_by(session_id=data['session']['id']).one()
+    assert run.policy_id == settings.agent_runtime_policy_id
+    assert run.policy_version == settings.agent_runtime_policy_version
+    assert run.prompt_hash
+    assert run.output_hash
+    assert run.context_snapshot_json
+    context_snapshot = json.loads(run.context_snapshot_json)
+    assert context_snapshot['route'] == 'fast_summary'
+    assert context_snapshot['tool_results'][0]['tool_name'] == 'get_workbench_summary'
+
+    tool_call = db.query(AgentToolCall).filter_by(session_id=data['session']['id']).one()
+    assert tool_call.tool_version == 'v1'
+    assert tool_call.permission_level == 'READ'
+    assert tool_call.side_effect_level == 'NONE'
+    assert tool_call.policy_decision == 'allowed'
+    assert tool_call.result_summary_json
 
 
 def test_agent_chat_falls_back_when_model_unavailable(

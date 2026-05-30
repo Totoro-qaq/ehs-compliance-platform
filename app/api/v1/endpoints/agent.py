@@ -15,6 +15,7 @@ from app.schemas.agent_schema import (
     AgentMemoryVerifyRequest,
     AgentMessageCreate,
     AgentMessageOut,
+    AgentSecurityEventOut,
     AgentSessionCreate,
     AgentSessionDeleteResponse,
     AgentSessionOut,
@@ -25,6 +26,31 @@ from app.services.agent_memory_service import AgentMemoryService
 from app.services.agent_service import AgentService
 
 router = APIRouter(prefix='/agent', tags=['Agent 助手'])
+
+
+@router.get(
+    '/security-events',
+    response_model=Page[AgentSecurityEventOut],
+    summary='查询 Agent 安全审计事件',
+)
+def list_agent_security_events(
+    actor: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Session = Depends(get_db),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    event_type: str | None = Query(default=None, max_length=64),
+    severity: str | None = Query(default=None, max_length=16),
+    run_id: str | None = Query(default=None, max_length=36),
+):
+    return AgentService.list_security_events(
+        db=db,
+        actor=actor,
+        page=page,
+        page_size=page_size,
+        event_type=event_type,
+        severity=severity,
+        run_id=run_id,
+    )
 
 
 @router.get(
