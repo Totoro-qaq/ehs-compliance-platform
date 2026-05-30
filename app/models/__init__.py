@@ -1,4 +1,6 @@
 from app.models.db_models import (
+    AgentPrompt,
+    AgentPromptScenario,
     AgentSecurityEvent,
     AssessmentTask,
     Organization,
@@ -8,6 +10,8 @@ from app.models.db_models import (
 )
 
 __all__ = [
+    'AgentPrompt',
+    'AgentPromptScenario',
     'AgentSecurityEvent',
     'AssessmentTask',
     'Organization',

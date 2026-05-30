@@ -3,14 +3,16 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.dao.base_repository import BaseRepository
+from app.dao.pagination import fetch_scalar_rows_page, normalize_page_params
 from app.models.base import audit_now_naive
 from app.models.db_models import (
     AgentMessage,
     AgentMessageRole,
+    AgentPrompt,
     AgentRun,
     AgentRunStatus,
     AgentSecurityEvent,
@@ -271,6 +273,30 @@ class AgentToolCallDAO(BaseRepository[AgentToolCall]):
         )
         return list(self.session.scalars(stmt).all())
 
+    def list_page_scoped(
+        self,
+        *,
+        page: int,
+        page_size: int,
+        filters: list[Any],
+    ) -> tuple[list[AgentToolCall], int]:
+        params = normalize_page_params(page=page, page_size=page_size, max_page_size=100)
+        list_stmt = select(AgentToolCall).join(AgentRun, AgentRun.id == AgentToolCall.run_id)
+        count_stmt = select(func.count()).select_from(AgentToolCall).join(
+            AgentRun,
+            AgentRun.id == AgentToolCall.run_id,
+        )
+        for condition in filters:
+            list_stmt = list_stmt.where(condition)
+            count_stmt = count_stmt.where(condition)
+        list_stmt = list_stmt.order_by(AgentToolCall.created_at.desc(), AgentToolCall.id.desc())
+        return fetch_scalar_rows_page(
+            self.session,
+            list_stmt=list_stmt,
+            count_stmt=count_stmt,
+            params=params,
+        )
+
 
 class AgentSecurityEventDAO(BaseRepository[AgentSecurityEvent]):
     def __init__(self, session: Session) -> None:
@@ -301,3 +327,20 @@ class AgentSecurityEventDAO(BaseRepository[AgentSecurityEvent]):
             details_json=_json_dump(details),
         )
         return self.save_and_refresh(entity)
+
+
+class AgentPromptDAO(BaseRepository[AgentPrompt]):
+    def __init__(self, session: Session) -> None:
+        super().__init__(session, AgentPrompt)
+
+    def get_active_by_scenario(self, scenario: str) -> AgentPrompt | None:
+        stmt = (
+            select(AgentPrompt)
+            .where(
+                AgentPrompt.scenario == scenario,
+                AgentPrompt.is_active == 1,
+            )
+            .order_by(AgentPrompt.updated_at.desc(), AgentPrompt.created_at.desc())
+            .limit(1)
+        )
+        return self.session.scalars(stmt).first()

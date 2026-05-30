@@ -19,8 +19,12 @@ from app.dao.agent_dao import (
 )
 from app.models.db_models import (
     AgentMessageRole,
+    AgentPrompt,
+    AgentPromptScenario,
+    AgentRun,
     AgentRunStatus,
     AgentSecurityEvent,
+    AgentToolCall,
     ComplianceStatus,
     ReportStatus,
     TaskStatus,
@@ -35,17 +39,12 @@ from app.services.agent_model_provider import (
     get_configured_agent_model_metadata,
     get_configured_agent_model_provider,
 )
+from app.services.agent_prompt_registry import AgentPromptDefinition, AgentPromptRegistry
 from app.services.agent_runtime_policy import AgentRuntimePolicy, AgentSandbox
 from app.services.agent_tool_registry import AGENT_TOOL_REGISTRY
 from app.services.agent_tools import AgentToolResult, AgentTools
 
 _logger = get_logger(__name__)
-
-_SYSTEM_PROMPT = """你是 EHS 合规管理平台助手，服务对象包括企业和第三方检测机构。
-你只能基于后端工具提供的数据回答，不允许编造任务、报告、标准或法规条款。
-当前阶段你只能做只读分析，不能声称已经创建、删除、修改或重跑任何业务数据。
-如果数据不足，请说明需要用户进入对应页面复核。
-回答使用中文，结构清晰，优先给出可执行的下一步建议。"""
 
 _FAST_SUMMARY_TOOLS = {
     'get_workbench_summary',
@@ -318,6 +317,22 @@ def _security_event_type_from_exception(exc: Exception) -> tuple[str, str]:
     return 'TOOL_ERROR', 'MEDIUM'
 
 
+def _agent_run_scope_filters(actor: CurrentUser) -> list[Any]:
+    if is_system_admin(actor):
+        return []
+    if is_org_admin(actor):
+        return [AgentRun.organization_id == ensure_user_has_organization(actor)]
+    return [AgentRun.account_id == actor.account_id]
+
+
+def _agent_tool_call_scope_filters(actor: CurrentUser) -> list[Any]:
+    if is_system_admin(actor):
+        return []
+    if is_org_admin(actor):
+        return [AgentRun.organization_id == ensure_user_has_organization(actor)]
+    return [AgentRun.account_id == actor.account_id]
+
+
 def _failed_record_title(item: dict[str, Any], kind: str) -> str:
     if kind == '评价':
         return _compact_text(item.get('task_name') or item.get('filename')) or '-'
@@ -388,6 +403,61 @@ class AgentService:
         return AgentSessionDAO(db).soft_delete_all_owned(account_id=actor.account_id)
 
     @staticmethod
+    def list_runs(
+        *,
+        db: Session,
+        actor: CurrentUser,
+        page: int,
+        page_size: int,
+        status: AgentRunStatus | None = None,
+        provider: str | None = None,
+        session_id: str | None = None,
+    ) -> Page[AgentRun]:
+        filters = _agent_run_scope_filters(actor)
+        if status is not None:
+            filters.append(AgentRun.status == status)
+        if provider:
+            filters.append(AgentRun.provider == provider.strip())
+        if session_id:
+            filters.append(AgentRun.session_id == session_id.strip())
+        items, total = AgentRunDAO(db).list_page(
+            page=page,
+            page_size=page_size,
+            filters=filters,
+            order_by=[AgentRun.created_at.desc(), AgentRun.id.desc()],
+            max_page_size=100,
+        )
+        return Page(items=items, total=total, page=page, page_size=page_size)
+
+    @staticmethod
+    def list_tool_calls(
+        *,
+        db: Session,
+        actor: CurrentUser,
+        page: int,
+        page_size: int,
+        run_id: str | None = None,
+        tool_name: str | None = None,
+        policy_decision: str | None = None,
+        success: bool | None = None,
+    ) -> Page[AgentToolCall]:
+        filters = _agent_tool_call_scope_filters(actor)
+        if run_id:
+            filters.append(AgentToolCall.run_id == run_id.strip())
+        if tool_name:
+            filters.append(AgentToolCall.tool_name == tool_name.strip())
+        if policy_decision:
+            filters.append(AgentToolCall.policy_decision == policy_decision.strip())
+        if success is not None:
+            filters.append(AgentToolCall.success == (1 if success else 0))
+        items, total = AgentToolCallDAO(db).list_page_scoped(
+            page=page,
+            page_size=page_size,
+            filters=filters,
+        )
+        return Page(items=items, total=total, page=page, page_size=page_size)
+
+    @staticmethod
     def list_security_events(
         *,
         db: Session,
@@ -418,6 +488,48 @@ class AgentService:
             max_page_size=100,
         )
         return Page(items=items, total=total, page=page, page_size=page_size)
+
+    @staticmethod
+    def get_runtime_control_state(*, actor: CurrentUser) -> dict[str, Any]:
+        runtime_policy = AgentRuntimePolicy.from_actor(actor)
+        return {
+            'policy': runtime_policy.to_metadata(),
+            'tools': [
+                {
+                    'name': spec.name,
+                    'description': spec.description,
+                    'tool_version': spec.tool_version,
+                    'risk_level': spec.risk_level,
+                    'permission_level': spec.permission_level.value,
+                    'side_effect_level': spec.side_effect_level.value,
+                    'tenant_scope': spec.tenant_scope.value,
+                    'requires_approval': spec.requires_approval,
+                    'agent_enabled': spec.agent_enabled,
+                    'commercial_enabled': spec.commercial_enabled,
+                    'allowed_by_policy': spec.name in runtime_policy.allowed_tools,
+                }
+                for spec in AGENT_TOOL_REGISTRY.list_specs()
+            ],
+        }
+
+    @staticmethod
+    def list_prompts(
+        *,
+        db: Session,
+        actor: CurrentUser,
+        page: int,
+        page_size: int,
+        scenario: AgentPromptScenario | None = None,
+        active_only: bool = False,
+    ) -> Page[AgentPrompt]:
+        return AgentPromptRegistry.list_prompts(
+            db=db,
+            actor=actor,
+            page=page,
+            page_size=page_size,
+            scenario=scenario,
+            active_only=active_only,
+        )
 
     @staticmethod
     async def chat(
@@ -456,6 +568,7 @@ class AgentService:
         session = session_dao.touch(session, title=session.title or _title_from_content(content))
 
         runtime_policy = AgentRuntimePolicy.from_actor(actor)
+        prompt_definition = AgentPromptRegistry.get_active_prompt(db=db)
         model_metadata = get_configured_agent_model_metadata()
         run = run_dao.create_run(
             session_id=session.id,
@@ -540,6 +653,7 @@ class AgentService:
                         session_id=session.id,
                         content=content,
                         tool_results=tool_results,
+                        prompt_definition=prompt_definition,
                     )
                 except Exception as exc:
                     route = 'fallback'
@@ -560,6 +674,7 @@ class AgentService:
             user_message_id=user_message.id,
             user_content=content,
             runtime_policy=runtime_policy,
+            prompt_metadata=prompt_definition.to_metadata(),
             tool_results=tool_results,
             route=route,
         )
@@ -748,9 +863,14 @@ class AgentService:
         session_id: str,
         content: str,
         tool_results: list[AgentToolResult],
+        prompt_definition: AgentPromptDefinition,
     ) -> str:
         history = AgentMessageDAO(db).list_for_session(session_id, limit=12)
-        messages: list[dict[str, str]] = [{'role': 'system', 'content': _SYSTEM_PROMPT}]
+        messages: list[dict[str, str]] = [
+            {'role': 'system', 'content': prompt_definition.system_prompt},
+        ]
+        if prompt_definition.developer_prompt:
+            messages.append({'role': 'system', 'content': prompt_definition.developer_prompt})
         for item in history[-10:]:
             if item.role == AgentMessageRole.USER:
                 messages.append({'role': 'user', 'content': item.content[:3000]})

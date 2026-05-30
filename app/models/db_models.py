@@ -233,6 +233,10 @@ class AgentRunStatus(str, Enum):
     FAILED = 'FAILED'
 
 
+class AgentPromptScenario(str, Enum):
+    AGENT_CHAT = 'agent_chat'
+
+
 class AgentMemoryScopeType(str, Enum):
     SESSION = 'SESSION'
     PROJECT = 'PROJECT'
@@ -604,6 +608,39 @@ class AgentMessage(ModelBase):
     metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     session: Mapped[AgentSession] = relationship(back_populates='messages')
+
+
+class AgentPrompt(ModelBase):
+    """Agent 提示词注册表：用于版本化、审批和审计。"""
+
+    __tablename__ = 'agent_prompts'
+    __table_args__ = (
+        UniqueConstraint('scenario', 'version', name='uq_agent_prompts_scenario_version'),
+    )
+
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    scenario: Mapped[AgentPromptScenario] = mapped_column(
+        SAEnum(
+            AgentPromptScenario,
+            name='agent_prompt_scenario',
+            values_callable=lambda enum_cls: [item.value for item in enum_cls],
+        ),
+        nullable=False,
+        index=True,
+    )
+    system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    developer_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    output_contract_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    risk_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
+    approved_by_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('accounts.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class AgentRun(ModelBase):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -10,6 +11,7 @@ from app.models.db_models import (
     AgentMemorySourceType,
     AgentMemoryType,
     AgentMessageRole,
+    AgentPromptScenario,
     AgentRunStatus,
     AgentSessionStatus,
 )
@@ -114,6 +116,43 @@ class AgentSecurityEventOut(BaseModel):
     details_json: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class AgentPromptOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    version: str
+    scenario: AgentPromptScenario
+    system_prompt: str
+    developer_prompt: str | None = None
+    output_contract_json: str | None = None
+    risk_notes: str | None = None
+    is_active: bool
+    approved_by_id: str | None = None
+    approved_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AgentToolRegistryOut(BaseModel):
+    name: str
+    description: str
+    tool_version: str
+    risk_level: str
+    permission_level: str
+    side_effect_level: str
+    tenant_scope: str
+    requires_approval: bool
+    agent_enabled: bool
+    commercial_enabled: bool
+    allowed_by_policy: bool
+
+
+class AgentRuntimeControlStateOut(BaseModel):
+    policy: dict[str, Any]
+    tools: list[AgentToolRegistryOut]
 
 
 class AgentSessionDeleteResponse(BaseModel):

@@ -35,6 +35,7 @@ class AgentContextService:
         user_message_id: str,
         user_content: str,
         runtime_policy: AgentRuntimePolicy,
+        prompt_metadata: dict[str, Any],
         tool_results: list[AgentToolResult],
         route: str,
     ) -> AgentContextSnapshot:
@@ -79,6 +80,7 @@ class AgentContextService:
             'citation_memory_ids': citation_memory_ids,
             'evidence_ids': [],
             'policy': runtime_policy.to_metadata(),
+            'prompt': prompt_metadata,
             'limits': {
                 'max_context_chars': runtime_policy.max_context_chars,
                 'max_retrieval_results': runtime_policy.max_retrieval_results,
@@ -91,6 +93,7 @@ class AgentContextService:
         prompt_hash = stable_hash(
             {
                 'system_policy': runtime_policy.to_metadata(),
+                'prompt': prompt_metadata,
                 'user_content_hash': hash_text(user_content),
                 'tool_summaries': tool_summaries,
                 'citation_memory_ids': citation_memory_ids,

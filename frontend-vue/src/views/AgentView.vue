@@ -5,27 +5,42 @@ import {
   chatWithAgent,
   clearAgentSessions,
   deleteAgentSession,
+  getAgentControlState,
   listAgentMessages,
+  listAgentPrompts,
+  listAgentRuns,
   listAgentSessions,
+  listAgentSecurityEvents,
+  listAgentToolCalls,
 } from '../api/agent';
 import { formatApiError } from '../api/client';
 import Icon from '../components/Icon.vue';
+import { useSessionStore } from '../stores/session';
 import { formatTime } from '../utils/format';
 
 const router = useRouter();
+const session = useSessionStore();
 
 const sessions = ref([]);
 const messages = ref([]);
 const activeSessionId = ref('');
+const activePane = ref('chat');
 const input = ref('');
 const loadingSessions = ref(false);
 const loadingMessages = ref(false);
+const loadingControl = ref(false);
 const sending = ref(false);
 const deletingSessionId = ref('');
 const clearingSessions = ref(false);
 const error = ref('');
+const controlError = ref('');
 const degraded = ref(false);
 const responseMode = ref('model');
+const controlState = ref(null);
+const runs = ref([]);
+const toolCalls = ref([]);
+const securityEvents = ref([]);
+const prompts = ref([]);
 
 const quickPrompts = [
   '总结当前工作台',
@@ -37,6 +52,7 @@ const quickPrompts = [
 
 const activeSession = computed(() => sessions.value.find((item) => item.id === activeSessionId.value) || null);
 const modeLabel = computed(() => (degraded.value || responseMode.value === 'rules' ? '规则摘要' : '模型生成'));
+const canViewControlCenter = computed(() => session.canManageOrganizations);
 
 const sortedMessages = computed(() => [...messages.value].sort((a, b) => {
   const left = new Date(a.created_at).getTime() || 0;
@@ -49,6 +65,14 @@ const agentStatItems = computed(() => [
   { label: '当前消息', value: sortedMessages.value.length, tone: 'info' },
   { label: '工具权限', value: '只读', tone: 'active-work' },
 ]);
+const allowedToolCount = computed(() => (controlState.value?.tools || []).filter((item) => item.allowed_by_policy).length);
+const controlStatItems = computed(() => [
+  { label: '运行记录', value: runs.value.length, tone: 'accent' },
+  { label: '工具调用', value: toolCalls.value.length, tone: 'info' },
+  { label: '安全事件', value: securityEvents.value.length, tone: securityEvents.value.length ? 'warning' : 'success' },
+  { label: '可用工具', value: allowedToolCount.value, tone: 'active-work' },
+]);
+const activePrompt = computed(() => prompts.value.find((item) => item.is_active) || prompts.value[0] || null);
 
 function messageRoleText(role) {
   if (role === 'USER') return '你';
@@ -58,6 +82,70 @@ function messageRoleText(role) {
 
 function messageClass(role) {
   return role === 'USER' ? 'user' : 'assistant';
+}
+
+function shortId(value) {
+  return value ? String(value).slice(0, 8) : '-';
+}
+
+function statusTone(status) {
+  if (status === 'SUCCEEDED') return 'success';
+  if (status === 'FAILED') return 'danger';
+  return 'info';
+}
+
+function decisionTone(value) {
+  if (value === 'allowed') return 'success';
+  if (value === 'blocked') return 'danger';
+  return 'info';
+}
+
+function runElapsed(run) {
+  if (!run?.started_at || !run?.finished_at) return '-';
+  const started = new Date(run.started_at).getTime();
+  const finished = new Date(run.finished_at).getTime();
+  if (!Number.isFinite(started) || !Number.isFinite(finished) || finished < started) return '-';
+  return `${finished - started}ms`;
+}
+
+function jsonSummary(value) {
+  if (!value) return '-';
+  try {
+    const parsed = JSON.parse(value);
+    return Object.keys(parsed).slice(0, 4).join(' / ') || '-';
+  } catch {
+    return String(value).slice(0, 80);
+  }
+}
+
+async function showPane(pane) {
+  activePane.value = pane;
+  if (pane === 'control' && canViewControlCenter.value) {
+    await loadControlCenter();
+  }
+}
+
+async function loadControlCenter() {
+  loadingControl.value = true;
+  controlError.value = '';
+  try {
+    const [stateData, runsData, callsData, eventsData, promptsData] = await Promise.all([
+      getAgentControlState(),
+      listAgentRuns(1, 20),
+      listAgentToolCalls(1, 20),
+      listAgentSecurityEvents(1, 20),
+      listAgentPrompts(1, 20, { activeOnly: true }),
+    ]);
+    controlState.value = stateData || null;
+    runs.value = runsData?.items || [];
+    toolCalls.value = callsData?.items || [];
+    securityEvents.value = eventsData?.items || [];
+    prompts.value = promptsData?.items || [];
+  } catch (err) {
+    controlError.value = formatApiError(err);
+  } finally {
+    loadingControl.value = false;
+  }
 }
 
 async function loadSessions({ selectFirst = false } = {}) {
@@ -91,6 +179,7 @@ async function selectSession(sessionId) {
 }
 
 function startNewSession() {
+  activePane.value = 'chat';
   activeSessionId.value = '';
   messages.value = [];
   degraded.value = false;
@@ -206,18 +295,37 @@ onMounted(() => loadSessions({ selectFirst: true }));
       </div>
     </header>
 
-    <div class="task-stat-strip agent-stat-strip">
-      <div
-        v-for="item in agentStatItems"
-        :key="item.label"
-        :class="['task-stat-card', item.tone]"
+    <div class="agent-pane-tabs">
+      <button
+        type="button"
+        :class="{ active: activePane === 'chat' }"
+        @click="showPane('chat')"
       >
-        <span>{{ item.value }}</span>
-        <small>{{ item.label }}</small>
-      </div>
+        对话
+      </button>
+      <button
+        v-if="canViewControlCenter"
+        type="button"
+        :class="{ active: activePane === 'control' }"
+        @click="showPane('control')"
+      >
+        控制中心
+      </button>
     </div>
 
-    <div class="agent-layout">
+    <template v-if="activePane === 'chat'">
+      <div class="task-stat-strip agent-stat-strip">
+        <div
+          v-for="item in agentStatItems"
+          :key="item.label"
+          :class="['task-stat-card', item.tone]"
+        >
+          <span>{{ item.value }}</span>
+          <small>{{ item.label }}</small>
+        </div>
+      </div>
+
+      <div class="agent-layout">
       <aside class="agent-sidebar">
         <div class="agent-sidebar-head">
           <div>
@@ -331,6 +439,184 @@ onMounted(() => loadSessions({ selectFirst: true }));
           </button>
         </form>
       </section>
-    </div>
+      </div>
+    </template>
+
+    <section v-else class="agent-control-center">
+      <div class="control-head">
+        <div>
+          <span class="section-kicker">Agent Control</span>
+          <h2>运行审计</h2>
+        </div>
+        <button type="button" class="btn-secondary btn-sm" :disabled="loadingControl" @click="loadControlCenter">
+          <Icon name="refresh" :size="14" />
+          {{ loadingControl ? '刷新中' : '刷新' }}
+        </button>
+      </div>
+
+      <div v-if="controlError" class="agent-page-error">{{ controlError }}</div>
+      <div v-if="loadingControl" class="empty-state compact">加载控制中心...</div>
+
+      <template v-else>
+        <div class="task-stat-strip agent-stat-strip">
+          <div
+            v-for="item in controlStatItems"
+            :key="item.label"
+            :class="['task-stat-card', item.tone]"
+          >
+            <span>{{ item.value }}</span>
+            <small>{{ item.label }}</small>
+          </div>
+        </div>
+
+        <div class="control-grid">
+          <section class="control-panel">
+            <header>
+              <h3>当前策略</h3>
+              <span>{{ controlState?.policy?.policy_id || '-' }}</span>
+            </header>
+            <dl class="control-kv">
+              <div>
+                <dt>版本</dt>
+                <dd>{{ controlState?.policy?.policy_version || '-' }}</dd>
+              </div>
+              <div>
+                <dt>上下文</dt>
+                <dd>{{ controlState?.policy?.max_context_chars || '-' }}</dd>
+              </div>
+              <div>
+                <dt>工具上限</dt>
+                <dd>{{ controlState?.policy?.max_tool_calls || '-' }}</dd>
+              </div>
+              <div>
+                <dt>沙箱</dt>
+                <dd>{{ controlState?.policy ? (controlState.policy.read_only ? '只读' : '可写') : '-' }}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="control-panel">
+            <header>
+              <h3>提示词版本</h3>
+              <span>{{ activePrompt?.version || '-' }}</span>
+            </header>
+            <dl class="control-kv">
+              <div>
+                <dt>场景</dt>
+                <dd>{{ activePrompt?.scenario || '-' }}</dd>
+              </div>
+              <div>
+                <dt>状态</dt>
+                <dd>{{ activePrompt?.is_active ? '启用' : '未启用' }}</dd>
+              </div>
+              <div>
+                <dt>审批</dt>
+                <dd>{{ formatTime(activePrompt?.approved_at) }}</dd>
+              </div>
+            </dl>
+          </section>
+        </div>
+
+        <section class="control-panel wide">
+          <header>
+            <h3>运行记录</h3>
+            <span>最近 {{ runs.length }} 条</span>
+          </header>
+          <div class="control-table-wrap">
+            <table class="control-table">
+              <thead>
+                <tr>
+                  <th>Run</th>
+                  <th>模型</th>
+                  <th>状态</th>
+                  <th>策略</th>
+                  <th>耗时</th>
+                  <th>时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="run in runs" :key="run.id">
+                  <td>{{ shortId(run.id) }}</td>
+                  <td>{{ run.provider }} / {{ run.model_name }}</td>
+                  <td><span :class="['control-badge', statusTone(run.status)]">{{ run.status }}</span></td>
+                  <td>{{ run.policy_version || '-' }}</td>
+                  <td>{{ runElapsed(run) }}</td>
+                  <td>{{ formatTime(run.created_at) }}</td>
+                </tr>
+                <tr v-if="!runs.length">
+                  <td colspan="6">暂无运行记录</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="control-panel wide">
+          <header>
+            <h3>工具调用</h3>
+            <span>最近 {{ toolCalls.length }} 条</span>
+          </header>
+          <div class="control-table-wrap">
+            <table class="control-table">
+              <thead>
+                <tr>
+                  <th>工具</th>
+                  <th>版本</th>
+                  <th>决策</th>
+                  <th>权限</th>
+                  <th>摘要</th>
+                  <th>耗时</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="call in toolCalls" :key="call.id">
+                  <td>{{ call.tool_name }}</td>
+                  <td>{{ call.tool_version || '-' }}</td>
+                  <td><span :class="['control-badge', decisionTone(call.policy_decision)]">{{ call.policy_decision || '-' }}</span></td>
+                  <td>{{ call.permission_level || '-' }} / {{ call.side_effect_level || '-' }}</td>
+                  <td>{{ jsonSummary(call.result_summary_json) }}</td>
+                  <td>{{ call.elapsed_ms ?? '-' }}ms</td>
+                </tr>
+                <tr v-if="!toolCalls.length">
+                  <td colspan="6">暂无工具调用</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="control-panel wide">
+          <header>
+            <h3>安全事件</h3>
+            <span>最近 {{ securityEvents.length }} 条</span>
+          </header>
+          <div class="control-table-wrap">
+            <table class="control-table">
+              <thead>
+                <tr>
+                  <th>级别</th>
+                  <th>类型</th>
+                  <th>工具</th>
+                  <th>消息</th>
+                  <th>时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="event in securityEvents" :key="event.id">
+                  <td><span class="control-badge danger">{{ event.severity }}</span></td>
+                  <td>{{ event.event_type }}</td>
+                  <td>{{ event.tool_name || '-' }}</td>
+                  <td>{{ event.message }}</td>
+                  <td>{{ formatTime(event.created_at) }}</td>
+                </tr>
+                <tr v-if="!securityEvents.length">
+                  <td colspan="5">暂无安全事件</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </template>
+    </section>
   </div>
 </template>

@@ -10,6 +10,8 @@ from app.core.config import settings
 from app.models.db_models import (
     AgentMessage,
     AgentMessageRole,
+    AgentPrompt,
+    AgentPromptScenario,
     AgentRun,
     AgentSecurityEvent,
     AgentSession,
@@ -31,6 +33,35 @@ from app.models.db_models import (
 
 def _auth(token: str) -> dict[str, str]:
     return {'Authorization': f'Bearer {token}'}
+
+
+def test_agent_prompt_registry_is_admin_visible(
+    client: TestClient,
+    admin_token: str,
+    user_token: str,
+    db,
+):
+    prompt = AgentPrompt(
+        name='测试提示词',
+        version='test-v1',
+        scenario=AgentPromptScenario.AGENT_CHAT,
+        system_prompt='测试系统提示词',
+        output_contract_json='{"language":"zh-CN"}',
+        risk_notes='仅用于单测',
+        is_active=1,
+    )
+    db.add(prompt)
+    db.commit()
+    db.refresh(prompt)
+
+    admin_response = client.get('/api/v1/agent/prompts?active_only=true', headers=_auth(admin_token))
+    assert admin_response.status_code == 200
+    items = admin_response.json()['data']['items']
+    assert any(item['id'] == prompt.id for item in items)
+
+    user_response = client.get('/api/v1/agent/prompts', headers=_auth(user_token))
+    assert user_response.status_code == 403
+    assert user_response.json()['code'] == 'AGENT_PROMPT_REGISTRY_FORBIDDEN'
 
 
 def test_agent_chat_persists_messages_run_and_tool_call(
@@ -78,6 +109,7 @@ def test_agent_chat_persists_messages_run_and_tool_call(
     assert run.context_snapshot_json
     context_snapshot = json.loads(run.context_snapshot_json)
     assert context_snapshot['route'] == 'fast_summary'
+    assert context_snapshot['prompt']['scenario'] == AgentPromptScenario.AGENT_CHAT.value
     assert context_snapshot['tool_results'][0]['tool_name'] == 'get_workbench_summary'
 
     tool_call = db.query(AgentToolCall).filter_by(session_id=data['session']['id']).one()
@@ -86,6 +118,20 @@ def test_agent_chat_persists_messages_run_and_tool_call(
     assert tool_call.side_effect_level == 'NONE'
     assert tool_call.policy_decision == 'allowed'
     assert tool_call.result_summary_json
+
+    runs_response = client.get('/api/v1/agent/runs', headers=_auth(user_token))
+    assert runs_response.status_code == 200
+    assert runs_response.json()['data']['items'][0]['id'] == run.id
+
+    tool_calls_response = client.get('/api/v1/agent/tool-calls', headers=_auth(user_token))
+    assert tool_calls_response.status_code == 200
+    assert tool_calls_response.json()['data']['items'][0]['id'] == tool_call.id
+
+    control_response = client.get('/api/v1/agent/control-state', headers=_auth(user_token))
+    assert control_response.status_code == 200
+    control_data = control_response.json()['data']
+    assert control_data['policy']['policy_id'] == settings.agent_runtime_policy_id
+    assert any(item['name'] == 'get_workbench_summary' for item in control_data['tools'])
 
 
 def test_agent_chat_falls_back_when_model_unavailable(
