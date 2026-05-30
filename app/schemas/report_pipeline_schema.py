@@ -24,6 +24,13 @@ class ReportSectionUpsertRequest(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     draft_content: str = Field(min_length=1)
     citation_memory_ids: list[str] = Field(default_factory=list, max_length=50)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=50)
+
+
+class ReportSectionGenerateDraftRequest(BaseModel):
+    instruction: str | None = Field(default=None, max_length=1000)
+    citation_memory_ids: list[str] = Field(default_factory=list, max_length=50)
+    evidence_limit: int = Field(default=8, ge=1, le=50)
 
 
 class ReportSectionReviewRequest(BaseModel):
@@ -69,6 +76,9 @@ class ReportSectionOut(BaseModel):
     citation_memory_ids: list[str] = Field(default_factory=list)
     citation_check_status: ReportSectionCitationCheckStatus
     citation_check_message: str | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
+    evidence_check_status: ReportSectionCitationCheckStatus
+    evidence_check_message: str | None = None
     review_status: ReportSectionReviewStatus
     review_note: str | None = None
     reviewed_by_id: str | None = None

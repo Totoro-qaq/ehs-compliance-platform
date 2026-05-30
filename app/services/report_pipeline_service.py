@@ -19,6 +19,7 @@ from app.models.base import audit_now_naive
 from app.models.db_models import (
     AgentMemory,
     AgentMemoryType,
+    ComplianceEvidence,
     DetectionReport,
     ReportSection,
     ReportSectionCitationCheckStatus,
@@ -38,9 +39,12 @@ from app.services.access_control import (
     is_org_admin,
     is_system_admin,
 )
+from app.services.agent_model_provider import get_configured_agent_model_provider
 
 _SECTION_KEY_RE = re.compile(r'^[A-Za-z0-9_.-]+$')
 _MAX_CITATION_IDS = 50
+_MAX_EVIDENCE_IDS = 50
+_MAX_GENERATION_EVIDENCE_ITEMS = 50
 
 
 @dataclass(frozen=True)
@@ -142,8 +146,11 @@ class ReportPipelineService:
                 title=template.title,
                 draft_content=template.draft_content,
                 citation_memory_ids_json=None,
+                evidence_ids_json=None,
                 citation_check_status=ReportSectionCitationCheckStatus.PENDING,
                 citation_check_message='No citation memory ids supplied',
+                evidence_check_status=ReportSectionCitationCheckStatus.PENDING,
+                evidence_check_message='No evidence ids supplied',
                 created_by_id=actor.account_id,
             )
             created = True
@@ -164,17 +171,25 @@ class ReportPipelineService:
         title: str,
         draft_content: str,
         citation_memory_ids: list[str],
+        evidence_ids: list[str],
     ) -> ReportSectionOut:
         report = _get_scoped_report(db=db, actor=actor, report_id=report_id)
         normalized_section_key = _normalize_section_key(section_key)
         normalized_title = _clean_required_text(title, field_name='title', max_length=255)
         normalized_content = _clean_required_text(draft_content, field_name='draft_content')
         normalized_citation_ids = _normalize_citation_ids(citation_memory_ids)
+        normalized_evidence_ids = _normalize_evidence_ids(evidence_ids)
         citation_check = _check_citations(
             db=db,
             actor=actor,
             organization_id=report.organization_id,
             citation_memory_ids=normalized_citation_ids,
+        )
+        evidence_check = _check_evidence(
+            db=db,
+            organization_id=report.organization_id,
+            report_id=report.id,
+            evidence_ids=normalized_evidence_ids,
         )
 
         section = ReportSectionDAO(db).upsert_section(
@@ -184,13 +199,60 @@ class ReportPipelineService:
             title=normalized_title,
             draft_content=normalized_content,
             citation_memory_ids_json=_dump_citation_ids(normalized_citation_ids),
+            evidence_ids_json=_dump_evidence_ids(normalized_evidence_ids),
             citation_check_status=citation_check.status,
             citation_check_message=citation_check.message,
+            evidence_check_status=evidence_check.status,
+            evidence_check_message=evidence_check.message,
             created_by_id=actor.account_id,
         )
         db.commit()
         db.refresh(section)
         return _section_out(section)
+
+    @staticmethod
+    async def generate_section_draft(
+        *,
+        db: Session,
+        actor: CurrentUser,
+        report_id: str,
+        section_key: str,
+        instruction: str | None,
+        citation_memory_ids: list[str],
+        evidence_limit: int,
+    ) -> ReportSectionOut:
+        report = _get_scoped_report(db=db, actor=actor, report_id=report_id)
+        template = _template_for_section_key(section_key)
+        evidence_items = _list_report_evidence_for_generation(
+            db=db,
+            organization_id=report.organization_id,
+            report_id=report.id,
+            limit=evidence_limit,
+        )
+        if not evidence_items:
+            raise EHSException(
+                'Report section draft generation requires report evidence first',
+                code='REPORT_SECTION_EVIDENCE_REQUIRED_FOR_GENERATION',
+                status_code=400,
+            )
+
+        draft_content = await _generate_section_draft_content(
+            report=report,
+            template=template,
+            evidence_items=evidence_items,
+            instruction=_clean_optional_text(instruction, max_length=1000),
+        )
+        evidence_ids = [item.id for item in evidence_items]
+        return ReportPipelineService.upsert_section(
+            db=db,
+            actor=actor,
+            report_id=report.id,
+            section_key=template.section_key,
+            title=template.title,
+            draft_content=draft_content,
+            citation_memory_ids=citation_memory_ids,
+            evidence_ids=evidence_ids,
+        )
 
     @staticmethod
     def list_sections(*, db: Session, actor: CurrentUser, report_id: str) -> list[ReportSectionOut]:
@@ -222,6 +284,26 @@ class ReportPipelineService:
             raise EHSException(
                 'Report section citations must pass before approval',
                 code='REPORT_SECTION_CITATIONS_NOT_PASSED',
+                status_code=400,
+            )
+        evidence_ids = _load_evidence_ids(section.evidence_ids_json)
+        evidence_check = _check_evidence(
+            db=db,
+            organization_id=section.organization_id,
+            report_id=section.report_id,
+            evidence_ids=evidence_ids,
+        )
+        if (
+            review_status == ReportSectionReviewStatus.APPROVED
+            and evidence_ids
+            and (
+                section.evidence_check_status != ReportSectionCitationCheckStatus.PASSED
+                or evidence_check.status != ReportSectionCitationCheckStatus.PASSED
+            )
+        ):
+            raise EHSException(
+                evidence_check.message or 'Report section evidence must pass before approval',
+                code='REPORT_SECTION_EVIDENCE_NOT_PASSED',
                 status_code=400,
             )
 
@@ -278,6 +360,27 @@ class ReportPipelineService:
                         or 'Report section citations must pass before export',
                     )
                 )
+            evidence_ids = _load_evidence_ids(section.evidence_ids_json)
+            if evidence_ids:
+                evidence_check = _check_evidence(
+                    db=db,
+                    organization_id=report.organization_id,
+                    report_id=report.id,
+                    evidence_ids=evidence_ids,
+                )
+                if (
+                    section.evidence_check_status != ReportSectionCitationCheckStatus.PASSED
+                    or evidence_check.status != ReportSectionCitationCheckStatus.PASSED
+                ):
+                    issues.append(
+                        ReportReadinessIssueOut(
+                            code='REPORT_SECTION_EVIDENCE_NOT_PASSED',
+                            section_key=section.section_key,
+                            title=section.title,
+                            message=evidence_check.message
+                            or 'Report section evidence must pass before export',
+                        )
+                    )
             if section.review_status != ReportSectionReviewStatus.APPROVED:
                 issues.append(
                     ReportReadinessIssueOut(
@@ -397,6 +500,143 @@ def _select_templates(section_keys: list[str] | None) -> list[_ReportSectionTemp
     return selected
 
 
+def _template_for_section_key(section_key: str) -> _ReportSectionTemplate:
+    normalized = _normalize_section_key(section_key)
+    template = _TEMPLATE_BY_KEY.get(normalized)
+    if template is None:
+        raise EHSException(
+            'Unknown report section template key',
+            code='REPORT_SECTION_TEMPLATE_NOT_FOUND',
+            status_code=400,
+            details={'section_key': normalized},
+        )
+    return template
+
+
+def _list_report_evidence_for_generation(
+    *,
+    db: Session,
+    organization_id: str,
+    report_id: str,
+    limit: int,
+) -> list[ComplianceEvidence]:
+    max_items = min(max(limit, 1), _MAX_GENERATION_EVIDENCE_ITEMS)
+    stmt = (
+        select(ComplianceEvidence)
+        .join(DetectionReport, ComplianceEvidence.report_id == DetectionReport.id)
+        .where(
+            ComplianceEvidence.report_id == report_id,
+            ComplianceEvidence.deleted_at.is_(None),
+            DetectionReport.organization_id == organization_id,
+            DetectionReport.deleted_at.is_(None),
+        )
+        .order_by(ComplianceEvidence.created_at.asc(), ComplianceEvidence.id.asc())
+        .limit(max_items)
+    )
+    return list(db.scalars(stmt).all())
+
+
+async def _generate_section_draft_content(
+    *,
+    report: DetectionReport,
+    template: _ReportSectionTemplate,
+    evidence_items: list[ComplianceEvidence],
+    instruction: str | None,
+) -> str:
+    messages = [
+        {
+            'role': 'system',
+            'content': (
+                '你是 EHS 报告草稿助手。只能基于用户提供的报告元信息和证据链生成章节草稿；'
+                '不得编造法规、限值、检测数据或正式结论。输出必须明确这是待人工复核草稿。'
+            ),
+        },
+        {
+            'role': 'user',
+            'content': _build_section_generation_prompt(
+                report=report,
+                template=template,
+                evidence_items=evidence_items,
+                instruction=instruction,
+            ),
+        },
+    ]
+    try:
+        raw_content = await get_configured_agent_model_provider().generate(messages=messages)
+    except EHSException:
+        raise
+    except Exception as exc:
+        raise EHSException(
+            'Report section draft generation failed',
+            code='REPORT_SECTION_DRAFT_GENERATION_FAILED',
+            status_code=503,
+            details={'error': str(exc)[:500]},
+        ) from exc
+    return _clean_generated_draft_content(raw_content)
+
+
+def _build_section_generation_prompt(
+    *,
+    report: DetectionReport,
+    template: _ReportSectionTemplate,
+    evidence_items: list[ComplianceEvidence],
+    instruction: str | None,
+) -> str:
+    payload = {
+        'report': {
+            'report_id': report.id,
+            'report_name': report.report_name,
+            'filename': report.filename,
+            'client_name': report.client_name,
+            'project_name': report.project_name,
+            'project_code': report.project_code,
+            'service_type': report.service_type,
+            'report_type': report.report_type.value,
+            'status': report.status.value,
+        },
+        'section': {
+            'section_key': template.section_key,
+            'title': template.title,
+            'description': template.description,
+        },
+        'evidence': [_evidence_prompt_item(item) for item in evidence_items],
+        'instruction': instruction,
+        'requirements': [
+            '只生成当前章节草稿，不生成整份报告。',
+            '必须引用 evidence_id，方便人工复核证据链。',
+            '不得把草稿写成已批准、已签发或最终结论。',
+            '如证据不足，直接写明待补充事实和复核点。',
+        ],
+    }
+    return '请基于以下 JSON 生成中文报告章节草稿：\n' + json.dumps(
+        payload,
+        ensure_ascii=False,
+        default=str,
+    )
+
+
+def _evidence_prompt_item(item: ComplianceEvidence) -> dict[str, str | None]:
+    return {
+        'evidence_id': item.id,
+        'evidence_type': item.evidence_type.value,
+        'result_id': item.result_id,
+        'standard_code': item.standard_code,
+        'standard_name': item.standard_name,
+        'source_uri': item.source_uri,
+        'summary': item.evidence_summary,
+    }
+
+
+def _clean_generated_draft_content(value: str) -> str:
+    cleaned = value.strip()
+    if cleaned.startswith('```'):
+        cleaned = re.sub(r'^```[\w-]*\s*', '', cleaned)
+        cleaned = re.sub(r'\s*```$', '', cleaned).strip()
+    if len(cleaned) > 8000:
+        cleaned = cleaned[:8000].rstrip()
+    return _clean_required_text(cleaned, field_name='draft_content')
+
+
 def _sort_sections(sections: list[ReportSection]) -> list[ReportSection]:
     return sorted(
         sections,
@@ -452,6 +692,11 @@ def _render_markdown_export(
             lines.append('引用记忆：')
             lines.extend(f'- `{citation_id}`' for citation_id in citation_ids)
             lines.append('')
+        evidence_ids = _load_evidence_ids(section.evidence_ids_json)
+        if evidence_ids:
+            lines.append('证据链：')
+            lines.extend(f'- `{evidence_id}`' for evidence_id in evidence_ids)
+            lines.append('')
     return '\n'.join(lines).rstrip() + '\n'
 
 
@@ -492,6 +737,11 @@ def _render_plain_text_export(
             lines.append('引用记忆：')
             lines.extend(f'- {citation_id}' for citation_id in citation_ids)
             lines.append('')
+        evidence_ids = _load_evidence_ids(section.evidence_ids_json)
+        if evidence_ids:
+            lines.append('证据链：')
+            lines.extend(f'- {evidence_id}' for evidence_id in evidence_ids)
+            lines.append('')
     return '\n'.join(lines).rstrip() + '\n'
 
 
@@ -530,6 +780,11 @@ def _render_doc_export(
             body_parts.append('<p>引用记忆：</p><ul>')
             body_parts.extend(f'<li>{html.escape(citation_id)}</li>' for citation_id in citation_ids)
             body_parts.append('</ul>')
+        evidence_ids = _load_evidence_ids(section.evidence_ids_json)
+        if evidence_ids:
+            body_parts.append('<p>证据链：</p><ul>')
+            body_parts.extend(f'<li>{html.escape(evidence_id)}</li>' for evidence_id in evidence_ids)
+            body_parts.append('</ul>')
     body_parts.append('</body></html>')
     return '\n'.join(body_parts).encode('utf-8')
 
@@ -554,6 +809,10 @@ def _render_docx_export(
         if citation_ids:
             paragraphs.append(_docx_paragraph('引用记忆：'))
             paragraphs.extend(_docx_paragraph(f'- {citation_id}') for citation_id in citation_ids)
+        evidence_ids = _load_evidence_ids(section.evidence_ids_json)
+        if evidence_ids:
+            paragraphs.append(_docx_paragraph('证据链：'))
+            paragraphs.extend(_docx_paragraph(f'- {evidence_id}') for evidence_id in evidence_ids)
 
     document_xml = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -684,6 +943,30 @@ def _normalize_citation_ids(citation_memory_ids: list[str]) -> list[str]:
     return normalized_ids
 
 
+def _normalize_evidence_ids(evidence_ids: list[str]) -> list[str]:
+    if len(evidence_ids) > _MAX_EVIDENCE_IDS:
+        raise EHSException(
+            'Too many evidence ids',
+            code='REPORT_SECTION_TOO_MANY_EVIDENCE_IDS',
+            status_code=400,
+            details={'max': _MAX_EVIDENCE_IDS},
+        )
+    normalized_ids: list[str] = []
+    seen: set[str] = set()
+    for raw_id in evidence_ids:
+        evidence_id = (raw_id or '').strip()
+        if not is_uuid(evidence_id):
+            raise EHSException(
+                'evidence_ids must be valid UUID strings',
+                code='REPORT_SECTION_INVALID_EVIDENCE_ID',
+                status_code=400,
+            )
+        if evidence_id not in seen:
+            normalized_ids.append(evidence_id)
+            seen.add(evidence_id)
+    return normalized_ids
+
+
 def _check_citations(
     *,
     db: Session,
@@ -729,6 +1012,40 @@ def _check_citations(
     return _CitationCheckResult(status=ReportSectionCitationCheckStatus.PASSED)
 
 
+def _check_evidence(
+    *,
+    db: Session,
+    organization_id: str,
+    report_id: str,
+    evidence_ids: list[str],
+) -> _CitationCheckResult:
+    if not evidence_ids:
+        return _CitationCheckResult(
+            status=ReportSectionCitationCheckStatus.PENDING,
+            message='No evidence ids supplied',
+        )
+
+    stmt = (
+        select(ComplianceEvidence)
+        .join(DetectionReport, ComplianceEvidence.report_id == DetectionReport.id)
+        .where(
+            ComplianceEvidence.id.in_(evidence_ids),
+            ComplianceEvidence.report_id == report_id,
+            ComplianceEvidence.deleted_at.is_(None),
+            DetectionReport.organization_id == organization_id,
+            DetectionReport.deleted_at.is_(None),
+        )
+    )
+    found_ids = {evidence.id for evidence in db.scalars(stmt).all()}
+    missing_ids = [evidence_id for evidence_id in evidence_ids if evidence_id not in found_ids]
+    if missing_ids:
+        return _CitationCheckResult(
+            status=ReportSectionCitationCheckStatus.FAILED,
+            message=f'Invalid or invisible evidence ids: {", ".join(missing_ids[:5])}',
+        )
+    return _CitationCheckResult(status=ReportSectionCitationCheckStatus.PASSED)
+
+
 def _clean_required_text(value: str, *, field_name: str, max_length: int | None = None) -> str:
     cleaned = ' '.join(value.strip().split()) if field_name != 'draft_content' else value.strip()
     if not cleaned:
@@ -752,7 +1069,25 @@ def _dump_citation_ids(citation_memory_ids: list[str]) -> str | None:
     return json.dumps(citation_memory_ids, ensure_ascii=False)
 
 
+def _dump_evidence_ids(evidence_ids: list[str]) -> str | None:
+    if not evidence_ids:
+        return None
+    return json.dumps(evidence_ids, ensure_ascii=False)
+
+
 def _load_citation_ids(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, str)]
+
+
+def _load_evidence_ids(raw: str | None) -> list[str]:
     if not raw:
         return []
     try:
@@ -796,6 +1131,9 @@ def _section_out(section: ReportSection) -> ReportSectionOut:
         citation_memory_ids=_load_citation_ids(section.citation_memory_ids_json),
         citation_check_status=section.citation_check_status,
         citation_check_message=section.citation_check_message,
+        evidence_ids=_load_evidence_ids(section.evidence_ids_json),
+        evidence_check_status=section.evidence_check_status,
+        evidence_check_message=section.evidence_check_message,
         review_status=section.review_status,
         review_note=section.review_note,
         reviewed_by_id=section.reviewed_by_id,

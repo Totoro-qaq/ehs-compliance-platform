@@ -41,8 +41,11 @@ class ReportSectionDAO(BaseRepository[ReportSection]):
         title: str,
         draft_content: str,
         citation_memory_ids_json: str | None,
+        evidence_ids_json: str | None,
         citation_check_status: ReportSectionCitationCheckStatus,
         citation_check_message: str | None,
+        evidence_check_status: ReportSectionCitationCheckStatus,
+        evidence_check_message: str | None,
         created_by_id: str | None,
     ) -> ReportSection:
         existing = self.find_by_report_section(report_id=report_id, section_key=section_key)
@@ -50,8 +53,11 @@ class ReportSectionDAO(BaseRepository[ReportSection]):
             existing.title = title
             existing.draft_content = draft_content
             existing.citation_memory_ids_json = citation_memory_ids_json
+            existing.evidence_ids_json = evidence_ids_json
             existing.citation_check_status = citation_check_status
             existing.citation_check_message = citation_check_message
+            existing.evidence_check_status = evidence_check_status
+            existing.evidence_check_message = evidence_check_message
             existing.review_status = ReportSectionReviewStatus.DRAFT
             existing.review_note = None
             existing.reviewed_by_id = None
@@ -67,8 +73,11 @@ class ReportSectionDAO(BaseRepository[ReportSection]):
             title=title,
             draft_content=draft_content,
             citation_memory_ids_json=citation_memory_ids_json,
+            evidence_ids_json=evidence_ids_json,
             citation_check_status=citation_check_status,
             citation_check_message=citation_check_message,
+            evidence_check_status=evidence_check_status,
+            evidence_check_message=evidence_check_message,
             created_by_id=created_by_id,
         )
         self.session.add(section)

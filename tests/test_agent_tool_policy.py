@@ -39,6 +39,7 @@ def test_agent_tool_registry_contains_all_dispatched_tools() -> None:
         'list_detection_reports',
         'get_detection_report',
         'summarize_detection_compliance',
+        'list_compliance_evidence',
         'search_regulatory_limits',
         'search_standard_chunks',
         'search_guideline_chunks',

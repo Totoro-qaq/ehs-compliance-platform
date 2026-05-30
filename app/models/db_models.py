@@ -856,6 +856,7 @@ class ReportSection(ModelBase):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     draft_content: Mapped[str] = mapped_column(Text, nullable=False)
     citation_memory_ids_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evidence_ids_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     citation_check_status: Mapped[ReportSectionCitationCheckStatus] = mapped_column(
         SAEnum(ReportSectionCitationCheckStatus),
         nullable=False,
@@ -863,6 +864,13 @@ class ReportSection(ModelBase):
         index=True,
     )
     citation_check_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evidence_check_status: Mapped[ReportSectionCitationCheckStatus] = mapped_column(
+        SAEnum(ReportSectionCitationCheckStatus),
+        nullable=False,
+        default=ReportSectionCitationCheckStatus.PENDING,
+        index=True,
+    )
+    evidence_check_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     review_status: Mapped[ReportSectionReviewStatus] = mapped_column(
         SAEnum(ReportSectionReviewStatus),
         nullable=False,

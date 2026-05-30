@@ -52,6 +52,7 @@ _FAST_SUMMARY_TOOLS = {
     'list_assessment_tasks',
     'list_detection_reports',
     'summarize_detection_compliance',
+    'list_compliance_evidence',
     'search_regulatory_limits',
     'search_standard_chunks',
     'search_guideline_chunks',
@@ -91,6 +92,8 @@ _STATUS_OR_LOOKUP_INTENT_KEYWORDS = (
     '条文',
     '导则',
     '依据',
+    '证据',
+    '证据链',
     'cas',
 )
 
@@ -1061,6 +1064,40 @@ class AgentService:
                             f'{f"；依据 {basis}" if basis else ""}'
                             f'{f"；{_record_context(item)}" if _record_context(item) else ""}'
                         )
+
+        compliance_evidence = _first_tool(tool_results, 'list_compliance_evidence')
+        if compliance_evidence:
+            items = compliance_evidence.get('items') or []
+            if items:
+                lines.append('判定证据链：')
+                for item in items[:6]:
+                    source_parts = [
+                        _compact_text(item.get('standard_code')),
+                        _compact_text(item.get('standard_name')),
+                    ]
+                    source = ' '.join(part for part in source_parts if part)
+                    source_suffix = f'；{source}' if source else ''
+                    report_suffix = f'；{item.get("report_name")}' if item.get('report_name') else ''
+                    context = _record_context(item)
+                    context_suffix = f'；{context}' if context else ''
+                    refs = []
+                    if item.get('evidence_id'):
+                        refs.append(f'evidence_id={item.get("evidence_id")}')
+                    if item.get('result_id'):
+                        refs.append(f'result_id={item.get("result_id")}')
+                    if item.get('source_uri'):
+                        refs.append(f'source={item.get("source_uri")}')
+                    suffix = f'；{"；".join(refs)}' if refs else ''
+                    lines.append(
+                        f'- {item.get("evidence_type") or "-"}：'
+                        f'{_compact_text(item.get("summary")) or "-"}'
+                        f'{source_suffix}'
+                        f'{report_suffix}'
+                        f'{context_suffix}'
+                        f'{suffix}'
+                    )
+            else:
+                lines.append('当前范围内没有查到可见的判定证据链；需要先完成检测判定并生成 compliance_evidence。')
 
         detection_list = _first_tool(tool_results, 'list_detection_reports')
         if detection_list and not failed_reports:
