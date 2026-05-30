@@ -19,6 +19,12 @@ const routes = [
     component: () => import('../views/OrgsView.vue'),
     meta: { orgManagement: true },
   },
+  {
+    path: '/standards',
+    name: 'standards',
+    component: () => import('../views/StandardsView.vue'),
+    meta: { systemAdmin: true },
+  },
   { path: '/settings', name: 'settings', component: () => import('../views/SettingsView.vue') },
   { path: '/:pathMatch(.*)*', redirect: '/home' },
 ];
@@ -34,6 +40,9 @@ router.beforeEach((to) => {
     return { name: 'login', query: to.fullPath !== '/' ? { redirect: to.fullPath } : undefined };
   }
   if (to.meta?.orgManagement && !session.canManageOrganizations) {
+    return { name: 'home', query: { view: 'workbench' } };
+  }
+  if (to.meta?.systemAdmin && !session.isAdmin) {
     return { name: 'home', query: { view: 'workbench' } };
   }
   if (session.token && to.name === 'login') {
