@@ -13,6 +13,8 @@ from app.models.db_models import (
     AgentMemoryScopeType,
     AgentMemorySourceType,
     AgentMemoryType,
+    ComplianceEvidence,
+    ComplianceEvidenceType,
     DetectionReport,
     Organization,
     ReportStatus,
@@ -20,6 +22,19 @@ from app.models.db_models import (
 )
 from app.schemas.auth_context import CurrentUser
 from app.services.agent_memory_service import AgentMemoryService
+
+
+class _FakeDraftProvider:
+    name = 'fake'
+    model_name = 'fake-report-draft-model'
+
+    def __init__(self, response: str) -> None:
+        self.response = response
+        self.messages: list[dict[str, str]] = []
+
+    async def generate(self, *, messages: list[dict[str, str]]) -> str:
+        self.messages = messages
+        return self.response
 
 
 def _auth(token: str) -> dict[str, str]:
@@ -72,6 +87,21 @@ def _create_citation_memory(
         },
     )
     return result.memory.id
+
+
+def _create_compliance_evidence(*, db: Session, report_id: str, summary: str) -> str:
+    evidence = ComplianceEvidence(
+        report_id=report_id,
+        standard_code='GBZ-TEST',
+        standard_name='Test occupational health standard',
+        source_uri='standard://gbz-test/1',
+        evidence_type=ComplianceEvidenceType.LIMIT_MATCH,
+        evidence_summary=summary,
+    )
+    db.add(evidence)
+    db.commit()
+    db.refresh(evidence)
+    return evidence.id
 
 
 def _bootstrap_sections(client: TestClient, token: str, report_id: str) -> list[dict]:
@@ -208,6 +238,128 @@ def test_report_pipeline_upserts_section_and_validates_citations(
     assert [item['section_key'] for item in listed.json()['data']] == ['summary']
 
 
+def test_report_pipeline_upserts_section_and_validates_evidence(
+    client: TestClient,
+    user_token: str,
+    db: Session,
+) -> None:
+    actor = current_user_from_token(user_token)
+    assert actor.organization_id is not None
+    report = _create_detection_report(
+        db=db,
+        organization_id=actor.organization_id,
+        created_by_id=actor.account_id,
+    )
+    citation_id = _create_citation_memory(db=db, actor=actor, source_id='pipeline-evidence-1')
+    evidence_id = _create_compliance_evidence(
+        db=db,
+        report_id=report.id,
+        summary='Limit matching evidence for report summary.',
+    )
+
+    response = client.post(
+        '/api/v1/report-pipeline/sections',
+        json={
+            'report_id': report.id,
+            'section_key': 'summary',
+            'title': '证据摘要',
+            'draft_content': '该章节绑定已校验的检测证据链。',
+            'citation_memory_ids': [citation_id],
+            'evidence_ids': [evidence_id, evidence_id],
+        },
+        headers=_auth(user_token),
+    )
+
+    assert response.status_code == 200
+    body = response.json()['data']
+    assert body['citation_check_status'] == 'PASSED'
+    assert body['evidence_ids'] == [evidence_id]
+    assert body['evidence_check_status'] == 'PASSED'
+    assert body['review_status'] == 'DRAFT'
+
+
+def test_report_pipeline_generate_draft_requires_report_evidence(
+    client: TestClient,
+    user_token: str,
+    db: Session,
+    monkeypatch,
+) -> None:
+    provider = _FakeDraftProvider('should not be used')
+    monkeypatch.setattr(
+        'app.services.report_pipeline_service.get_configured_agent_model_provider',
+        lambda: provider,
+    )
+    actor = current_user_from_token(user_token)
+    assert actor.organization_id is not None
+    report = _create_detection_report(
+        db=db,
+        organization_id=actor.organization_id,
+        created_by_id=actor.account_id,
+    )
+
+    response = client.post(
+        f'/api/v1/report-pipeline/reports/{report.id}/sections/summary/generate-draft',
+        json={'instruction': '生成摘要草稿'},
+        headers=_auth(user_token),
+    )
+
+    assert response.status_code == 400
+    assert response.json()['code'] == 'REPORT_SECTION_EVIDENCE_REQUIRED_FOR_GENERATION'
+    assert provider.messages == []
+
+
+def test_report_pipeline_generate_draft_binds_evidence_and_stays_draft(
+    client: TestClient,
+    user_token: str,
+    org_admin_token: str,
+    db: Session,
+    monkeypatch,
+) -> None:
+    provider = _FakeDraftProvider('AI 草稿：仅基于 evidence_id 形成，等待人工复核。')
+    monkeypatch.setattr(
+        'app.services.report_pipeline_service.get_configured_agent_model_provider',
+        lambda: provider,
+    )
+    actor = current_user_from_token(user_token)
+    assert actor.organization_id is not None
+    report = _create_detection_report(
+        db=db,
+        organization_id=actor.organization_id,
+        created_by_id=actor.account_id,
+    )
+    evidence_id = _create_compliance_evidence(
+        db=db,
+        report_id=report.id,
+        summary='Evidence for AI draft generation.',
+    )
+
+    response = client.post(
+        f'/api/v1/report-pipeline/reports/{report.id}/sections/summary/generate-draft',
+        json={'instruction': '生成报告摘要草稿'},
+        headers=_auth(user_token),
+    )
+
+    assert response.status_code == 200
+    body = response.json()['data']
+    assert body['section_key'] == 'summary'
+    assert body['title'] == '报告摘要'
+    assert body['draft_content'] == 'AI 草稿：仅基于 evidence_id 形成，等待人工复核。'
+    assert body['evidence_ids'] == [evidence_id]
+    assert body['evidence_check_status'] == 'PASSED'
+    assert body['citation_memory_ids'] == []
+    assert body['citation_check_status'] == 'PENDING'
+    assert body['review_status'] == 'DRAFT'
+    assert evidence_id in provider.messages[-1]['content']
+
+    approval = client.patch(
+        f'/api/v1/report-pipeline/sections/{body["id"]}/review',
+        json={'review_status': 'APPROVED'},
+        headers=_auth(org_admin_token),
+    )
+    assert approval.status_code == 400
+    assert approval.json()['code'] == 'REPORT_SECTION_CITATIONS_NOT_PASSED'
+
+
 def test_report_pipeline_blocks_user_review_and_allows_org_admin_approval(
     client: TestClient,
     user_token: str,
@@ -287,6 +439,57 @@ def test_report_pipeline_rejects_approval_without_passed_citations(
 
     assert response.status_code == 400
     assert response.json()['code'] == 'REPORT_SECTION_CITATIONS_NOT_PASSED'
+
+
+def test_report_pipeline_rejects_approval_without_passed_evidence(
+    client: TestClient,
+    user_token: str,
+    org_admin_token: str,
+    db: Session,
+) -> None:
+    actor = current_user_from_token(user_token)
+    assert actor.organization_id is not None
+    report = _create_detection_report(
+        db=db,
+        organization_id=actor.organization_id,
+        created_by_id=actor.account_id,
+    )
+    other_report = _create_detection_report(
+        db=db,
+        organization_id=actor.organization_id,
+        created_by_id=actor.account_id,
+        filename='pipeline-other-report.csv',
+    )
+    citation_id = _create_citation_memory(db=db, actor=actor, source_id='pipeline-evidence-2')
+    other_evidence_id = _create_compliance_evidence(
+        db=db,
+        report_id=other_report.id,
+        summary='Evidence that belongs to another report.',
+    )
+
+    section = client.post(
+        '/api/v1/report-pipeline/sections',
+        json={
+            'report_id': report.id,
+            'section_key': 'findings',
+            'title': '结果分析',
+            'draft_content': '该章节绑定了不属于本报告的证据。',
+            'citation_memory_ids': [citation_id],
+            'evidence_ids': [other_evidence_id],
+        },
+        headers=_auth(user_token),
+    ).json()['data']
+    assert section['citation_check_status'] == 'PASSED'
+    assert section['evidence_check_status'] == 'FAILED'
+
+    response = client.patch(
+        f'/api/v1/report-pipeline/sections/{section["id"]}/review',
+        json={'review_status': 'APPROVED'},
+        headers=_auth(org_admin_token),
+    )
+
+    assert response.status_code == 400
+    assert response.json()['code'] == 'REPORT_SECTION_EVIDENCE_NOT_PASSED'
 
 
 def test_report_pipeline_readiness_blocks_until_required_sections_are_approved(
@@ -394,6 +597,83 @@ def test_report_pipeline_rechecks_citation_export_authorization(
     assert export.json()['code'] == 'REPORT_EXPORT_NOT_READY'
 
 
+def test_report_pipeline_rechecks_evidence_before_export(
+    client: TestClient,
+    user_token: str,
+    org_admin_token: str,
+    db: Session,
+) -> None:
+    actor = current_user_from_token(user_token)
+    assert actor.organization_id is not None
+    report = _create_detection_report(
+        db=db,
+        organization_id=actor.organization_id,
+        created_by_id=actor.account_id,
+    )
+    sections = _bootstrap_sections(client, user_token, report.id)
+    _approve_sections(
+        client=client,
+        db=db,
+        actor=actor,
+        user_token=user_token,
+        org_admin_token=org_admin_token,
+        report_id=report.id,
+        sections=sections,
+    )
+    citation_id = _create_citation_memory(db=db, actor=actor, source_id='pipeline-evidence-3')
+    evidence_id = _create_compliance_evidence(
+        db=db,
+        report_id=report.id,
+        summary='Evidence that is valid before approval.',
+    )
+    updated = client.post(
+        '/api/v1/report-pipeline/sections',
+        json={
+            'report_id': report.id,
+            'section_key': 'summary',
+            'title': '报告摘要',
+            'draft_content': 'Approved draft for summary with evidence.',
+            'citation_memory_ids': [citation_id],
+            'evidence_ids': [evidence_id],
+        },
+        headers=_auth(user_token),
+    )
+    assert updated.status_code == 200
+    approved = client.patch(
+        f'/api/v1/report-pipeline/sections/{updated.json()["data"]["id"]}/review',
+        json={'review_status': 'APPROVED'},
+        headers=_auth(org_admin_token),
+    )
+    assert approved.status_code == 200
+
+    other_report = _create_detection_report(
+        db=db,
+        organization_id=actor.organization_id,
+        created_by_id=actor.account_id,
+        filename='pipeline-evidence-moved-report.csv',
+    )
+    evidence = db.get(ComplianceEvidence, evidence_id)
+    assert evidence is not None
+    evidence.report_id = other_report.id
+    db.commit()
+
+    readiness = client.get(
+        f'/api/v1/report-pipeline/reports/{report.id}/readiness',
+        headers=_auth(user_token),
+    )
+    assert readiness.status_code == 200
+    body = readiness.json()['data']
+    assert body['ready'] is False
+    assert any(issue['code'] == 'REPORT_SECTION_EVIDENCE_NOT_PASSED' for issue in body['issues'])
+
+    export = client.get(
+        f'/api/v1/report-pipeline/reports/{report.id}/export?format=markdown',
+        headers=_auth(user_token),
+    )
+    assert export.status_code == 400
+    assert export.json()['code'] == 'REPORT_EXPORT_NOT_READY'
+
+
 def test_report_pipeline_export_requires_readiness(
     client: TestClient,
     user_token: str,
@@ -442,6 +722,31 @@ def test_report_pipeline_exports_approved_sections_as_selected_format(
         report_id=report.id,
         sections=sections,
     )
+    citation_id = _create_citation_memory(db=db, actor=actor, source_id='pipeline-export-evidence')
+    evidence_id = _create_compliance_evidence(
+        db=db,
+        report_id=report.id,
+        summary='Evidence included in exported report.',
+    )
+    updated = client.post(
+        '/api/v1/report-pipeline/sections',
+        json={
+            'report_id': report.id,
+            'section_key': 'summary',
+            'title': '报告摘要',
+            'draft_content': 'Approved draft for summary with evidence.',
+            'citation_memory_ids': [citation_id],
+            'evidence_ids': [evidence_id],
+        },
+        headers=_auth(user_token),
+    )
+    assert updated.status_code == 200
+    approved = client.patch(
+        f'/api/v1/report-pipeline/sections/{updated.json()["data"]["id"]}/review',
+        json={'review_status': 'APPROVED'},
+        headers=_auth(org_admin_token),
+    )
+    assert approved.status_code == 200
 
     markdown_response = client.get(
         f'/api/v1/report-pipeline/reports/{report.id}/export?format=markdown',
@@ -455,8 +760,10 @@ def test_report_pipeline_exports_approved_sections_as_selected_format(
     assert markdown_content.startswith('# Pipeline Report')
     assert '## 报告信息' in markdown_content
     assert '## 报告摘要' in markdown_content
-    assert 'Approved draft for summary' in markdown_content
+    assert 'Approved draft for summary with evidence.' in markdown_content
     assert '引用记忆：' in markdown_content
+    assert '证据链：' in markdown_content
+    assert evidence_id in markdown_content
 
     txt_response = client.get(
         f'/api/v1/report-pipeline/reports/{report.id}/export?format=txt',
@@ -476,7 +783,8 @@ def test_report_pipeline_exports_approved_sections_as_selected_format(
     assert doc_response.status_code == 200
     assert doc_response.headers['content-type'].startswith('application/msword')
     assert b'<html>' in doc_response.content
-    assert 'Approved draft for summary'.encode('utf-8') in doc_response.content
+    assert 'Approved draft for summary with evidence.'.encode('utf-8') in doc_response.content
+    assert evidence_id.encode('utf-8') in doc_response.content
 
     docx_response = client.get(
         f'/api/v1/report-pipeline/reports/{report.id}/export?format=docx',
@@ -490,7 +798,8 @@ def test_report_pipeline_exports_approved_sections_as_selected_format(
     assert docx_response.content.startswith(b'PK')
     with ZipFile(BytesIO(docx_response.content)) as archive:
         document_xml = archive.read('word/document.xml').decode('utf-8')
-    assert 'Approved draft for summary' in document_xml
+    assert 'Approved draft for summary with evidence.' in document_xml
+    assert evidence_id in document_xml
 
 
 def test_report_pipeline_blocks_other_org_report_access(

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import EHSException
 from app.models.db_models import (
     AssessmentTask,
+    ComplianceEvidence,
     ComplianceResult,
     ComplianceStatus,
     DetectionMeasurement,
@@ -318,6 +319,9 @@ class AgentTools:
         if any(key in user_text for key in ('超标', '合规', '判定结果', '需复核', '复核', '临界')):
             tools.append(('summarize_detection_compliance', {'limit': 8, **context_args}))
 
+        if any(key in user_text for key in ('证据', '证据链', '为什么', '原因', '依据', '适用', '优先级')):
+            tools.append(('list_compliance_evidence', {'limit': 8, **context_args}))
+
         if any(key in user_text for key in ('限值', '法规', '标准', '条款', 'cas', 'CAS')):
             tools.append(('search_regulatory_limits', {'query': user_text, 'limit': 8}))
 
@@ -394,6 +398,15 @@ class AgentTools:
                 actor=actor,
                 context_query=arguments.get('context_query'),
                 limit=int(arguments.get('limit') or 5),
+            )
+        elif tool_name == 'list_compliance_evidence':
+            result = AgentTools.list_compliance_evidence(
+                db=db,
+                actor=actor,
+                report_id=arguments.get('report_id'),
+                result_id=arguments.get('result_id'),
+                context_query=arguments.get('context_query'),
+                limit=int(arguments.get('limit') or 8),
             )
         elif tool_name == 'search_regulatory_limits':
             result = AgentTools.search_regulatory_limits(
@@ -824,6 +837,66 @@ class AgentTools:
                 'needs_review': status_counts.get(ComplianceStatus.NEEDS_REVIEW.value, 0),
             },
             'findings': findings,
+            'limit': max_items,
+        }
+
+    @staticmethod
+    def list_compliance_evidence(
+        *,
+        db: Session,
+        actor: CurrentUser,
+        report_id: str | None = None,
+        result_id: str | None = None,
+        context_query: str | None = None,
+        limit: int = 8,
+    ) -> dict[str, Any]:
+        max_items = _safe_limit(limit)
+        filters = _actor_org_filter(actor, DetectionReport)
+        clean_report_id = report_id.strip() if report_id else None
+        clean_result_id = result_id.strip() if result_id else None
+        if clean_report_id:
+            filters.append(ComplianceEvidence.report_id == clean_report_id)
+        if clean_result_id:
+            filters.append(ComplianceEvidence.result_id == clean_result_id)
+        context_clause = _context_filter(DetectionReport, context_query)
+        if context_clause is not None:
+            filters.append(context_clause)
+
+        rows = db.execute(
+            select(ComplianceEvidence, DetectionReport)
+            .join(DetectionReport, DetectionReport.id == ComplianceEvidence.report_id)
+            .where(*filters)
+            .order_by(ComplianceEvidence.created_at.asc(), ComplianceEvidence.id.asc())
+            .limit(max_items)
+        ).all()
+
+        items = [
+            {
+                'evidence_id': evidence.id,
+                'evidence_type': _enum(evidence.evidence_type),
+                'report_id': evidence.report_id,
+                'report_name': report.report_name,
+                **_client_project_fields(report),
+                'sample_id': evidence.sample_id,
+                'measurement_id': evidence.measurement_id,
+                'result_id': evidence.result_id,
+                'standard_code': evidence.standard_code,
+                'standard_name': evidence.standard_name,
+                'clause_id': evidence.clause_id,
+                'limit_id': evidence.limit_id,
+                'source_id': evidence.source_id,
+                'source_uri': evidence.source_uri,
+                'summary': _short(evidence.evidence_summary, length=360),
+                'metadata': _json_dict(evidence.metadata_json),
+                'created_at': _dt(evidence.created_at),
+            }
+            for evidence, report in rows
+        ]
+        return {
+            'report_id': clean_report_id,
+            'result_id': clean_result_id,
+            'context_terms': _context_terms(context_query),
+            'items': items,
             'limit': max_items,
         }
 

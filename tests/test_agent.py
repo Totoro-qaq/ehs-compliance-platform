@@ -17,6 +17,8 @@ from app.models.db_models import (
     AgentSession,
     AgentToolCall,
     AssessmentTask,
+    ComplianceEvidence,
+    ComplianceEvidenceType,
     ComplianceResult,
     ComplianceStatus,
     DetectionMeasurement,
@@ -799,3 +801,158 @@ def test_agent_summarizes_detection_compliance_by_client_project_context(
     assert '安测 B 已判定报告' not in answer
     assert '测试因子乙' not in answer
     assert any(call['tool_name'] == 'summarize_detection_compliance' for call in data['tool_calls'])
+
+
+def test_agent_reads_compliance_evidence_by_client_project_context(
+    client: TestClient,
+    user_token: str,
+    db,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        'app.services.agent_service.AgentService._call_model',
+        AsyncMock(side_effect=RuntimeError('should not call model')),
+    )
+
+    org = db.get(Organization, settings.default_organization_id)
+    assert org is not None
+    report_a = DetectionReport(
+        organization_id=org.id,
+        report_name='安测 A 证据报告',
+        client_name='安测委托A',
+        project_name='年度检测项目A',
+        project_code='AC-A-001',
+        service_type='定期检测',
+        filename='client-a-evidence.csv',
+        report_type=ReportType.OCCUPATIONAL_HEALTH,
+        status=ReportStatus.CALCULATED,
+    )
+    report_b = DetectionReport(
+        organization_id=org.id,
+        report_name='安测 B 证据报告',
+        client_name='安测委托B',
+        project_name='年度检测项目B',
+        project_code='AC-B-001',
+        service_type='定期检测',
+        filename='client-b-evidence.csv',
+        report_type=ReportType.OCCUPATIONAL_HEALTH,
+        status=ReportStatus.CALCULATED,
+    )
+    db.add_all([report_a, report_b])
+    db.flush()
+
+    sample_a = DetectionSample(
+        report_id=report_a.id,
+        sample_point='A-02',
+        workplace='证据车间A',
+        post_name='证据岗位A',
+        medium=SampleMedium.WORKPLACE_AIR,
+    )
+    sample_b = DetectionSample(
+        report_id=report_b.id,
+        sample_point='B-02',
+        workplace='证据车间B',
+        post_name='证据岗位B',
+        medium=SampleMedium.WORKPLACE_AIR,
+    )
+    db.add_all([sample_a, sample_b])
+    db.flush()
+
+    measurement_a = DetectionMeasurement(
+        sample_id=sample_a.id,
+        indicator_name='证据因子甲',
+        raw_value=Decimal('12.0'),
+        raw_unit='mg/m3',
+        normalized_value=Decimal('12.0'),
+        normalized_unit='mg/m3',
+    )
+    measurement_b = DetectionMeasurement(
+        sample_id=sample_b.id,
+        indicator_name='证据因子乙',
+        raw_value=Decimal('3.0'),
+        raw_unit='mg/m3',
+        normalized_value=Decimal('3.0'),
+        normalized_unit='mg/m3',
+    )
+    db.add_all([measurement_a, measurement_b])
+    db.flush()
+
+    result_a = ComplianceResult(
+        report_id=report_a.id,
+        sample_id=sample_a.id,
+        measurement_id=measurement_a.id,
+        calculated_value=Decimal('12.0'),
+        calculated_unit='mg/m3',
+        limit_value=Decimal('10.0'),
+        limit_unit='mg/m3',
+        limit_type=LimitType.PC_TWA,
+        status=ComplianceStatus.EXCEEDED,
+        exceedance_multiple=Decimal('0.2000'),
+        standard_code='TEST-STD-EV-A',
+        standard_name='测试证据标准 A',
+        clause='EV-1',
+    )
+    result_b = ComplianceResult(
+        report_id=report_b.id,
+        sample_id=sample_b.id,
+        measurement_id=measurement_b.id,
+        calculated_value=Decimal('3.0'),
+        calculated_unit='mg/m3',
+        limit_value=Decimal('5.0'),
+        limit_unit='mg/m3',
+        limit_type=LimitType.PC_TWA,
+        status=ComplianceStatus.COMPLIANT,
+        standard_code='TEST-STD-EV-B',
+        standard_name='测试证据标准 B',
+        clause='EV-2',
+    )
+    db.add_all([result_a, result_b])
+    db.flush()
+
+    evidence_a = ComplianceEvidence(
+        report_id=report_a.id,
+        sample_id=sample_a.id,
+        measurement_id=measurement_a.id,
+        result_id=result_a.id,
+        standard_code='TEST-STD-EV-A',
+        standard_name='测试证据标准 A',
+        source_uri='standard://TEST-STD-EV-A/EV-1',
+        evidence_type=ComplianceEvidenceType.LIMIT_MATCH,
+        evidence_summary='命中结构化限值 TEST-STD-EV-A 条款 EV-1，限值类型 PC_TWA',
+        metadata_json=json.dumps({'status': ComplianceStatus.EXCEEDED.value}, ensure_ascii=False),
+    )
+    evidence_b = ComplianceEvidence(
+        report_id=report_b.id,
+        sample_id=sample_b.id,
+        measurement_id=measurement_b.id,
+        result_id=result_b.id,
+        standard_code='TEST-STD-EV-B',
+        standard_name='测试证据标准 B',
+        evidence_type=ComplianceEvidenceType.CALCULATION,
+        evidence_summary='不应出现在 A 项目证据链中',
+    )
+    db.add_all([evidence_a, evidence_b])
+    db.commit()
+
+    resp = client.post(
+        '/api/v1/agent/chat',
+        json={'content': '客户安测委托A 项目年度检测项目A 判定证据链依据是什么'},
+        headers=_auth(user_token),
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()['data']
+    answer = data['assistant_message']['content']
+    assert data['run']['provider'] == 'rules'
+    assert data['run']['model_name'] == 'fast-summary'
+    assert '判定证据链' in answer
+    assert 'TEST-STD-EV-A' in answer
+    assert 'evidence_id=' in answer
+    assert 'standard://TEST-STD-EV-A/EV-1' in answer
+    assert '安测 B 证据报告' not in answer
+    assert 'TEST-STD-EV-B' not in answer
+    assert any(call['tool_name'] == 'list_compliance_evidence' for call in data['tool_calls'])
+
+    run = db.query(AgentRun).filter_by(id=data['run']['id']).one()
+    context_snapshot = json.loads(run.context_snapshot_json)
+    assert context_snapshot['evidence_ids'] == [evidence_a.id]

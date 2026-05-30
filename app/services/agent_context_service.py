@@ -59,6 +59,7 @@ class AgentContextService:
             }
             for item in tool_results
         ]
+        evidence_ids = _collect_evidence_ids(tool_results)
         payload = {
             'version': 'agent-context-v1',
             'route': route,
@@ -78,7 +79,7 @@ class AgentContextService:
             },
             'tool_results': tool_summaries,
             'citation_memory_ids': citation_memory_ids,
-            'evidence_ids': [],
+            'evidence_ids': evidence_ids,
             'policy': runtime_policy.to_metadata(),
             'prompt': prompt_metadata,
             'limits': {
@@ -119,6 +120,26 @@ def summarize_tool_result(result: dict[str, Any]) -> dict[str, Any]:
     if 'counts' in result and isinstance(result['counts'], dict):
         summary['counts'] = result['counts']
     return summary
+
+
+def _collect_evidence_ids(tool_results: list[AgentToolResult]) -> list[str]:
+    evidence_ids: list[str] = []
+    seen: set[str] = set()
+    for tool_result in tool_results:
+        if tool_result.tool_name != 'list_compliance_evidence':
+            continue
+        raw_items = tool_result.result.get('items')
+        if not isinstance(raw_items, list):
+            continue
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            evidence_id = item.get('evidence_id')
+            if not isinstance(evidence_id, str) or not evidence_id or evidence_id in seen:
+                continue
+            seen.add(evidence_id)
+            evidence_ids.append(evidence_id)
+    return evidence_ids[:50]
 
 
 def stable_hash(value: Any) -> str:

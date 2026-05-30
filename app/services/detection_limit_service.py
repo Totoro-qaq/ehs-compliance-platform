@@ -51,6 +51,27 @@ class DetectionLimitService:
     """无状态服务：所有方法接受 db Session，便于在事务中复用。"""
 
     @staticmethod
+    def find_candidates(
+        *,
+        db: Session,
+        measurement: DetectionMeasurement,
+        medium: SampleMedium,
+        as_of: date | None = None,
+        limit_type: LimitType | None = None,
+    ) -> list[RegulatoryLimit]:
+        dao = RegulatoryLimitDAO(db)
+        types: Sequence[LimitType] = (
+            (limit_type,) if limit_type is not None else candidate_limit_types(medium)
+        )
+        return dao.find_candidates(
+            indicator_name=measurement.indicator_name,
+            cas_no=measurement.cas_no,
+            medium=medium,
+            limit_types=types,
+            as_of=as_of,
+        )
+
+    @staticmethod
     def match(
         *,
         db: Session,

@@ -14,6 +14,7 @@ from app.schemas.report_pipeline_schema import (
     ReportBootstrapRequest,
     ReportExportFormat,
     ReportReadinessOut,
+    ReportSectionGenerateDraftRequest,
     ReportSectionOut,
     ReportSectionReviewRequest,
     ReportSectionTemplateOut,
@@ -53,6 +54,30 @@ def upsert_report_section(
         title=payload.title,
         draft_content=payload.draft_content,
         citation_memory_ids=payload.citation_memory_ids,
+        evidence_ids=payload.evidence_ids,
+    )
+
+
+@router.post(
+    '/reports/{report_id}/sections/{section_key}/generate-draft',
+    response_model=ReportSectionOut,
+    summary='基于证据链生成报告章节草稿',
+)
+async def generate_report_section_draft(
+    report_id: str,
+    section_key: str,
+    payload: ReportSectionGenerateDraftRequest,
+    actor: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Session = Depends(get_db),
+):
+    return await ReportPipelineService.generate_section_draft(
+        db=db,
+        actor=actor,
+        report_id=report_id,
+        section_key=section_key,
+        instruction=payload.instruction,
+        citation_memory_ids=payload.citation_memory_ids,
+        evidence_limit=payload.evidence_limit,
     )
 
 

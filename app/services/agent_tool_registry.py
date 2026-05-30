@@ -72,6 +72,13 @@ class SummarizeDetectionComplianceArguments(AgentToolArguments):
     limit: int = Field(default=5, ge=1, le=20)
 
 
+class ListComplianceEvidenceArguments(AgentToolArguments):
+    report_id: str | None = Field(default=None, min_length=1, max_length=64)
+    result_id: str | None = Field(default=None, min_length=1, max_length=64)
+    context_query: str | None = Field(default=None, max_length=8000)
+    limit: int = Field(default=8, ge=1, le=20)
+
+
 class SearchRegulatoryLimitsArguments(AgentToolArguments):
     query: str = Field(min_length=1, max_length=8000)
     limit: int = Field(default=5, ge=1, le=20)
@@ -348,6 +355,11 @@ _DEFAULT_TOOL_SPECS = [
         name='summarize_detection_compliance',
         description='Read detection compliance summary for the current visible scope.',
         input_model=SummarizeDetectionComplianceArguments,
+    ),
+    _read_tool(
+        name='list_compliance_evidence',
+        description='Read graph-lite compliance evidence chain for visible detection results.',
+        input_model=ListComplianceEvidenceArguments,
     ),
     _read_tool(
         name='search_regulatory_limits',
