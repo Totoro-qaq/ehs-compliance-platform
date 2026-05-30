@@ -3,16 +3,19 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.dao.base_repository import BaseRepository
+from app.dao.pagination import fetch_scalar_rows_page, normalize_page_params
 from app.models.base import audit_now_naive
 from app.models.db_models import (
     AgentMessage,
     AgentMessageRole,
+    AgentPrompt,
     AgentRun,
     AgentRunStatus,
+    AgentSecurityEvent,
     AgentSession,
     AgentSessionStatus,
     AgentToolCall,
@@ -158,7 +161,9 @@ class AgentRunDAO(BaseRepository[AgentRun]):
         user_message_id: str,
         provider: str,
         model_name: str,
+        policy_metadata: dict[str, Any] | None = None,
     ) -> AgentRun:
+        policy_metadata = policy_metadata or {}
         entity = AgentRun(
             session_id=session_id,
             account_id=account_id,
@@ -167,9 +172,28 @@ class AgentRunDAO(BaseRepository[AgentRun]):
             provider=provider,
             model_name=model_name,
             status=AgentRunStatus.RUNNING,
+            policy_id=str(policy_metadata.get('policy_id') or '') or None,
+            policy_version=str(policy_metadata.get('policy_version') or '') or None,
+            policy_json=_json_dump(policy_metadata),
             started_at=audit_now_naive(),
         )
         return self.save_and_refresh(entity)
+
+    def update_context_snapshot(
+        self,
+        run: AgentRun,
+        *,
+        context_snapshot: dict[str, Any],
+        prompt_hash: str,
+        risk_flags: list[str],
+    ) -> AgentRun:
+        run.context_snapshot_json = _json_dump(context_snapshot)
+        run.prompt_hash = prompt_hash
+        run.risk_flags_json = _json_dump(risk_flags)
+        run.updated_at = audit_now_naive()
+        self.session.commit()
+        self.session.refresh(run)
+        return run
 
     def finish_run(
         self,
@@ -178,9 +202,23 @@ class AgentRunDAO(BaseRepository[AgentRun]):
         status: AgentRunStatus,
         assistant_message_id: str | None = None,
         error_message: str | None = None,
+        output_hash: str | None = None,
     ) -> AgentRun:
         run.status = status
         run.assistant_message_id = assistant_message_id
+        run.error_message = error_message
+        run.output_hash = output_hash
+        run.finished_at = audit_now_naive()
+        run.updated_at = audit_now_naive()
+        self.session.commit()
+        self.session.refresh(run)
+        return run
+
+    def mark_failed_by_id(self, run_id: str, *, error_message: str) -> AgentRun | None:
+        run = self.get_by_id(run_id)
+        if run is None:
+            return None
+        run.status = AgentRunStatus.FAILED
         run.error_message = error_message
         run.finished_at = audit_now_naive()
         run.updated_at = audit_now_naive()
@@ -204,13 +242,23 @@ class AgentToolCallDAO(BaseRepository[AgentToolCall]):
         success: bool,
         elapsed_ms: int | None,
         error_message: str | None = None,
+        tool_version: str | None = None,
+        permission_level: str | None = None,
+        side_effect_level: str | None = None,
+        policy_decision: str | None = None,
+        result_summary: dict[str, Any] | None = None,
     ) -> AgentToolCall:
         entity = AgentToolCall(
             run_id=run_id,
             session_id=session_id,
             tool_name=tool_name,
+            tool_version=tool_version,
+            permission_level=permission_level,
+            side_effect_level=side_effect_level,
+            policy_decision=policy_decision,
             arguments_json=_json_dump(arguments),
             result_json=_json_dump(result),
+            result_summary_json=_json_dump(result_summary),
             success=1 if success else 0,
             error_message=error_message,
             elapsed_ms=elapsed_ms,
@@ -224,3 +272,75 @@ class AgentToolCallDAO(BaseRepository[AgentToolCall]):
             .order_by(AgentToolCall.created_at.asc(), AgentToolCall.id.asc())
         )
         return list(self.session.scalars(stmt).all())
+
+    def list_page_scoped(
+        self,
+        *,
+        page: int,
+        page_size: int,
+        filters: list[Any],
+    ) -> tuple[list[AgentToolCall], int]:
+        params = normalize_page_params(page=page, page_size=page_size, max_page_size=100)
+        list_stmt = select(AgentToolCall).join(AgentRun, AgentRun.id == AgentToolCall.run_id)
+        count_stmt = select(func.count()).select_from(AgentToolCall).join(
+            AgentRun,
+            AgentRun.id == AgentToolCall.run_id,
+        )
+        for condition in filters:
+            list_stmt = list_stmt.where(condition)
+            count_stmt = count_stmt.where(condition)
+        list_stmt = list_stmt.order_by(AgentToolCall.created_at.desc(), AgentToolCall.id.desc())
+        return fetch_scalar_rows_page(
+            self.session,
+            list_stmt=list_stmt,
+            count_stmt=count_stmt,
+            params=params,
+        )
+
+
+class AgentSecurityEventDAO(BaseRepository[AgentSecurityEvent]):
+    def __init__(self, session: Session) -> None:
+        super().__init__(session, AgentSecurityEvent)
+
+    def add_event(
+        self,
+        *,
+        run_id: str | None,
+        session_id: str | None,
+        account_id: str | None,
+        organization_id: str | None,
+        event_type: str,
+        severity: str,
+        message: str,
+        tool_name: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> AgentSecurityEvent:
+        entity = AgentSecurityEvent(
+            run_id=run_id,
+            session_id=session_id,
+            account_id=account_id,
+            organization_id=organization_id,
+            event_type=event_type,
+            severity=severity,
+            message=message,
+            tool_name=tool_name,
+            details_json=_json_dump(details),
+        )
+        return self.save_and_refresh(entity)
+
+
+class AgentPromptDAO(BaseRepository[AgentPrompt]):
+    def __init__(self, session: Session) -> None:
+        super().__init__(session, AgentPrompt)
+
+    def get_active_by_scenario(self, scenario: str) -> AgentPrompt | None:
+        stmt = (
+            select(AgentPrompt)
+            .where(
+                AgentPrompt.scenario == scenario,
+                AgentPrompt.is_active == 1,
+            )
+            .order_by(AgentPrompt.updated_at.desc(), AgentPrompt.created_at.desc())
+            .limit(1)
+        )
+        return self.session.scalars(stmt).first()

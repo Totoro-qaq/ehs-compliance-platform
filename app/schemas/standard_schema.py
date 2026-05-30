@@ -5,6 +5,57 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.models.db_models import StandardSourceReviewStatus, StandardSourceType
+
+
+class StandardSourceCreate(BaseModel):
+    source_name: str = Field(min_length=1, max_length=255)
+    source_type: StandardSourceType = StandardSourceType.CUSTOMER_PROVIDED
+    provider_name: str | None = Field(default=None, max_length=255)
+    license_no: str | None = Field(default=None, max_length=128)
+    license_scope: str | None = None
+    organization_id: str | None = Field(default=None, max_length=36)
+    allow_storage: bool = False
+    allow_vectorization: bool = False
+    allow_ai_retrieval: bool = False
+    allow_excerpt_export: bool = False
+    effective_from: date | None = None
+    effective_to: date | None = None
+    notes: str | None = None
+
+
+class StandardSourceReviewRequest(BaseModel):
+    review_status: StandardSourceReviewStatus
+    allow_storage: bool | None = None
+    allow_vectorization: bool | None = None
+    allow_ai_retrieval: bool | None = None
+    allow_excerpt_export: bool | None = None
+    effective_from: date | None = None
+    effective_to: date | None = None
+    notes: str | None = None
+
+
+class StandardSourceOut(BaseModel):
+    id: str
+    source_name: str
+    source_type: StandardSourceType
+    provider_name: str | None = None
+    license_no: str | None = None
+    license_scope: str | None = None
+    organization_id: str | None = None
+    allow_storage: bool
+    allow_vectorization: bool
+    allow_ai_retrieval: bool
+    allow_excerpt_export: bool
+    effective_from: date | None = None
+    effective_to: date | None = None
+    review_status: StandardSourceReviewStatus
+    reviewed_by_id: str | None = None
+    reviewed_at: datetime | None = None
+    notes: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
 
 class StandardChunkManifestItem(BaseModel):
     chunk_id: str | None = Field(default=None, max_length=128)
@@ -26,6 +77,8 @@ class StandardDocumentManifestItem(BaseModel):
     standard_name: str = Field(min_length=1, max_length=255)
     domain: str = Field(min_length=1, max_length=64)
     service_type: str | None = Field(default=None, max_length=64)
+    source_id: str | None = Field(default=None, max_length=36)
+    license_id: str | None = Field(default=None, max_length=128)
     storage_backend: str = Field(default='minio', max_length=32)
     bucket: str | None = Field(default=None, max_length=128)
     object_key: str | None = Field(default=None, max_length=1024)
@@ -65,6 +118,13 @@ class StandardDocumentOut(BaseModel):
     standard_name: str
     domain: str
     service_type: str | None = None
+    organization_id: str | None = None
+    source_id: str | None = None
+    license_id: str | None = None
+    source_review_status: StandardSourceReviewStatus
+    authorized: bool
+    allow_ai_retrieval: bool
+    allow_excerpt_export: bool
     storage_backend: str
     bucket: str | None = None
     object_key: str | None = None
@@ -92,6 +152,13 @@ class StandardChunkOut(BaseModel):
     clause: str | None = None
     domain: str
     service_type: str | None = None
+    organization_id: str | None = None
+    source_id: str | None = None
+    license_id: str | None = None
+    source_review_status: StandardSourceReviewStatus
+    authorized: bool
+    allow_ai_retrieval: bool
+    allow_excerpt_export: bool
     text_chunk: str
     text_hash: str
     page_start: int | None = None
@@ -109,6 +176,9 @@ class StandardManifestDocumentResult(BaseModel):
     document_id: str
     standard_code: str
     file_hash: str
+    source_id: str | None = None
+    source_review_status: StandardSourceReviewStatus
+    allow_ai_retrieval: bool
     created: bool
     chunks_written: int
     chunks_skipped_sensitive: int
@@ -126,5 +196,6 @@ class StandardManifestImportResponse(BaseModel):
 class StandardChunkSearchResponse(BaseModel):
     query: str | None = None
     include_sensitive: bool = False
+    include_unapproved: bool = False
     items: list[StandardChunkOut] = Field(default_factory=list)
     limit: int

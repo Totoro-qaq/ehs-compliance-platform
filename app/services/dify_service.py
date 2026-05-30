@@ -19,6 +19,7 @@ from app.schemas.ehs_schema import EHSAssessmentResult
 _log = get_logger(__name__)
 
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+_ASSESSMENT_DIFY_MODE = 'legacy_assessment'
 
 
 class DifyWorkflowError(Exception):
@@ -55,6 +56,40 @@ class DifyResultStructureError(DifyWorkflowError):
 
 def _base_url() -> str:
     return settings.dify_base_url.rstrip('/')
+
+
+def _raise_dify_needs_review(message: str, *, payload: dict[str, Any] | None = None) -> None:
+    raise DifyResultStructureError(
+        message,
+        raw_output=message,
+        payload=payload or {'guardrail': 'dify_compliance_workflow'},
+    )
+
+
+def _ensure_assessment_workflow_allowed(document_text: str) -> None:
+    usage_mode = settings.dify_usage_mode.strip().lower()
+    if usage_mode != _ASSESSMENT_DIFY_MODE:
+        _raise_dify_needs_review(
+            'Dify 当前未配置为合规评价兼容模式，评价结果需人工复核。',
+            payload={
+                'usage_mode': usage_mode,
+                'required_mode': _ASSESSMENT_DIFY_MODE,
+            },
+        )
+    if not settings.dify_enable_compliance_workflow:
+        _raise_dify_needs_review(
+            'Dify 合规评价工作流已关闭，评价结果需人工复核。',
+            payload={'usage_mode': usage_mode, 'compliance_workflow_enabled': False},
+        )
+    if len(document_text) > settings.dify_max_input_chars:
+        _raise_dify_needs_review(
+            'Dify 输入超过配置上限，已阻止向第三方工作流发送全文，评价结果需人工复核。',
+            payload={
+                'usage_mode': usage_mode,
+                'max_input_chars': settings.dify_max_input_chars,
+                'input_chars': len(document_text),
+            },
+        )
 
 
 def _trust_env_for_url(url: str) -> bool:
@@ -375,6 +410,7 @@ def fetch_assessment_result(
     若你的应用开始节点变量名不是 document_text，请在 .env 设置
     DIFY_WORKFLOW_INPUT_TEXT_KEY（例如 query）。
     """
+    _ensure_assessment_workflow_allowed(document_text)
     text_key = settings.dify_workflow_input_text_key
     inputs: dict[str, Any] = {
         text_key: document_text,
@@ -391,6 +427,17 @@ def fetch_assessment_result(
 
     # 检查知识库检索是否命中（Dify 会在 metadata 中返回检索信息）
     retrieval_info = data.get('metadata', {}).get('retriever_resources')
+    if retrieval_info and not settings.dify_allow_standard_retrieval:
+        _raise_dify_needs_review(
+            'Dify 工作流命中了知识库检索，但当前配置禁止 Dify 自带标准检索，评价结果需人工复核。',
+            payload={
+                'usage_mode': settings.dify_usage_mode,
+                'allow_standard_retrieval': False,
+                'retriever_resource_count': len(retrieval_info)
+                if isinstance(retrieval_info, list)
+                else None,
+            },
+        )
     if not retrieval_info:
         _log.warning(
             '知识库检索未命中任何文档 task_id=%s filename=%s，LLM 将在无参考资料下生成结果',

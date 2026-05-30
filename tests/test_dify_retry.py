@@ -124,6 +124,9 @@ def test_run_workflow_disables_proxy_env_for_local_dify(monkeypatch):
 
 
 def test_fetch_assessment_result_raises_structure_error_with_raw_output(monkeypatch):
+    monkeypatch.setattr(settings, 'dify_usage_mode', 'legacy_assessment')
+    monkeypatch.setattr(settings, 'dify_enable_compliance_workflow', True)
+
     def _fake_run_workflow_blocking(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         return {
             'data': {
@@ -139,3 +142,42 @@ def test_fetch_assessment_result_raises_structure_error_with_raw_output(monkeypa
 
     assert exc_info.value.raw_output == 'plain model answer without json'
     assert exc_info.value.retryable is False
+
+
+def test_fetch_assessment_result_blocks_compliance_workflow_by_default(monkeypatch):
+    called = False
+
+    def _fake_run_workflow_blocking(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        nonlocal called
+        called = True
+        return {'data': {'status': 'succeeded', 'outputs': {'result': '{"risks": [], "summary": "ok"}'}}}
+
+    monkeypatch.setattr('app.services.dify_service.run_workflow_blocking', _fake_run_workflow_blocking)
+
+    with pytest.raises(DifyResultStructureError) as exc_info:
+        fetch_assessment_result(document_text='text', filename='sample.txt', task_id='task-1')
+
+    assert called is False
+    assert '合规评价' in str(exc_info.value)
+
+
+def test_fetch_assessment_result_blocks_dify_retriever_when_disabled(monkeypatch):
+    monkeypatch.setattr(settings, 'dify_usage_mode', 'legacy_assessment')
+    monkeypatch.setattr(settings, 'dify_enable_compliance_workflow', True)
+    monkeypatch.setattr(settings, 'dify_allow_standard_retrieval', False)
+
+    def _fake_run_workflow_blocking(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {
+            'data': {
+                'status': 'succeeded',
+                'metadata': {'retriever_resources': [{'dataset_id': 'dataset-risk'}]},
+                'outputs': {'result': '{"risks": [], "summary": "ok"}'},
+            }
+        }
+
+    monkeypatch.setattr('app.services.dify_service.run_workflow_blocking', _fake_run_workflow_blocking)
+
+    with pytest.raises(DifyResultStructureError) as exc_info:
+        fetch_assessment_result(document_text='text', filename='sample.txt', task_id='task-1')
+
+    assert '禁止 Dify 自带标准检索' in str(exc_info.value)

@@ -34,7 +34,9 @@ _VALID_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
     TaskStatus.PARSING: frozenset({TaskStatus.AI_ANALYZING, TaskStatus.FAILED}),
     TaskStatus.AI_ANALYZING: frozenset({TaskStatus.VALIDATING, TaskStatus.FAILED}),
     TaskStatus.VALIDATING: frozenset({TaskStatus.PERSISTING, TaskStatus.FAILED}),
-    TaskStatus.PERSISTING: frozenset({TaskStatus.SUCCESS, TaskStatus.NEEDS_REVIEW, TaskStatus.FAILED}),
+    TaskStatus.PERSISTING: frozenset(
+        {TaskStatus.SUCCESS, TaskStatus.NEEDS_REVIEW, TaskStatus.FAILED}
+    ),
     TaskStatus.SUCCESS: frozenset(),
     TaskStatus.NEEDS_REVIEW: frozenset(),
     TaskStatus.FAILED: frozenset(),
@@ -73,7 +75,9 @@ class Organization(ModelBase):
     __tablename__ = 'organizations'
 
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    unified_social_credit_code: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    unified_social_credit_code: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, index=True
+    )
     industry: Mapped[str | None] = mapped_column(String(128), nullable=True)
     address: Mapped[str | None] = mapped_column(String(500), nullable=True)
     contact_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -233,6 +237,10 @@ class AgentRunStatus(str, Enum):
     FAILED = 'FAILED'
 
 
+class AgentPromptScenario(str, Enum):
+    AGENT_CHAT = 'agent_chat'
+
+
 class AgentMemoryScopeType(str, Enum):
     SESSION = 'SESSION'
     PROJECT = 'PROJECT'
@@ -386,6 +394,62 @@ class RegulatoryLimit(ModelBase):
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
 
 
+class StandardSourceType(str, Enum):
+    OFFICIAL_PUBLIC = 'OFFICIAL_PUBLIC'
+    AUTHORIZED_PURCHASE = 'AUTHORIZED_PURCHASE'
+    CUSTOMER_PROVIDED = 'CUSTOMER_PROVIDED'
+    INTERNAL = 'INTERNAL'
+
+
+class StandardSourceReviewStatus(str, Enum):
+    PENDING = 'PENDING'
+    APPROVED = 'APPROVED'
+    REJECTED = 'REJECTED'
+    EXPIRED = 'EXPIRED'
+
+
+class StandardSource(ModelBase):
+    __tablename__ = 'standard_sources'
+
+    source_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    source_type: Mapped[StandardSourceType] = mapped_column(
+        SAEnum(StandardSourceType), nullable=False, index=True
+    )
+    provider_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    license_no: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    license_scope: Mapped[str | None] = mapped_column(Text, nullable=True)
+    organization_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('organizations.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    allow_storage: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
+    allow_vectorization: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
+    allow_ai_retrieval: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
+    allow_excerpt_export: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, index=True
+    )
+    effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    review_status: Mapped[StandardSourceReviewStatus] = mapped_column(
+        SAEnum(StandardSourceReviewStatus),
+        nullable=False,
+        default=StandardSourceReviewStatus.PENDING,
+        index=True,
+    )
+    reviewed_by_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('accounts.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    documents: Mapped[list['StandardDocument']] = relationship(back_populates='source')
+
+
 class StandardDocument(ModelBase):
     """标准原文元数据：原文件仍在外部资料目录，库内只保存可追溯索引。"""
 
@@ -395,7 +459,32 @@ class StandardDocument(ModelBase):
     standard_name: Mapped[str] = mapped_column(String(255), nullable=False)
     domain: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     service_type: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
-    storage_backend: Mapped[str] = mapped_column(String(32), nullable=False, default='minio', index=True)
+    organization_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('organizations.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    source_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('standard_sources.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    license_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    source_review_status: Mapped[StandardSourceReviewStatus] = mapped_column(
+        SAEnum(StandardSourceReviewStatus),
+        nullable=False,
+        default=StandardSourceReviewStatus.PENDING,
+        index=True,
+    )
+    allow_ai_retrieval: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
+    allow_excerpt_export: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, index=True
+    )
+    storage_backend: Mapped[str] = mapped_column(
+        String(32), nullable=False, default='minio', index=True
+    )
     bucket: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     object_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     object_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -416,6 +505,7 @@ class StandardDocument(ModelBase):
         cascade='all, delete-orphan',
         order_by='StandardChunk.chunk_index',
     )
+    source: Mapped[StandardSource | None] = relationship(back_populates='documents')
 
 
 class StandardChunk(ModelBase):
@@ -502,7 +592,9 @@ class ComplianceResult(ModelBase):
 class ReportSection(ModelBase):
     __tablename__ = 'report_sections'
     __table_args__ = (
-        UniqueConstraint('report_id', 'section_key', name='uq_report_sections_report_id_section_key'),
+        UniqueConstraint(
+            'report_id', 'section_key', name='uq_report_sections_report_id_section_key'
+        ),
     )
 
     organization_id: Mapped[str] = mapped_column(
@@ -606,6 +698,39 @@ class AgentMessage(ModelBase):
     session: Mapped[AgentSession] = relationship(back_populates='messages')
 
 
+class AgentPrompt(ModelBase):
+    """Agent 提示词注册表：用于版本化、审批和审计。"""
+
+    __tablename__ = 'agent_prompts'
+    __table_args__ = (
+        UniqueConstraint('scenario', 'version', name='uq_agent_prompts_scenario_version'),
+    )
+
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    scenario: Mapped[AgentPromptScenario] = mapped_column(
+        SAEnum(
+            AgentPromptScenario,
+            name='agent_prompt_scenario',
+            values_callable=lambda enum_cls: [item.value for item in enum_cls],
+        ),
+        nullable=False,
+        index=True,
+    )
+    system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    developer_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    output_contract_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    risk_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
+    approved_by_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('accounts.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class AgentRun(ModelBase):
     """一次 Agent 编排运行，记录模型、状态和耗时。"""
 
@@ -642,6 +767,13 @@ class AgentRun(ModelBase):
         SAEnum(AgentRunStatus), nullable=False, default=AgentRunStatus.RUNNING, index=True
     )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    policy_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    policy_version: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    policy_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    context_snapshot_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prompt_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    output_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    risk_flags_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -671,13 +803,49 @@ class AgentToolCall(ModelBase):
         index=True,
     )
     tool_name: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    tool_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    permission_level: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    side_effect_level: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    policy_decision: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     arguments_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_summary_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     success: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     elapsed_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     run: Mapped[AgentRun] = relationship(back_populates='tool_calls')
+
+
+class AgentSecurityEvent(ModelBase):
+    """Agent 安全审计事件：记录工具拦截、越权、未授权资料等高风险行为。"""
+
+    __tablename__ = 'agent_security_events'
+
+    run_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('agent_runs.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    session_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('agent_sessions.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    account_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey('accounts.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    tool_name: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    details_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class AgentMemory(ModelBase):

@@ -110,11 +110,14 @@ class AgentToolSpec:
     output_schema: dict[str, Any]
     permission_level: AgentToolPermissionLevel
     side_effect_level: AgentToolSideEffectLevel
+    tool_version: str = 'v1'
+    risk_level: str = 'LOW'
     tenant_scope: AgentToolTenantScope = AgentToolTenantScope.ORGANIZATION
     timeout_seconds: int = 10
     allowed_roles: frozenset[AccountRole] = field(default_factory=lambda: frozenset(AccountRole))
     requires_approval: bool = False
     agent_enabled: bool = True
+    commercial_enabled: bool = True
 
 
 class AgentToolRegistry:
@@ -138,11 +141,14 @@ class AgentToolRegistry:
                 output_schema=spec.output_schema,
                 permission_level=spec.permission_level,
                 side_effect_level=spec.side_effect_level,
+                tool_version=spec.tool_version,
+                risk_level=spec.risk_level,
                 tenant_scope=spec.tenant_scope,
                 timeout_seconds=spec.timeout_seconds,
                 allowed_roles=spec.allowed_roles,
                 requires_approval=spec.requires_approval,
                 agent_enabled=spec.agent_enabled,
+                commercial_enabled=spec.commercial_enabled,
             )
         self._specs[tool_name] = spec
 
@@ -237,8 +243,10 @@ class AgentToolPolicy:
         spec = active_registry.require(tool_name)
         details = {
             'tool_name': spec.name,
+            'tool_version': spec.tool_version,
             'permission_level': spec.permission_level.value,
             'side_effect_level': spec.side_effect_level.value,
+            'risk_level': spec.risk_level,
             'argument_keys': sorted(arguments),
         }
 
@@ -373,6 +381,7 @@ _DEFAULT_TOOL_SPECS = [
         output_schema={'type': 'object'},
         permission_level=AgentToolPermissionLevel.ADMIN,
         side_effect_level=AgentToolSideEffectLevel.WRITE,
+        risk_level='HIGH',
         tenant_scope=AgentToolTenantScope.GLOBAL,
         allowed_roles=frozenset({AccountRole.ADMIN}),
         requires_approval=True,

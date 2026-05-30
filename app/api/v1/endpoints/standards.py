@@ -7,15 +7,72 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_admin
 from app.core.db import get_db
+from app.models.db_models import StandardSourceReviewStatus, StandardSourceType
 from app.schemas.auth_context import CurrentUser
 from app.schemas.standard_schema import (
     StandardChunkSearchResponse,
     StandardManifestImportRequest,
     StandardManifestImportResponse,
+    StandardSourceCreate,
+    StandardSourceOut,
+    StandardSourceReviewRequest,
 )
 from app.services.standard_library_service import StandardLibraryService
 
 router = APIRouter(prefix='/standards', tags=['标准库 RAG'])
+
+
+@router.get(
+    '/sources',
+    response_model=list[StandardSourceOut],
+    summary='List standard source authorization records',
+)
+def list_standard_sources(
+    actor: Annotated[CurrentUser, Depends(require_admin)],
+    db: Session = Depends(get_db),
+    review_status: StandardSourceReviewStatus | None = Query(default=None),
+    source_type: StandardSourceType | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=200),
+):
+    return StandardLibraryService.list_sources(
+        db=db,
+        actor=actor,
+        review_status=review_status,
+        source_type=source_type,
+        limit=limit,
+    )
+
+
+@router.post(
+    '/sources',
+    response_model=StandardSourceOut,
+    summary='Create standard source authorization record',
+)
+def create_standard_source(
+    payload: StandardSourceCreate,
+    actor: Annotated[CurrentUser, Depends(require_admin)],
+    db: Session = Depends(get_db),
+):
+    return StandardLibraryService.create_source(db=db, actor=actor, payload=payload)
+
+
+@router.patch(
+    '/sources/{source_id}/review',
+    response_model=StandardSourceOut,
+    summary='Review standard source authorization record',
+)
+def review_standard_source(
+    source_id: str,
+    payload: StandardSourceReviewRequest,
+    actor: Annotated[CurrentUser, Depends(require_admin)],
+    db: Session = Depends(get_db),
+):
+    return StandardLibraryService.review_source(
+        db=db,
+        actor=actor,
+        source_id=source_id,
+        payload=payload,
+    )
 
 
 @router.post(
@@ -45,6 +102,7 @@ def search_standard_chunks(
     domain: str | None = Query(default=None, description='领域过滤'),
     service_type: str | None = Query(default=None, description='服务类型过滤'),
     include_sensitive: bool = Query(default=False, description='仅管理员可包含敏感 chunk'),
+    include_unapproved: bool = Query(default=False, description='仅管理员可查看未授权 chunk'),
     limit: int = Query(default=10, ge=1, le=50),
 ):
     return StandardLibraryService.search_chunks(
@@ -55,5 +113,6 @@ def search_standard_chunks(
         domain=domain,
         service_type=service_type,
         include_sensitive=include_sensitive,
+        include_unapproved=include_unapproved,
         limit=limit,
     )

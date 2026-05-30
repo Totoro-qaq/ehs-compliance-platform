@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.core.config import settings
 from app.core.exceptions import EHSException
-from app.models.db_models import AccountRole
+from app.models.db_models import AccountRole, AgentRun, AgentSecurityEvent, AgentToolCall
 from app.schemas.auth_context import CurrentUser
 from app.services.agent_runtime_policy import AgentRuntimePolicy, AgentSandbox
 
@@ -109,6 +109,7 @@ def test_agent_sandbox_blocks_read_only_side_effect_tool() -> None:
 def test_agent_chat_respects_runtime_tool_limit(
     client: TestClient,
     user_token: str,
+    db,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, 'agent_runtime_max_tool_calls', 1)
@@ -122,3 +123,19 @@ def test_agent_chat_respects_runtime_tool_limit(
     assert response.status_code == 429
     body = response.json()
     assert body['code'] == 'AGENT_RUNTIME_TOOL_LIMIT_EXCEEDED'
+
+    run = db.query(AgentRun).order_by(AgentRun.created_at.desc()).first()
+    assert run is not None
+    assert run.status.value == 'FAILED'
+    tool_calls = db.query(AgentToolCall).filter_by(run_id=run.id).order_by(AgentToolCall.created_at).all()
+    assert [item.policy_decision for item in tool_calls] == ['allowed', 'blocked']
+
+    security_event = db.query(AgentSecurityEvent).filter_by(run_id=run.id).one()
+    assert security_event.event_type == 'TOOL_BLOCKED'
+    assert security_event.severity == 'HIGH'
+    assert security_event.tool_name == 'list_assessment_tasks'
+
+    events_response = client.get('/api/v1/agent/security-events', headers=_auth(user_token))
+    assert events_response.status_code == 200
+    events = events_response.json()['data']['items']
+    assert any(item['id'] == security_event.id for item in events)

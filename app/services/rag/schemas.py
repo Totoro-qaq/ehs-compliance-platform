@@ -17,6 +17,11 @@ class RagChunkOut(BaseModel):
     version: str | None = None
     effective_date: str | None = None
     source_uri: str | None = None
+    authorized: bool = False
+    license_id: str | None = None
+    source_review_status: str | None = None
+    allow_ai_retrieval: bool = False
+    allow_excerpt_export: bool = False
     chunk_text: str = ''
     score: float | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -28,6 +33,7 @@ class RagChunkSearchResponse(BaseModel):
     query: str | None = None
     dataset_ids: list[str] = Field(default_factory=list)
     items: list[RagChunkOut] = Field(default_factory=list)
+    blocked_count: int = 0
     limit: int
     error: str | None = None
 

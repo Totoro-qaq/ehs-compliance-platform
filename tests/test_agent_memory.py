@@ -26,6 +26,33 @@ def _auth(token: str) -> dict[str, str]:
     return {'Authorization': f'Bearer {token}'}
 
 
+def _create_approved_source(client: TestClient, admin_token: str) -> str:
+    created = client.post(
+        '/api/v1/standards/sources',
+        json={
+            'source_name': 'Agent memory authorized source',
+            'source_type': 'AUTHORIZED_PURCHASE',
+            'provider_name': 'Test Provider',
+            'license_no': 'LIC-MEM-001',
+            'license_scope': 'Unit test citation memory.',
+            'allow_storage': True,
+            'allow_vectorization': True,
+            'allow_ai_retrieval': True,
+            'allow_excerpt_export': True,
+        },
+        headers=_auth(admin_token),
+    )
+    assert created.status_code == 200
+    source_id = created.json()['data']['id']
+    reviewed = client.patch(
+        f'/api/v1/standards/sources/{source_id}/review',
+        json={'review_status': 'APPROVED'},
+        headers=_auth(admin_token),
+    )
+    assert reviewed.status_code == 200
+    return source_id
+
+
 def _create_actor(db: Session, *, org_name: str = 'Memory Test Org') -> CurrentUser:
     suffix = uuid4().hex
     organization = Organization(name=f'{org_name} {suffix}')
@@ -141,6 +168,7 @@ def test_standard_chunk_search_records_citation_memory_without_full_text(
     db: Session,
 ) -> None:
     full_text = '测试因子甲的测试限值依据来自 TEST-MEM-001 第 5.2 条，不应完整写入 memory。'
+    source_id = _create_approved_source(client, admin_token)
     imported = client.post(
         '/api/v1/standards/manifest/import',
         json={
@@ -149,6 +177,7 @@ def test_standard_chunk_search_records_citation_memory_without_full_text(
                     'standard_code': 'TEST-MEM-001',
                     'standard_name': '测试 Memory 引用标准',
                     'domain': 'occupational_health',
+                    'source_id': source_id,
                     'object_key': 'raw/occupational_health/test-memory-001.pdf',
                     'file_hash': 'm' * 64,
                     'chunks': [
@@ -196,12 +225,20 @@ def test_standard_chunk_search_records_citation_memory_without_full_text(
     assert metadata['clause'] == '5.2'
     assert metadata['page_start'] == 12
     assert metadata['page_end'] == 12
+    assert metadata['standard_source_id'] == source_id
+    assert metadata['license_id'] == 'LIC-MEM-001'
+    assert metadata['source_review_status'] == 'APPROVED'
+    assert metadata['authorized'] is True
+    assert metadata['allow_ai_retrieval'] is True
+    assert metadata['allow_excerpt_export'] is True
     assert 'text_chunk' not in metadata
     assert full_text not in memory.content
     assert full_text not in metadata_text
 
     event = db.query(AgentMemoryEvent).filter_by(memory_id=memory.id).one()
-    tool_call_ids = {call['id'] for call in data['tool_calls'] if call['tool_name'] == 'search_standard_chunks'}
+    tool_call_ids = {
+        call['id'] for call in data['tool_calls'] if call['tool_name'] == 'search_standard_chunks'
+    }
     assert event.source_type == AgentMemorySourceType.TOOL_CALL
     assert event.source_id in tool_call_ids
 
@@ -236,6 +273,11 @@ def test_ragflow_search_records_citation_memory_without_chunk_text(
                     version='2026',
                     effective_date='2026-01-01',
                     source_uri='ragflow://dataset-a/doc-001/chunk-001',
+                    authorized=True,
+                    license_id='LIC-RAG-001',
+                    source_review_status='APPROVED',
+                    allow_ai_retrieval=True,
+                    allow_excerpt_export=False,
                     chunk_text=full_text,
                     score=0.91,
                 )
@@ -274,11 +316,18 @@ def test_ragflow_search_records_citation_memory_without_chunk_text(
     assert metadata['document_id'] == 'doc-001'
     assert metadata['chunk_id'] == 'chunk-001'
     assert metadata['score'] == 0.91
+    assert metadata['license_id'] == 'LIC-RAG-001'
+    assert metadata['source_review_status'] == 'APPROVED'
+    assert metadata['authorized'] is True
+    assert metadata['allow_ai_retrieval'] is True
+    assert metadata['allow_excerpt_export'] is False
     assert 'chunk_text' not in metadata
     assert full_text not in memory.content
     assert full_text not in metadata_text
 
     event = db.query(AgentMemoryEvent).filter_by(memory_id=memory.id).one()
-    tool_call_ids = {call['id'] for call in data['tool_calls'] if call['tool_name'] == 'search_guideline_chunks'}
+    tool_call_ids = {
+        call['id'] for call in data['tool_calls'] if call['tool_name'] == 'search_guideline_chunks'
+    }
     assert event.source_type == AgentMemorySourceType.TOOL_CALL
     assert event.source_id in tool_call_ids

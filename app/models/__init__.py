@@ -1,4 +1,7 @@
 from app.models.db_models import (
+    AgentPrompt,
+    AgentPromptScenario,
+    AgentSecurityEvent,
     AssessmentTask,
     Organization,
     StandardChunk,
@@ -6,4 +9,13 @@ from app.models.db_models import (
     TaskStatus,
 )
 
-__all__ = ['AssessmentTask', 'Organization', 'StandardChunk', 'StandardDocument', 'TaskStatus']
+__all__ = [
+    'AgentPrompt',
+    'AgentPromptScenario',
+    'AgentSecurityEvent',
+    'AssessmentTask',
+    'Organization',
+    'StandardChunk',
+    'StandardDocument',
+    'TaskStatus',
+]
