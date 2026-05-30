@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     dify_workflow_result_key: str = 'result'
     # 与画布「开始」节点中文本变量名一致
     dify_workflow_input_text_key: str = 'document_text'
+    # Dify 默认只作为客服/草稿能力；合规评价工作流必须显式打开，避免生产环境误把 LLM 当裁判。
+    dify_usage_mode: str = 'customer_support'
+    dify_enable_compliance_workflow: bool = False
+    dify_allow_standard_retrieval: bool = False
+    dify_max_input_chars: int = Field(default=20000, ge=1000, le=200000)
+    dify_require_structured_output: bool = True
     # 仅对 429、5xx、临时网络错误做保守重试；阻塞超时默认不自动重放，避免重复计费
     dify_retry_max_attempts: int = Field(default=3, ge=1, le=5)
     dify_retry_initial_delay_seconds: float = Field(default=2.0, ge=0.1, le=60.0)
@@ -125,7 +131,7 @@ class Settings(BaseSettings):
     # CORS：逗号分隔多个源，或单星号 *（生产建议写具体域名）
     cors_origins: str = '*'
 
-    @field_validator('dify_api_key', 'dify_base_url', mode='before')
+    @field_validator('dify_api_key', 'dify_base_url', 'dify_usage_mode', mode='before')
     @classmethod
     def _strip_dify_env(cls, v: object) -> object:
         if v is None or not isinstance(v, str):
